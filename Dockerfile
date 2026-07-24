@@ -4,6 +4,8 @@ FROM node:22-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 ENV NEXT_TELEMETRY_DISABLED=1
+# Usa la versión de pnpm fijada en package.json (packageManager) sin prompt interactivo.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 
 # OpenSSL es necesario para el motor de Prisma
