@@ -38,3 +38,6 @@ yarn-error.log*
 # uploads locales (mock media)
 /public/uploads/*
 !/public/uploads/.gitkeep
+
+# tsc incremental
+tsconfig.tsbuildinfo
