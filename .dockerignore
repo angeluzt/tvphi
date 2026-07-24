@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.gitignore
+npm-debug.log*
+pnpm-debug.log*
+.env
+.env*.local
+.DS_Store
+coverage
+*.log
+public/uploads/*
+!public/uploads/.gitkeep

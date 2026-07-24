@@ -56,6 +56,12 @@ pnpm dev
 
 Para producción: `pnpm build && pnpm start`.
 
+## ☁️ Despliegue
+
+Guía completa paso a paso (Railway + Neon + Cloudflare Stream + dominio tvphi.com) en
+**[`DEPLOY.md`](./DEPLOY.md)**. El repo ya incluye `Dockerfile`, `railway.json`, healthcheck
+en `/api/health` y migraciones que se aplican solas al arrancar (`pnpm start:prod`).
+
 ## 🎬 Probar el flujo "sin OBS"
 
 1. Crea una cuenta en `/auth/register` (o entra con `phi` / `demo1234`).
