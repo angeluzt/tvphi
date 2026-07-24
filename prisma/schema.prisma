@@ -1,0 +1,370 @@
+// TVPHI — esquema de datos
+// Plataforma de streaming: cuentas, canales, sesiones de emisión, escenas del Studio,
+// chat + moderación, puntos (ledger), rewards, donaciones y suscripciones.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Usuarios y canales
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  username     String   @unique
+  displayName  String
+  passwordHash String
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  channel        Channel?
+  chatMessages   ChatMessage[]
+  pointsBalances PointsBalance[]
+  pointsTx       PointsTransaction[] @relation("PointsTxUser")
+  redemptions    RewardRedemption[]
+  donations      Donation[]          @relation("DonationFromUser")
+  subscriptions  Subscription[]      @relation("SubscriberUser")
+  memberships    ChannelMember[]
+  issuedModActions ModerationAction[] @relation("ModActor")
+  targetModActions ModerationAction[] @relation("ModTarget")
+}
+
+model Channel {
+  id          String   @id @default(cuid())
+  slug        String   @unique // aparece en /[slug]
+  title       String
+  description String?  @db.Text
+  category    String?
+  bannerUrl   String?
+  accentColor String?  // permite personalizar el color del canal
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  ownerId String @unique
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // Ingest: clave de stream (RTMP para OBS) + id del input en el proveedor de medios
+  streamKey     String  @unique @default(cuid())
+  mediaInputId  String?
+  playbackUrl   String?
+  whipUrl       String?
+  isLive        Boolean @default(false)
+  lastLiveAt    DateTime?
+
+  // Ajustes de chat
+  subscriberOnlyChat Boolean @default(false)
+  slowModeSeconds    Int     @default(0)
+  emoteOnly          Boolean @default(false)
+
+  scenes        Scene[]
+  overlayTokens OverlayToken[]
+  streamSessions StreamSession[]
+  chatMessages  ChatMessage[]
+  members       ChannelMember[]
+  rewards       ChannelReward[]
+  redemptions   RewardRedemption[]
+  donations     Donation[]
+  subscriptions Subscription[]
+  pointsBalances PointsBalance[]
+  pointsTx      PointsTransaction[]
+  modActions    ModerationAction[]
+  adAccruals    AdRevenueAccrual[]
+  payouts       Payout[]
+}
+
+// Rol de un usuario dentro de un canal concreto
+enum ChannelRole {
+  VIEWER
+  SUBSCRIBER
+  MODERATOR
+  BROADCASTER
+}
+
+model ChannelMember {
+  id        String      @id @default(cuid())
+  channelId String
+  userId    String
+  role      ChannelRole @default(VIEWER)
+  createdAt DateTime    @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+  @@index([channelId, role])
+}
+
+// ---------------------------------------------------------------------------
+// Studio: escenas y capas (el "OBS en el navegador")
+// ---------------------------------------------------------------------------
+
+model Scene {
+  id        String   @id @default(cuid())
+  channelId String
+  name      String
+  order     Int      @default(0)
+  // Capas serializadas como JSON: [{type,transform,props}], validadas con Zod en la app.
+  layers    Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, order])
+}
+
+model StreamSession {
+  id         String    @id @default(cuid())
+  channelId  String
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+  peakViewers Int      @default(0)
+  source     String    @default("studio") // studio | obs
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId])
+}
+
+// Token para exponer un overlay como browser-source (OBS) o dentro del compositor
+model OverlayToken {
+  id        String   @id @default(cuid())
+  channelId String
+  token     String   @unique @default(cuid())
+  label     String   @default("Overlay principal")
+  createdAt DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Chat y moderación
+// ---------------------------------------------------------------------------
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  channelId String
+  userId    String
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+  deleted   Boolean  @default(false)
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, createdAt])
+}
+
+enum ModActionType {
+  TIMEOUT
+  BAN
+  UNBAN
+  BLOCK
+  UNBLOCK
+  DELETE_MESSAGE
+}
+
+model ModerationAction {
+  id        String        @id @default(cuid())
+  channelId String
+  actorId   String
+  targetId  String
+  type      ModActionType
+  reason    String?
+  // Para TIMEOUT: hasta cuándo dura
+  expiresAt DateTime?
+  createdAt DateTime      @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  actor   User    @relation("ModActor", fields: [actorId], references: [id], onDelete: Cascade)
+  target  User    @relation("ModTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, targetId])
+}
+
+// ---------------------------------------------------------------------------
+// Puntos (ledger) y rewards
+// ---------------------------------------------------------------------------
+
+// Saldo materializado por (usuario, canal). La verdad está en PointsTransaction;
+// este registro es un acumulado para lecturas rápidas.
+model PointsBalance {
+  id        String   @id @default(cuid())
+  channelId String
+  userId    String
+  balance   BigInt   @default(0)
+  updatedAt DateTime @updatedAt
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+}
+
+enum PointsTxType {
+  AD_ACCRUAL       // acumulación simulada por publicidad
+  AWARD            // otorgado por broadcaster/mod
+  DONATION_BONUS   // bonus por donación
+  REDEEM           // gasto al canjear un reward
+  ADJUSTMENT       // ajuste manual
+  PAYOUT           // retiro (stub)
+}
+
+model PointsTransaction {
+  id        String       @id @default(cuid())
+  channelId String
+  userId    String
+  type      PointsTxType
+  amount    BigInt       // positivo = ganancia, negativo = gasto
+  memo      String?
+  createdAt DateTime     @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user    User    @relation("PointsTxUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, userId, createdAt])
+}
+
+enum RewardAction {
+  SHOW_MESSAGE   // muestra un mensaje del espectador en el overlay
+  PLAY_SOUND     // reproduce un sonido/animación
+  CHANGE_SCENE   // pide cambio de escena
+  CUSTOM         // acción personalizada (payload libre)
+}
+
+model ChannelReward {
+  id        String       @id @default(cuid())
+  channelId String
+  title     String
+  cost      Int
+  action    RewardAction @default(SHOW_MESSAGE)
+  // Config extra: color, sonido, duración, requiere texto del usuario, etc.
+  config    Json         @default("{}")
+  enabled   Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  channel     Channel            @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  redemptions RewardRedemption[]
+
+  @@index([channelId])
+}
+
+enum RedemptionStatus {
+  PENDING
+  COMPLETED
+  REFUNDED
+}
+
+model RewardRedemption {
+  id        String           @id @default(cuid())
+  channelId String
+  rewardId  String
+  userId    String
+  userInput String?          @db.Text
+  status    RedemptionStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+
+  channel Channel       @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  reward  ChannelReward @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Donaciones y suscripciones
+// ---------------------------------------------------------------------------
+
+enum DonationStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model Donation {
+  id          String         @id @default(cuid())
+  channelId   String
+  fromUserId  String?
+  displayName String         // nombre a mostrar en la alerta
+  amountCents Int
+  currency    String         @default("usd")
+  message     String?        @db.Text
+  status      DonationStatus @default(PENDING)
+  provider    String         @default("stripe") // stripe | simulated
+  providerRef String?
+  createdAt   DateTime       @default(now())
+
+  channel  Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  fromUser User?   @relation("DonationFromUser", fields: [fromUserId], references: [id])
+
+  @@index([channelId, createdAt])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+}
+
+model Subscription {
+  id          String             @id @default(cuid())
+  channelId   String
+  userId      String
+  tier        Int                @default(1)
+  status      SubscriptionStatus @default(ACTIVE)
+  provider    String             @default("stripe")
+  providerRef String?
+  currentPeriodEnd DateTime?
+  createdAt   DateTime           @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user    User    @relation("SubscriberUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Monetización por publicidad (STUB) y retiros (STUB)
+// ---------------------------------------------------------------------------
+
+model AdRevenueAccrual {
+  id           String   @id @default(cuid())
+  channelId    String
+  impressions  Int
+  revenueCents Int
+  pointsMinted BigInt
+  createdAt    DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, createdAt])
+}
+
+enum PayoutStatus {
+  REQUESTED
+  PROCESSING
+  PAID
+  REJECTED
+}
+
+model Payout {
+  id          String       @id @default(cuid())
+  channelId   String
+  amountCents Int
+  pointsBurned BigInt
+  status      PayoutStatus @default(REQUESTED)
+  note        String?
+  createdAt   DateTime     @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, createdAt])
+}
