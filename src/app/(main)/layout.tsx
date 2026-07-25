@@ -12,7 +12,6 @@ export default async function MainLayout({ children }: { children: React.ReactNo
                 username: user.username,
                 displayName: user.displayName,
                 avatarUrl: user.avatarUrl,
-                channelSlug: user.channel?.slug ?? null,
               }
             : null
         }

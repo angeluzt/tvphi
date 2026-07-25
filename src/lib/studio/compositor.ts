@@ -4,9 +4,9 @@ import type { Layer, Scene, TransitionKind } from "@/lib/scene";
 // MediaStream (video del canvas + audio mezclado) listo para publicar por WHIP.
 // Es el núcleo del "OBS en el navegador".
 
-const W = 1280;
-const H = 720;
-const FPS = 30;
+const DEFAULT_W = 1280;
+const DEFAULT_H = 720;
+const DEFAULT_FPS = 30;
 
 interface AlertView {
   title: string;
@@ -20,6 +20,9 @@ export class Compositor {
   private ctx: CanvasRenderingContext2D;
   private raf = 0;
   private running = false;
+  private w: number;
+  private h: number;
+  private fps: number;
 
   private scenes: Scene[] = [];
   private activeId: string | null = null;
@@ -35,18 +38,33 @@ export class Compositor {
   private audioCtx: AudioContext | null = null;
   private dest: MediaStreamAudioDestinationNode | null = null;
   private audioSources = new Map<string, MediaStreamAudioSourceNode>();
+  private bgAudioNode: MediaElementAudioSourceNode | null = null;
 
   // Transición y alertas
   private transition: { from: Scene | null; to: Scene; kind: TransitionKind; start: number; dur: number } | null = null;
   private alert: AlertView | null = null;
 
-  constructor() {
+  constructor(opts?: { width?: number; height?: number; fps?: number }) {
+    this.w = opts?.width ?? DEFAULT_W;
+    this.h = opts?.height ?? DEFAULT_H;
+    this.fps = opts?.fps ?? DEFAULT_FPS;
     this.canvas = document.createElement("canvas");
-    this.canvas.width = W;
-    this.canvas.height = H;
+    this.canvas.width = this.w;
+    this.canvas.height = this.h;
     const ctx = this.canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("No se pudo crear el contexto 2D");
     this.ctx = ctx;
+  }
+
+  // Cambia la resolución de salida (p. ej. 1280x720 o 1920x1080 para exportar).
+  setResolution(width: number, height: number) {
+    this.w = width;
+    this.h = height;
+    this.canvas.width = width;
+    this.canvas.height = height;
+  }
+  getFps() {
+    return this.fps;
   }
 
   setScenes(scenes: Scene[]) {
@@ -147,6 +165,17 @@ export class Compositor {
     this.audioSources.delete(key);
   }
 
+  // Conecta un <audio>/<video> como pista de fondo (música/sonidos) que se mezcla
+  // en la grabación y también se oye por los altavoces del creador.
+  addAudioElement(el: HTMLMediaElement) {
+    this.ensureAudio();
+    if (!this.audioCtx || !this.dest || this.bgAudioNode) return;
+    const node = this.audioCtx.createMediaElementSource(el);
+    node.connect(this.dest);
+    node.connect(this.audioCtx.destination);
+    this.bgAudioNode = node;
+  }
+
   private getImage(src: string): HTMLImageElement {
     let img = this.imageEls.get(src);
     if (!img) {
@@ -204,7 +233,7 @@ export class Compositor {
   }
 
   captureStream(): MediaStream {
-    const stream = (this.canvas as any).captureStream(FPS) as MediaStream;
+    const stream = (this.canvas as any).captureStream(this.fps) as MediaStream;
     this.ensureAudio();
     // Reanuda el contexto (autoplay policies)
     this.audioCtx?.resume().catch(() => {});
@@ -219,7 +248,7 @@ export class Compositor {
   private render() {
     const now = performance.now();
     this.ctx.fillStyle = "#000";
-    this.ctx.fillRect(0, 0, W, H);
+    this.ctx.fillRect(0, 0, this.w, this.h);
 
     const active = this.scenes.find((s) => s.id === this.activeId);
 
@@ -230,8 +259,8 @@ export class Compositor {
         if (from) this.renderScene(from, 1);
         this.renderScene(to, p);
       } else if (kind === "slide") {
-        const dx = W * (1 - p);
-        if (from) this.renderScene(from, 1, -W * p);
+        const dx = this.w * (1 - p);
+        if (from) this.renderScene(from, 1, -this.w * p);
         this.renderScene(to, 1, dx);
       }
       if (p >= 1) this.transition = null;
@@ -257,7 +286,7 @@ export class Compositor {
 
   private rect(layer: Layer, offsetX: number) {
     const t = layer.transform;
-    return { x: t.x * W + offsetX, y: t.y * H, w: t.w * W, h: t.h * H };
+    return { x: t.x * this.w + offsetX, y: t.y * this.h, w: t.w * this.w, h: t.h * this.h };
   }
 
   private drawLayer(layer: Layer, offsetX: number) {
@@ -380,13 +409,13 @@ export class Compositor {
     // La capa "Alertas" define dónde aparecen las notificaciones.
     const alertsLayer = scene?.layers.find((l) => l.type === "alerts" && l.visible);
     let w = 620;
-    let x = (W - w) / 2;
+    let x = (this.w - w) / 2;
     let y = 40;
     if (alertsLayer) {
       const t = alertsLayer.transform;
-      w = Math.max(320, Math.min(W, t.w * W));
-      x = Math.max(0, Math.min(W - w, t.x * W));
-      y = Math.max(0, Math.min(H - 120, t.y * H));
+      w = Math.max(320, Math.min(this.w, t.w * this.w));
+      x = Math.max(0, Math.min(this.w - w, t.x * this.w));
+      y = Math.max(0, Math.min(this.h - 120, t.y * this.h));
     }
     const h = 96;
     ctx.save();

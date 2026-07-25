@@ -2,15 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Compositor } from "@/lib/studio/compositor";
+import { Recorder } from "@/lib/studio/recorder";
 import { createLayer, createScene } from "@/lib/studio/factory";
-import { publishWhip, type WhipSession } from "@/lib/media/whip-client";
-import { getSocket } from "@/lib/socket-client";
+import { ExportPanel } from "@/components/studio/export-panel";
 import { TransitionKinds, type Layer, type LayerType, type Scene, type TransitionKind, type Transform } from "@/lib/scene";
 import { cn } from "@/lib/utils";
 import {
-  Video, MonitorUp, Type, Image as ImageIcon, Square, Bell, Plus, Trash2,
-  Eye, EyeOff, Save, Radio, CircleStop, Copy, Layers as LayersIcon, TestTube,
-  Pencil, Upload, RefreshCw, ChevronUp, ChevronDown,
+  Video, MonitorUp, Type, Image as ImageIcon, Square, Plus, Trash2,
+  Eye, EyeOff, Save, Layers as LayersIcon, Circle, Pause, Play, StopCircle,
+  Music, Pencil, Upload, RefreshCw, ChevronUp, ChevronDown,
 } from "lucide-react";
 
 const LAYER_TYPES: { type: LayerType; label: string; icon: any }[] = [
@@ -19,27 +19,24 @@ const LAYER_TYPES: { type: LayerType; label: string; icon: any }[] = [
   { type: "text", label: "Texto", icon: Type },
   { type: "image", label: "Imagen", icon: ImageIcon },
   { type: "background", label: "Fondo", icon: Square },
-  { type: "alerts", label: "Alertas", icon: Bell },
 ];
 
-interface IngestInfo {
-  whipUrl: string;
-  rtmpUrl: string;
-  streamKey: string;
-  provider: string;
-}
 type Camera = { deviceId: string; label: string };
+type RecState = "idle" | "recording" | "paused";
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function fmtTime(ms: number) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m}:${(s % 60).toString().padStart(2, "0")}`;
+}
 
 export function StudioApp({
   initialScenes,
   channelSlug,
-  overlayUrl,
-  initialLive = false,
 }: {
   initialScenes: Scene[];
   channelSlug: string;
-  overlayUrl: string;
-  initialLive?: boolean;
 }) {
   const [scenes, setScenes] = useState<Scene[]>(
     initialScenes.length ? initialScenes : [createScene("Escena 1")],
@@ -47,27 +44,36 @@ export function StudioApp({
   const [activeId, setActiveId] = useState(scenes[0].id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transition, setTransitionState] = useState<TransitionKind>("fade");
-  const [live, setLive] = useState(initialLive);
-  const [ingest, setIngest] = useState<IngestInfo | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
 
+  // Grabación
+  const [recState, setRecState] = useState<RecState>("idle");
+  const [countdown, setCountdown] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [quality, setQuality] = useState<"720" | "1080">("1080");
+  const [take, setTake] = useState<{ blob: Blob; durationSec: number } | null>(null);
+  const [bgAudioName, setBgAudioName] = useState<string | null>(null);
+
   const compRef = useRef<Compositor | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
-  const whipRef = useRef<WhipSession | null>(null);
+  const recRef = useRef<Recorder | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
   const skipAutosave = useRef(true);
 
   const activeScene = useMemo(() => scenes.find((s) => s.id === activeId) ?? scenes[0], [scenes, activeId]);
   const selected = activeScene.layers.find((l) => l.id === selectedId) ?? null;
+  const recording = recState !== "idle";
 
   async function refreshCameras() {
     const list = await compRef.current?.listCameras();
     if (list) setCameras(list);
   }
 
-  // Recuerda el tipo de transición elegido (por canal, en el navegador).
+  // Recuerda el tipo de transición elegido (por proyecto, en el navegador).
   useEffect(() => {
     const saved = localStorage.getItem(`tvphi:transition:${channelSlug}`);
     if (saved && (TransitionKinds as readonly string[]).includes(saved)) {
@@ -86,7 +92,7 @@ export function StudioApp({
     mutateScene(activeScene.id, (s) => {
       const asc = [...s.layers].sort((a, b) => (a.transform.z ?? 0) - (b.transform.z ?? 0));
       const idx = asc.findIndex((l) => l.id === layerId);
-      const swap = dir === "up" ? idx + 1 : idx - 1; // "up" = más al frente (mayor z)
+      const swap = dir === "up" ? idx + 1 : idx - 1;
       if (swap < 0 || swap >= asc.length) return s;
       const a = asc[idx];
       const b = asc[swap];
@@ -116,16 +122,9 @@ export function StudioApp({
       previewRef.current.appendChild(comp.canvas);
     }
     refreshCameras();
-    const socket = getSocket();
-    const join = () => socket.emit("join", { channelSlug });
-    if (socket.connected) join();
-    socket.on("connect", join);
-    socket.on("alert", (a) =>
-      comp.pushAlert({ title: a.title, subtitle: a.subtitle, accent: a.accent, durationMs: a.durationMs }),
-    );
     return () => {
-      socket.off("connect", join);
-      socket.off("alert");
+      if (timerRef.current) clearInterval(timerRef.current);
+      audioElRef.current?.pause();
       comp.destroy();
       compRef.current = null;
     };
@@ -137,8 +136,6 @@ export function StudioApp({
     const comp = compRef.current;
     if (!comp) return;
     comp.setScenes(scenes);
-
-    // Cámara: encender si alguna escena visible la usa; apagar si ninguna.
     const allLayers = scenes.flatMap((s) => s.layers);
     const camLayer = allLayers.find((l) => l.type === "webcam" && l.visible) as any;
     if (camLayer) {
@@ -150,14 +147,12 @@ export function StudioApp({
     } else if (comp.hasWebcam()) {
       comp.disableWebcam();
     }
-
-    // Pantalla: solo se apaga sola; encender requiere gesto del usuario (botón).
     const usesScreen = allLayers.some((l) => l.type === "screen" && l.visible);
     if (!usesScreen && comp.hasScreen()) comp.disableScreen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenes]);
 
-  // Autoguardado (debounce) — persiste escenas/capas en la BD.
+  // Autoguardado (debounce) del proyecto.
   useEffect(() => {
     if (skipAutosave.current) {
       skipAutosave.current = false;
@@ -173,26 +168,15 @@ export function StudioApp({
     setActiveId(id);
     setSelectedId(null);
   }
-
   function mutateScene(sceneId: string, fn: (s: Scene) => Scene) {
     setScenes((prev) => prev.map((s) => (s.id === sceneId ? fn(s) : s)));
   }
-
   function addLayer(type: LayerType) {
-    // La capa de alertas es única por escena.
-    if (type === "alerts" && activeScene.layers.some((l) => l.type === "alerts")) {
-      setSelectedId(activeScene.layers.find((l) => l.type === "alerts")!.id);
-      setStatus("Ya existe una zona de alertas en esta escena");
-      setTimeout(() => setStatus(null), 2500);
-      return;
-    }
     const layer = createLayer(type);
     mutateScene(activeScene.id, (s) => ({ ...s, layers: [...s.layers, layer] }));
     setSelectedId(layer.id);
-    // Cámara la enciende el efecto de arriba. Pantalla necesita gesto: aquí.
     if (type === "screen") compRef.current?.enableScreen().catch(() => setStatus("Compartir pantalla cancelado"));
   }
-
   function updateLayer(layerId: string, patch: Partial<Layer> | ((l: Layer) => Layer)) {
     mutateScene(activeScene.id, (s) => ({
       ...s,
@@ -205,7 +189,6 @@ export function StudioApp({
     mutateScene(activeScene.id, (s) => ({ ...s, layers: s.layers.filter((l) => l.id !== layerId) }));
     if (selectedId === layerId) setSelectedId(null);
   }
-
   function selectCamera(layerId: string, deviceId: string) {
     updateLayer(layerId, (l) => ({ ...l, props: { ...(l as any).props, deviceId: deviceId || undefined } }) as Layer);
     compRef.current?.enableWebcam(deviceId || undefined).then(refreshCameras).catch(() => setStatus("No se pudo cambiar de cámara"));
@@ -213,10 +196,8 @@ export function StudioApp({
   function reconnectScreen() {
     compRef.current?.enableScreen().catch(() => setStatus("Compartir pantalla cancelado"));
   }
-
   function addScene() {
-    const s = createScene(`Escena ${scenes.length + 1}`);
-    setScenes((prev) => [...prev, s]);
+    setScenes((prev) => [...prev, createScene(`Escena ${prev.length + 1}`)]);
   }
   function renameScene(id: string, name: string) {
     setScenes((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
@@ -226,9 +207,8 @@ export function StudioApp({
     const remaining = scenes.filter((s) => s.id !== id);
     setScenes(remaining);
     if (activeId === id) {
-      const next = remaining[0];
-      setActiveId(next.id);
-      compRef.current?.switchScene(next.id, "cut", 0);
+      setActiveId(remaining[0].id);
+      compRef.current?.switchScene(remaining[0].id, "cut", 0);
       setSelectedId(null);
     }
   }
@@ -245,40 +225,67 @@ export function StudioApp({
     setTimeout(() => setStatus(null), 2000);
   }
 
-  async function goLive() {
-    setStatus("Iniciando…");
-    const res = await fetch("/api/stream/start", { method: "POST" });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus(data.error ?? "No se pudo iniciar");
+  // ---------- Grabación ----------
+  async function startRecording() {
+    const comp = compRef.current;
+    if (!comp) return;
+    for (let n = 3; n >= 1; n--) {
+      setCountdown(n);
+      await wait(700);
+    }
+    setCountdown(0);
+    comp.setResolution(quality === "1080" ? 1920 : 1280, quality === "1080" ? 1080 : 720);
+    const rec = new Recorder();
+    try {
+      rec.start(comp.captureStream(), { videoBitsPerSecond: quality === "1080" ? 12_000_000 : 8_000_000 });
+    } catch (e: any) {
+      setStatus("No se pudo iniciar la grabación: " + (e?.message ?? ""));
+      comp.setResolution(1280, 720);
       return;
     }
-    setIngest({ whipUrl: data.whipUrl, rtmpUrl: data.rtmpUrl, streamKey: data.streamKey, provider: data.provider });
-    try {
-      if (data.whipUrl && data.provider !== "mock") {
-        const stream = compRef.current!.captureStream();
-        whipRef.current = await publishWhip(data.whipUrl, stream);
-      } else {
-        compRef.current!.captureStream();
-      }
-      setLive(true);
-      setStatus(data.provider === "mock" ? "En vivo (demo: los espectadores ven un video de muestra)" : "¡En vivo!");
-    } catch (err: any) {
-      setLive(true);
-      setStatus(`En vivo. WHIP no disponible (${err?.message ?? "usa OBS"})`);
+    recRef.current = rec;
+    setRecState("recording");
+    setElapsed(0);
+    audioElRef.current?.play().catch(() => {});
+    timerRef.current = window.setInterval(() => setElapsed(rec.elapsedMs()), 250);
+  }
+  function pauseRec() {
+    recRef.current?.pause();
+    setRecState("paused");
+    audioElRef.current?.pause();
+  }
+  function resumeRec() {
+    recRef.current?.resume();
+    setRecState("recording");
+    audioElRef.current?.play().catch(() => {});
+  }
+  async function stopRec() {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
+    const rec = recRef.current;
+    audioElRef.current?.pause();
+    setRecState("idle");
+    setElapsed(0);
+    compRef.current?.setResolution(1280, 720);
+    if (!rec) return;
+    const res = await rec.stop();
+    recRef.current = null;
+    setTake({ blob: res.blob, durationSec: res.durationMs / 1000 });
   }
 
-  async function stopLive() {
-    await whipRef.current?.stop().catch(() => {});
-    whipRef.current = null;
-    await fetch("/api/stream/stop", { method: "POST" });
-    setLive(false);
-    setStatus("Emisión finalizada");
-  }
-
-  function testAlert() {
-    getSocket().emit("overlay:test", { kind: "donation" });
+  function onAudioFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const el = document.createElement("audio");
+    el.src = URL.createObjectURL(f);
+    el.loop = true;
+    compRef.current?.addAudioElement(el);
+    audioElRef.current = el;
+    setBgAudioName(f.name);
+    setStatus("Música añadida (sonará al grabar)");
+    setTimeout(() => setStatus(null), 2500);
   }
 
   return (
@@ -313,7 +320,7 @@ export function StudioApp({
                 <button onClick={() => switchScene(s.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
                   <LayersIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
                   <span className="truncate">{s.name}</span>
-                  {s.id === activeId && live && <span className="h-2 w-2 shrink-0 rounded-full bg-live animate-pulse-live" />}
+                  {s.id === activeId && recording && <span className="h-2 w-2 shrink-0 rounded-full bg-live animate-pulse-live" />}
                 </button>
               )}
               <button onClick={() => setEditingSceneId(s.id)} className="shrink-0 text-muted opacity-0 hover:text-fg group-hover:opacity-100" title="Renombrar">
@@ -342,55 +349,83 @@ export function StudioApp({
             ))}
           </div>
         </div>
+
+        <p className="mt-3 rounded-lg bg-surface-2 p-2 text-[11px] leading-snug text-muted">
+          Cambia de escena <strong>mientras grabas</strong> para intros, pantallas de comentarios,
+          títulos, etc.
+        </p>
       </aside>
 
       {/* Preview + controles */}
       <section className="space-y-3">
         <div className="relative aspect-video overflow-hidden rounded-2xl border border-border bg-black">
-          {/* El canvas del compositor se monta aquí (imperativo). */}
           <div ref={previewRef} className="absolute inset-0" />
-          {/* Capa interactiva: arrastrar y redimensionar la capa seleccionada. */}
           <PreviewOverlay
             layer={selected}
             onChange={(t) =>
               selected &&
-              updateLayer(
-                selected.id,
-                (l) => ({ ...l, transform: { ...l.transform, ...t } }) as Layer,
-              )
+              updateLayer(selected.id, (l) => ({ ...l, transform: { ...l.transform, ...t } }) as Layer)
             }
           />
           <div className="pointer-events-none absolute left-3 top-3 z-30">
-            {live ? (
+            {recording ? (
               <span className="chip bg-live/15 text-live">
-                <span className="h-1.5 w-1.5 rounded-full bg-live animate-pulse-live" /> EN VIVO
+                <span className="h-1.5 w-1.5 rounded-full bg-live animate-pulse-live" />
+                {recState === "paused" ? "EN PAUSA" : "GRABANDO"} · {fmtTime(elapsed)}
               </span>
             ) : (
               <span className="chip bg-surface-2 text-muted">PREVIEW</span>
             )}
           </div>
+          {countdown > 0 && (
+            <div className="absolute inset-0 z-40 grid place-items-center bg-black/50">
+              <span className="text-7xl font-black text-white">{countdown}</span>
+            </div>
+          )}
         </div>
 
-        {/* Barra de acciones */}
+        {/* Barra de grabación */}
         <div className="card flex flex-wrap items-center gap-2 p-3">
-          {!live ? (
-            <button onClick={goLive} className="btn-brand">
-              <Radio className="h-4 w-4" /> Transmitir
+          {!recording ? (
+            <button onClick={startRecording} className="btn-brand">
+              <Circle className="h-4 w-4 fill-current text-live" /> Grabar
             </button>
           ) : (
-            <button onClick={stopLive} className="btn-danger">
-              <CircleStop className="h-4 w-4" /> Detener
-            </button>
+            <>
+              {recState === "recording" ? (
+                <button onClick={pauseRec} className="btn-ghost">
+                  <Pause className="h-4 w-4" /> Pausar
+                </button>
+              ) : (
+                <button onClick={resumeRec} className="btn-brand">
+                  <Play className="h-4 w-4" /> Reanudar
+                </button>
+              )}
+              <button onClick={stopRec} className="btn-danger">
+                <StopCircle className="h-4 w-4" /> Detener
+              </button>
+            </>
           )}
+
+          <select
+            value={quality}
+            onChange={(e) => setQuality(e.target.value as "720" | "1080")}
+            disabled={recording}
+            className="input max-w-[9rem]"
+            title="Calidad de exportación"
+          >
+            <option value="1080">1080p (alta)</option>
+            <option value="720">720p (ligera)</option>
+          </select>
+
+          <label className="btn-ghost cursor-pointer" title="Música/sonido de fondo">
+            <Music className="h-4 w-4 text-accent" /> {bgAudioName ? "Música ✓" : "Música"}
+            <input type="file" accept="audio/*" className="hidden" onChange={onAudioFile} />
+          </label>
+
           <button onClick={() => void save(false)} className="btn-ghost" disabled={saving}>
             <Save className="h-4 w-4" /> {saving ? "Guardando…" : "Guardar"}
           </button>
-          <button onClick={testAlert} className="btn-ghost" title="Probar alerta">
-            <TestTube className="h-4 w-4" /> Probar alerta
-          </button>
-          <a href={`/${channelSlug}`} target="_blank" className="btn-ghost">
-            Ver canal
-          </a>
           {status && <span className="ml-auto text-sm text-muted">{status}</span>}
         </div>
 
@@ -405,16 +440,6 @@ export function StudioApp({
             ))}
           </div>
         </div>
-
-        {/* Ingest / OBS */}
-        {ingest && (
-          <div className="card space-y-2 p-3 text-sm">
-            <span className="label">¿Prefieres OBS? Usa estos datos (RTMP)</span>
-            <CopyRow label="Servidor RTMP" value={ingest.rtmpUrl} />
-            <CopyRow label="Clave de stream" value={ingest.streamKey} secret />
-            <CopyRow label="Overlay (browser source)" value={overlayUrl} />
-          </div>
-        )}
       </section>
 
       {/* Capas + propiedades */}
@@ -432,10 +457,7 @@ export function StudioApp({
                   selectedId === l.id ? "border-brand bg-brand/10" : "border-transparent hover:bg-surface-2",
                 )}
               >
-                <button
-                  onClick={(e) => { e.stopPropagation(); updateLayer(l.id, { visible: !l.visible } as any); }}
-                  className="text-muted hover:text-fg"
-                >
+                <button onClick={(e) => { e.stopPropagation(); updateLayer(l.id, { visible: !l.visible } as any); }} className="text-muted hover:text-fg">
                   {l.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </button>
                 <span className="flex-1 truncate">{l.name}</span>
@@ -465,6 +487,15 @@ export function StudioApp({
           </div>
         )}
       </aside>
+
+      {take && (
+        <ExportPanel
+          blob={take.blob}
+          durationSec={take.durationSec}
+          onClose={() => setTake(null)}
+          onRetake={() => setTake(null)}
+        />
+      )}
     </div>
   );
 }
@@ -510,19 +541,13 @@ function LayerEditor({
       {layer.type === "webcam" && (
         <div>
           <label className="label">Cámara</label>
-          <select
-            className="input mt-1"
-            value={(layer as any).props?.deviceId ?? ""}
-            onChange={(e) => onSelectCamera(e.target.value)}
-          >
+          <select className="input mt-1" value={(layer as any).props?.deviceId ?? ""} onChange={(e) => onSelectCamera(e.target.value)}>
             <option value="">Predeterminada</option>
             {cameras.map((c) => (
               <option key={c.deviceId} value={c.deviceId}>{c.label}</option>
             ))}
           </select>
-          {cameras.length === 0 && (
-            <p className="mt-1 text-xs text-muted">Concede permiso de cámara para ver la lista.</p>
-          )}
+          {cameras.length === 0 && <p className="mt-1 text-xs text-muted">Concede permiso de cámara para ver la lista.</p>}
         </div>
       )}
 
@@ -564,13 +589,6 @@ function LayerEditor({
         </div>
       )}
 
-      {layer.type === "alerts" && (
-        <p className="text-xs text-muted">
-          Esta zona define <strong>dónde</strong> aparecen las notificaciones (donaciones,
-          canjes, etc.). Mueve/redimensiona con los deslizadores. Basta con una por escena.
-        </p>
-      )}
-
       <div className="grid grid-cols-2 gap-2">
         {(["x", "y", "w", "h"] as const).map((k) => (
           <label key={k} className="space-y-1">
@@ -606,14 +624,7 @@ function PreviewOverlay({
     e.preventDefault();
     e.stopPropagation();
     const rect = ref.current.getBoundingClientRect();
-    drag.current = {
-      mode,
-      sx: e.clientX,
-      sy: e.clientY,
-      start: { ...layer.transform },
-      rectW: rect.width,
-      rectH: rect.height,
-    };
+    drag.current = { mode, sx: e.clientX, sy: e.clientY, start: { ...layer.transform }, rectW: rect.width, rectH: rect.height };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
   function move(e: React.PointerEvent) {
@@ -658,30 +669,6 @@ function PreviewOverlay({
           />
         </div>
       )}
-    </div>
-  );
-}
-
-function CopyRow({ label, value, secret }: { label: string; value: string; secret?: boolean }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div>
-      <span className="text-xs text-muted">{label}</span>
-      <div className="mt-0.5 flex items-center gap-2">
-        <input
-          readOnly
-          value={value}
-          type={secret ? "password" : "text"}
-          className="input font-mono text-xs"
-          onFocus={(e) => e.currentTarget.select()}
-        />
-        <button
-          onClick={() => { navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-          className="btn-ghost shrink-0"
-        >
-          <Copy className="h-3.5 w-3.5" /> {copied ? "✓" : ""}
-        </button>
-      </div>
     </div>
   );
 }

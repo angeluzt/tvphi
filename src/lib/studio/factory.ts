@@ -65,6 +65,6 @@ export function createScene(name: string): Scene {
     id: `scene_${nanoid(8)}`,
     name,
     order: 0,
-    layers: [createLayer("background"), createLayer("alerts")],
+    layers: [createLayer("background")],
   };
 }

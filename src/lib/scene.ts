@@ -77,7 +77,7 @@ export type Scene = z.infer<typeof sceneSchema>;
 export const TransitionKinds = ["cut", "fade", "slide"] as const;
 export type TransitionKind = (typeof TransitionKinds)[number];
 
-// Escena de ejemplo para nuevos canales.
+// Escenas de ejemplo para un nuevo proyecto de video.
 export function defaultScenes(): Scene[] {
   return [
     {
@@ -99,20 +99,13 @@ export function defaultScenes(): Scene[] {
           visible: true,
           type: "text",
           transform: { x: 0.08, y: 0.4, w: 0.84, h: 0.2, rotation: 0, opacity: 1, z: 1 },
-          props: { text: "¡Empezamos pronto!", color: "#ffffff", fontSize: 72, fontWeight: 800, align: "center", background: "transparent" },
-        },
-        {
-          id: "l_alerts",
-          name: "Alertas",
-          visible: true,
-          type: "alerts",
-          transform: { x: 0, y: 0, w: 1, h: 1, rotation: 0, opacity: 1, z: 10 },
+          props: { text: "Mi video", color: "#ffffff", fontSize: 80, fontWeight: 800, align: "center", background: "transparent" },
         },
       ],
     },
     {
-      id: "scene_live",
-      name: "En vivo",
+      id: "scene_cam",
+      name: "Cámara",
       order: 1,
       layers: [
         {
@@ -128,15 +121,8 @@ export function defaultScenes(): Scene[] {
           name: "Cámara",
           visible: true,
           type: "webcam",
-          transform: { x: 0.02, y: 0.55, w: 0.28, h: 0.42, rotation: 0, opacity: 1, z: 2 },
+          transform: { x: 0.34, y: 0.12, w: 0.32, h: 0.76, rotation: 0, opacity: 1, z: 2 },
           props: {},
-        },
-        {
-          id: "l_alerts2",
-          name: "Alertas",
-          visible: true,
-          type: "alerts",
-          transform: { x: 0, y: 0, w: 1, h: 1, rotation: 0, opacity: 1, z: 10 },
         },
       ],
     },
