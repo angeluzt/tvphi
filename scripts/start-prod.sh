@@ -23,4 +23,4 @@ while true; do
   sleep "$DELAY"
 done
 
-exec pnpm exec cross-env NODE_ENV=production tsx server.ts
+exec pnpm exec next start

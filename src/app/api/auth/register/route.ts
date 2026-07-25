@@ -39,21 +39,13 @@ export async function POST(req: Request) {
       channel: {
         create: {
           slug,
-          title: `${displayName} en TVPHI`,
-          description: "¡Bienvenido a mi canal!",
+          title: `Proyecto de ${displayName}`,
           scenes: {
             create: defaultScenes().map((s) => ({
               name: s.name,
               order: s.order,
               layers: s.layers as any,
             })),
-          },
-          overlayTokens: { create: { label: "Overlay principal" } },
-          rewards: {
-            create: [
-              { title: "Saludo en pantalla", cost: 100, action: "SHOW_MESSAGE" },
-              { title: "Reproducir sonido", cost: 250, action: "PLAY_SOUND" },
-            ],
           },
         },
       },
