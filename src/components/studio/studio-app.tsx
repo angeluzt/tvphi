@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import {
   Video, MonitorUp, Type, Image as ImageIcon, Square, Bell, Plus, Trash2,
   Eye, EyeOff, Save, Radio, CircleStop, Copy, Layers as LayersIcon, TestTube,
+  Pencil, Upload, RefreshCw,
 } from "lucide-react";
 
 const LAYER_TYPES: { type: LayerType; label: string; icon: any }[] = [
@@ -27,6 +28,7 @@ interface IngestInfo {
   streamKey: string;
   provider: string;
 }
+type Camera = { deviceId: string; label: string };
 
 export function StudioApp({
   initialScenes,
@@ -47,13 +49,21 @@ export function StudioApp({
   const [ingest, setIngest] = useState<IngestInfo | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [cameras, setCameras] = useState<Camera[]>([]);
+  const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
 
   const compRef = useRef<Compositor | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const whipRef = useRef<WhipSession | null>(null);
+  const skipAutosave = useRef(true);
 
   const activeScene = useMemo(() => scenes.find((s) => s.id === activeId) ?? scenes[0], [scenes, activeId]);
   const selected = activeScene.layers.find((l) => l.id === selectedId) ?? null;
+
+  async function refreshCameras() {
+    const list = await compRef.current?.listCameras();
+    if (list) setCameras(list);
+  }
 
   // Inicializa el compositor.
   useEffect(() => {
@@ -65,7 +75,7 @@ export function StudioApp({
       comp.canvas.className = "h-full w-full object-contain";
       previewRef.current.appendChild(comp.canvas);
     }
-    // Alertas entrantes -> se dibujan en el stream y se ven en el preview.
+    refreshCameras();
     const socket = getSocket();
     const join = () => socket.emit("join", { channelSlug });
     if (socket.connected) join();
@@ -82,9 +92,40 @@ export function StudioApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sincroniza escenas con el compositor en cada cambio.
+  // Sincroniza escenas + ciclo de vida de cámara/pantalla en cada cambio.
   useEffect(() => {
-    compRef.current?.setScenes(scenes);
+    const comp = compRef.current;
+    if (!comp) return;
+    comp.setScenes(scenes);
+
+    // Cámara: encender si alguna escena visible la usa; apagar si ninguna.
+    const allLayers = scenes.flatMap((s) => s.layers);
+    const camLayer = allLayers.find((l) => l.type === "webcam" && l.visible) as any;
+    if (camLayer) {
+      const desired: string | undefined = camLayer.props?.deviceId || undefined;
+      const cur = comp.getWebcamDeviceId();
+      if (!comp.hasWebcam() || (desired && desired !== cur)) {
+        comp.enableWebcam(desired).then(refreshCameras).catch(() => setStatus("No se pudo acceder a la cámara"));
+      }
+    } else if (comp.hasWebcam()) {
+      comp.disableWebcam();
+    }
+
+    // Pantalla: solo se apaga sola; encender requiere gesto del usuario (botón).
+    const usesScreen = allLayers.some((l) => l.type === "screen" && l.visible);
+    if (!usesScreen && comp.hasScreen()) comp.disableScreen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenes]);
+
+  // Autoguardado (debounce) — persiste escenas/capas en la BD.
+  useEffect(() => {
+    if (skipAutosave.current) {
+      skipAutosave.current = false;
+      return;
+    }
+    const t = setTimeout(() => void save(true), 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenes]);
 
   function switchScene(id: string) {
@@ -98,10 +139,17 @@ export function StudioApp({
   }
 
   function addLayer(type: LayerType) {
+    // La capa de alertas es única por escena.
+    if (type === "alerts" && activeScene.layers.some((l) => l.type === "alerts")) {
+      setSelectedId(activeScene.layers.find((l) => l.type === "alerts")!.id);
+      setStatus("Ya existe una zona de alertas en esta escena");
+      setTimeout(() => setStatus(null), 2500);
+      return;
+    }
     const layer = createLayer(type);
     mutateScene(activeScene.id, (s) => ({ ...s, layers: [...s.layers, layer] }));
     setSelectedId(layer.id);
-    if (type === "webcam") compRef.current?.enableWebcam().catch(() => setStatus("No se pudo acceder a la cámara"));
+    // Cámara la enciende el efecto de arriba. Pantalla necesita gesto: aquí.
     if (type === "screen") compRef.current?.enableScreen().catch(() => setStatus("Compartir pantalla cancelado"));
   }
 
@@ -118,22 +166,43 @@ export function StudioApp({
     if (selectedId === layerId) setSelectedId(null);
   }
 
+  function selectCamera(layerId: string, deviceId: string) {
+    updateLayer(layerId, (l) => ({ ...l, props: { ...(l as any).props, deviceId: deviceId || undefined } }) as Layer);
+    compRef.current?.enableWebcam(deviceId || undefined).then(refreshCameras).catch(() => setStatus("No se pudo cambiar de cámara"));
+  }
+  function reconnectScreen() {
+    compRef.current?.enableScreen().catch(() => setStatus("Compartir pantalla cancelado"));
+  }
+
   function addScene() {
     const s = createScene(`Escena ${scenes.length + 1}`);
     setScenes((prev) => [...prev, s]);
   }
+  function renameScene(id: string, name: string) {
+    setScenes((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
+  }
+  function deleteScene(id: string) {
+    if (scenes.length <= 1) return;
+    const remaining = scenes.filter((s) => s.id !== id);
+    setScenes(remaining);
+    if (activeId === id) {
+      const next = remaining[0];
+      setActiveId(next.id);
+      compRef.current?.switchScene(next.id, "cut", 0);
+      setSelectedId(null);
+    }
+  }
 
-  async function save() {
-    setSaving(true);
-    setStatus(null);
+  async function save(silent = false) {
+    if (!silent) setSaving(true);
     const res = await fetch("/api/channel/scenes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scenes }),
     });
-    setSaving(false);
-    setStatus(res.ok ? "Escenas guardadas ✓" : "Error al guardar");
-    setTimeout(() => setStatus(null), 2500);
+    if (!silent) setSaving(false);
+    setStatus(res.ok ? "Guardado ✓" : "Error al guardar");
+    setTimeout(() => setStatus(null), 2000);
   }
 
   async function goLive() {
@@ -145,20 +214,17 @@ export function StudioApp({
       return;
     }
     setIngest({ whipUrl: data.whipUrl, rtmpUrl: data.rtmpUrl, streamKey: data.streamKey, provider: data.provider });
-    // Publica el stream del compositor por WHIP (si el proveedor real lo soporta).
-    // En modo demo (mock) no hay ingest real: solo mostramos el preview local.
     try {
       if (data.whipUrl && data.provider !== "mock") {
         const stream = compRef.current!.captureStream();
         whipRef.current = await publishWhip(data.whipUrl, stream);
       } else {
-        // Fuerza la creación del stream para activar el audio/preview.
         compRef.current!.captureStream();
       }
       setLive(true);
-      setStatus(data.provider === "mock" ? "En vivo (modo demo)" : "¡En vivo!");
+      setStatus(data.provider === "mock" ? "En vivo (demo: los espectadores ven un video de muestra)" : "¡En vivo!");
     } catch (err: any) {
-      setLive(true); // el canal ya está marcado en vivo; OBS puede publicar por RTMP
+      setLive(true);
       setStatus(`En vivo. WHIP no disponible (${err?.message ?? "usa OBS"})`);
     }
   }
@@ -176,7 +242,7 @@ export function StudioApp({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[220px_minmax(0,1fr)_300px]">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[230px_minmax(0,1fr)_300px]">
       {/* Escenas */}
       <aside className="card flex flex-col p-3">
         <div className="mb-2 flex items-center justify-between">
@@ -187,20 +253,38 @@ export function StudioApp({
         </div>
         <div className="space-y-2">
           {scenes.map((s) => (
-            <button
+            <div
               key={s.id}
-              onClick={() => switchScene(s.id)}
               className={cn(
-                "w-full rounded-xl border p-2 text-left text-sm transition",
+                "group flex items-center gap-1 rounded-xl border px-2 py-1.5 text-sm transition",
                 s.id === activeId ? "border-brand bg-brand/10 text-fg shadow-glow" : "border-border bg-surface-2 hover:bg-border/40",
               )}
             >
-              <div className="flex items-center gap-2">
-                <LayersIcon className="h-3.5 w-3.5 text-muted" />
-                <span className="truncate">{s.name}</span>
-                {s.id === activeId && live && <span className="ml-auto h-2 w-2 rounded-full bg-live animate-pulse-live" />}
-              </div>
-            </button>
+              {editingSceneId === s.id ? (
+                <input
+                  autoFocus
+                  value={s.name}
+                  onChange={(e) => renameScene(s.id, e.target.value)}
+                  onBlur={() => setEditingSceneId(null)}
+                  onKeyDown={(e) => { if (e.key === "Enter") setEditingSceneId(null); }}
+                  className="input h-7 flex-1 py-0 text-sm"
+                />
+              ) : (
+                <button onClick={() => switchScene(s.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                  <LayersIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+                  <span className="truncate">{s.name}</span>
+                  {s.id === activeId && live && <span className="h-2 w-2 shrink-0 rounded-full bg-live animate-pulse-live" />}
+                </button>
+              )}
+              <button onClick={() => setEditingSceneId(s.id)} className="shrink-0 text-muted opacity-0 hover:text-fg group-hover:opacity-100" title="Renombrar">
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              {scenes.length > 1 && (
+                <button onClick={() => deleteScene(s.id)} className="shrink-0 text-muted opacity-0 hover:text-danger group-hover:opacity-100" title="Eliminar escena">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           ))}
         </div>
 
@@ -245,7 +329,7 @@ export function StudioApp({
               <CircleStop className="h-4 w-4" /> Detener
             </button>
           )}
-          <button onClick={save} className="btn-ghost" disabled={saving}>
+          <button onClick={() => void save(false)} className="btn-ghost" disabled={saving}>
             <Save className="h-4 w-4" /> {saving ? "Guardando…" : "Guardar"}
           </button>
           <button onClick={testAlert} className="btn-ghost" title="Probar alerta">
@@ -311,7 +395,14 @@ export function StudioApp({
 
         {selected && (
           <div className="mt-3 border-t border-border pt-3">
-            <LayerEditor layer={selected} onChange={(patch) => updateLayer(selected.id, patch)} />
+            <LayerEditor
+              layer={selected}
+              cameras={cameras}
+              onChange={(patch) => updateLayer(selected.id, patch)}
+              onSelectCamera={(id) => selectCamera(selected.id, id)}
+              onReconnectScreen={reconnectScreen}
+              onStatus={setStatus}
+            />
           </div>
         )}
       </aside>
@@ -319,34 +410,93 @@ export function StudioApp({
   );
 }
 
-function LayerEditor({ layer, onChange }: { layer: Layer; onChange: (patch: (l: Layer) => Layer) => void }) {
+function LayerEditor({
+  layer,
+  cameras,
+  onChange,
+  onSelectCamera,
+  onReconnectScreen,
+  onStatus,
+}: {
+  layer: Layer;
+  cameras: Camera[];
+  onChange: (patch: (l: Layer) => Layer) => void;
+  onSelectCamera: (deviceId: string) => void;
+  onReconnectScreen: () => void;
+  onStatus: (s: string | null) => void;
+}) {
   const t = layer.transform;
   const setT = (k: keyof typeof t, v: number) =>
     onChange((l) => ({ ...l, transform: { ...l.transform, [k]: v } }) as Layer);
   const setProp = (k: string, v: any) =>
     onChange((l) => ({ ...l, props: { ...(l as any).props, [k]: v } }) as Layer);
 
+  function onImageFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      onStatus("La imagen es muy grande (máx. 4 MB)");
+      setTimeout(() => onStatus(null), 2500);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setProp("src", String(reader.result));
+    reader.readAsDataURL(file);
+  }
+
   return (
     <div className="space-y-3 text-sm">
       <span className="label">Propiedades</span>
 
+      {layer.type === "webcam" && (
+        <div>
+          <label className="label">Cámara</label>
+          <select
+            className="input mt-1"
+            value={(layer as any).props?.deviceId ?? ""}
+            onChange={(e) => onSelectCamera(e.target.value)}
+          >
+            <option value="">Predeterminada</option>
+            {cameras.map((c) => (
+              <option key={c.deviceId} value={c.deviceId}>{c.label}</option>
+            ))}
+          </select>
+          {cameras.length === 0 && (
+            <p className="mt-1 text-xs text-muted">Concede permiso de cámara para ver la lista.</p>
+          )}
+        </div>
+      )}
+
+      {layer.type === "screen" && (
+        <button className="btn-ghost w-full" onClick={onReconnectScreen}>
+          <RefreshCw className="h-4 w-4" /> Reconectar pantalla
+        </button>
+      )}
+
       {layer.type === "text" && (
         <>
-          <textarea
-            className="input"
-            rows={2}
-            value={(layer as any).props.text}
-            onChange={(e) => setProp("text", e.target.value)}
-          />
+          <textarea className="input" rows={2} value={(layer as any).props.text} onChange={(e) => setProp("text", e.target.value)} />
           <div className="flex items-center gap-2">
             <input type="color" value={(layer as any).props.color} onChange={(e) => setProp("color", e.target.value)} className="h-8 w-10 rounded" />
             <input type="number" className="input" value={(layer as any).props.fontSize} onChange={(e) => setProp("fontSize", Number(e.target.value))} />
           </div>
         </>
       )}
+
       {layer.type === "image" && (
-        <input className="input" placeholder="URL de la imagen" value={(layer as any).props.src} onChange={(e) => setProp("src", e.target.value)} />
+        <>
+          <input className="input" placeholder="URL de la imagen" value={(layer as any).props.src} onChange={(e) => setProp("src", e.target.value)} />
+          <label className="btn-ghost w-full cursor-pointer">
+            <Upload className="h-4 w-4" /> Subir desde tu PC
+            <input type="file" accept="image/*" className="hidden" onChange={onImageFile} />
+          </label>
+          <select className="input" value={(layer as any).props.fit} onChange={(e) => setProp("fit", e.target.value)}>
+            <option value="cover">Rellenar (cover)</option>
+            <option value="contain">Ajustar (contain)</option>
+          </select>
+        </>
       )}
+
       {layer.type === "background" && (
         <div className="flex items-center gap-2">
           <input type="color" value={(layer as any).props.color} onChange={(e) => setProp("color", e.target.value)} className="h-8 w-10 rounded" />
@@ -355,15 +505,18 @@ function LayerEditor({ layer, onChange }: { layer: Layer; onChange: (patch: (l: 
         </div>
       )}
 
+      {layer.type === "alerts" && (
+        <p className="text-xs text-muted">
+          Esta zona define <strong>dónde</strong> aparecen las notificaciones (donaciones,
+          canjes, etc.). Mueve/redimensiona con los deslizadores. Basta con una por escena.
+        </p>
+      )}
+
       <div className="grid grid-cols-2 gap-2">
         {(["x", "y", "w", "h"] as const).map((k) => (
           <label key={k} className="space-y-1">
             <span className="text-xs uppercase text-muted">{k}</span>
-            <input
-              type="range" min={0} max={1} step={0.01}
-              value={t[k]} onChange={(e) => setT(k, Number(e.target.value))}
-              className="w-full"
-            />
+            <input type="range" min={0} max={1} step={0.01} value={t[k]} onChange={(e) => setT(k, Number(e.target.value))} className="w-full" />
           </label>
         ))}
       </div>

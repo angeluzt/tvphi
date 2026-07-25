@@ -1,23 +1,28 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 import { LiveBadge } from "@/components/ui/live-badge";
 import { Radio, Layers, MessageSquare, Coins, Bell, Sparkles } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const channels = await prisma.channel.findMany({
-    orderBy: [{ isLive: "desc" }, { lastLiveAt: "desc" }, { createdAt: "desc" }],
-    take: 24,
-    include: { owner: true },
-  });
+  const [channels, user] = await Promise.all([
+    prisma.channel.findMany({
+      orderBy: [{ isLive: "desc" }, { lastLiveAt: "desc" }, { createdAt: "desc" }],
+      take: 24,
+      include: { owner: true },
+    }),
+    getCurrentUser(),
+  ]);
 
   const live = channels.filter((c) => c.isLive);
   const rest = channels.filter((c) => !c.isLive);
 
   return (
     <div className="space-y-10">
-      {/* Hero */}
+      {/* Hero — solo para visitantes sin sesión */}
+      {!user && (
       <section className="card relative overflow-hidden p-8 md:p-12">
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brand/20 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-24 left-1/3 h-72 w-72 rounded-full bg-accent/10 blur-3xl" />
@@ -59,6 +64,7 @@ export default async function HomePage() {
           ))}
         </div>
       </section>
+      )}
 
       {/* En vivo */}
       <section>

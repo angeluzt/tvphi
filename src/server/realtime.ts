@@ -28,7 +28,9 @@ type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents, {}, SocketDa
 
 // Presencia y slow-mode en memoria (suficiente para una instancia; para escalar
 // horizontalmente se añadiría el adaptador Redis de Socket.IO).
-const presence = new Map<string, Set<string>>(); // slug -> socketIds
+// slug -> (socketId -> userId|null). Se cuentan identidades distintas, no sockets,
+// para que varias pestañas del mismo usuario no inflen el número de espectadores.
+const presence = new Map<string, Map<string, string | null>>();
 const lastMessageAt = new Map<string, number>(); // channelId:userId -> ms
 
 function settingsOf(ch: {
@@ -89,7 +91,7 @@ export function attachRealtime(httpServer: HttpServer) {
         socket.data.role = role;
 
         await socket.join(channelRoom(channel.slug));
-        addPresence(channel.slug, socket.id);
+        addPresence(channel.slug, socket.id, socket.data.userId);
         broadcastPresence(io, channel.slug);
 
         // Historial reciente de chat
@@ -328,16 +330,23 @@ function emptySettings(): ChannelSettings {
   return { isLive: false, subscriberOnlyChat: false, slowModeSeconds: 0, emoteOnly: false };
 }
 
-function addPresence(slug: string, socketId: string) {
-  if (!presence.has(slug)) presence.set(slug, new Set());
-  presence.get(slug)!.add(socketId);
+function addPresence(slug: string, socketId: string, userId: string | null) {
+  if (!presence.has(slug)) presence.set(slug, new Map());
+  presence.get(slug)!.set(socketId, userId);
 }
 function removePresence(slug: string, socketId: string) {
   presence.get(slug)?.delete(socketId);
 }
+// Cuenta identidades distintas: usuarios logueados por userId, anónimos por socket.
+function countViewers(slug: string): number {
+  const m = presence.get(slug);
+  if (!m) return 0;
+  const ids = new Set<string>();
+  for (const [socketId, userId] of m) ids.add(userId ?? `anon:${socketId}`);
+  return ids.size;
+}
 function broadcastPresence(io: IOServer<any, any, any, any>, slug: string) {
-  const viewers = presence.get(slug)?.size ?? 0;
-  io.to(channelRoom(slug)).emit("presence", { viewers });
+  io.to(channelRoom(slug)).emit("presence", { viewers: countViewers(slug) });
 }
 
 // Emite un evento a todos los sockets de un usuario concreto dentro de un canal.

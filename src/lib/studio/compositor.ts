@@ -27,6 +27,7 @@ export class Compositor {
   // Fuentes de media compartidas
   private webcamStream: MediaStream | null = null;
   private screenStream: MediaStream | null = null;
+  private webcamDeviceId: string | null = null;
   private videoEls = new Map<string, HTMLVideoElement>(); // 'webcam' | 'screen'
   private imageEls = new Map<string, HTMLImageElement>(); // por src
 
@@ -64,12 +65,37 @@ export class Compositor {
     }
   }
 
-  async enableWebcam() {
-    if (this.webcamStream) return;
-    this.webcamStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720 },
-      audio: true,
-    });
+  hasWebcam() {
+    return !!this.webcamStream;
+  }
+  hasScreen() {
+    return !!this.screenStream;
+  }
+  getWebcamDeviceId() {
+    return this.webcamDeviceId;
+  }
+
+  // Lista de cámaras disponibles (requiere permiso ya concedido para ver labels).
+  async listCameras(): Promise<{ deviceId: string; label: string }[]> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices
+        .filter((d) => d.kind === "videoinput")
+        .map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Cámara ${i + 1}` }));
+    } catch {
+      return [];
+    }
+  }
+
+  // Enciende (o cambia) la cámara. Si ya está activa con el mismo dispositivo, no hace nada.
+  async enableWebcam(deviceId?: string) {
+    if (this.webcamStream && (!deviceId || deviceId === this.webcamDeviceId)) return;
+    if (this.webcamStream) this.disableWebcam(); // cambio de dispositivo
+    const video: MediaTrackConstraints = { width: 1280, height: 720 };
+    if (deviceId) video.deviceId = { exact: deviceId };
+    this.webcamStream = await navigator.mediaDevices.getUserMedia({ video, audio: true });
+    this.webcamDeviceId =
+      this.webcamStream.getVideoTracks()[0]?.getSettings().deviceId ?? deviceId ?? null;
     const v = document.createElement("video");
     v.srcObject = this.webcamStream;
     v.muted = true;
@@ -84,6 +110,7 @@ export class Compositor {
     this.webcamStream = null;
     this.videoEls.delete("webcam");
     this.disconnectAudio("webcam");
+    // Conserva webcamDeviceId como memoria para volver a encender la misma cámara.
   }
 
   async enableScreen() {
@@ -212,7 +239,7 @@ export class Compositor {
       this.renderScene(active, 1);
     }
 
-    this.renderAlert(now);
+    this.renderAlert(now, active);
   }
 
   private renderScene(scene: Scene, alpha: number, offsetX = 0) {
@@ -343,17 +370,25 @@ export class Compositor {
     if (line) this.ctx.fillText(line, x, yy);
   }
 
-  private renderAlert(now: number) {
+  private renderAlert(now: number, scene?: Scene) {
     if (!this.alert) return;
     if (now > this.alert.until) {
       this.alert = null;
       return;
     }
     const ctx = this.ctx;
-    const w = 620;
+    // La capa "Alertas" define dónde aparecen las notificaciones.
+    const alertsLayer = scene?.layers.find((l) => l.type === "alerts" && l.visible);
+    let w = 620;
+    let x = (W - w) / 2;
+    let y = 40;
+    if (alertsLayer) {
+      const t = alertsLayer.transform;
+      w = Math.max(320, Math.min(W, t.w * W));
+      x = Math.max(0, Math.min(W - w, t.x * W));
+      y = Math.max(0, Math.min(H - 120, t.y * H));
+    }
     const h = 96;
-    const x = (W - w) / 2;
-    const y = 40;
     ctx.save();
     ctx.globalAlpha = 0.95;
     this.roundRect(x, y, w, h, 18);
