@@ -38,7 +38,7 @@ export async function POST(req: Request) {
           title: `${donation.displayName} donó ${formatMoney(donation.amountCents)}`,
           subtitle: donation.message ?? undefined,
           amount: formatMoney(donation.amountCents),
-          accent: "#f5c542",
+          accent: "#facc15",
           durationMs: 7000,
         });
       }

@@ -175,7 +175,7 @@ export class Compositor {
     this.alert = {
       title: a.title,
       subtitle: a.subtitle,
-      accent: a.accent ?? "#8b5cf6",
+      accent: a.accent ?? "#14b8a6",
       until: performance.now() + (a.durationMs ?? 6000),
     };
   }

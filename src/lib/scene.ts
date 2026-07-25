@@ -91,7 +91,7 @@ export function defaultScenes(): Scene[] {
           visible: true,
           type: "background",
           transform: { x: 0, y: 0, w: 1, h: 1, rotation: 0, opacity: 1, z: 0 },
-          props: { color: "#0b0b16", gradientTo: "#1a1030" },
+          props: { color: "#0a1312", gradientTo: "#0f2e2b" },
         },
         {
           id: "l_title",
@@ -121,7 +121,7 @@ export function defaultScenes(): Scene[] {
           visible: true,
           type: "background",
           transform: { x: 0, y: 0, w: 1, h: 1, rotation: 0, opacity: 1, z: 0 },
-          props: { color: "#07070d" },
+          props: { color: "#08100f" },
         },
         {
           id: "l_cam",

@@ -3,19 +3,20 @@
 @tailwind utilities;
 
 :root {
-  /* Paleta oscura por defecto — moderna, con acento violeta/cian y oro para puntos */
-  --bg: 8 8 14;
-  --surface: 16 16 26;
-  --surface-2: 24 24 38;
-  --border: 40 40 58;
-  --muted: 148 150 172;
-  --fg: 236 238 248;
-  --brand: 139 92 246; /* violeta */
-  --brand-soft: 76 40 140;
-  --accent: 34 211 238; /* cian */
-  --accent-soft: 12 110 130;
-  --gold: 245 197 66; /* puntos/dinero */
-  --live: 244 63 94; /* rojo en vivo */
+  /* Paleta "Aurora": teal (primario) + coral/naranja (acento) + oro para puntos.
+     Fondo neutro casi negro para un contraste fresco y moderno. */
+  --bg: 8 11 12;
+  --surface: 15 20 22;
+  --surface-2: 23 29 32;
+  --border: 38 46 50;
+  --muted: 146 158 162;
+  --fg: 234 240 240;
+  --brand: 20 184 166; /* teal */
+  --brand-soft: 15 118 110;
+  --accent: 251 146 60; /* coral / naranja */
+  --accent-soft: 154 52 18;
+  --gold: 250 204 21; /* puntos/dinero */
+  --live: 239 68 68; /* rojo en vivo */
   --success: 52 211 153;
   --danger: 248 113 113;
 
