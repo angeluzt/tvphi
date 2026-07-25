@@ -7,7 +7,7 @@ export function trimVideo(
   blob: Blob,
   inSec: number,
   outSec: number,
-  opts?: { onProgress?: (p: number) => void; videoBitsPerSecond?: number },
+  opts?: { onProgress?: (p: number) => void; videoBitsPerSecond?: number; mimeType?: string },
 ): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
@@ -30,7 +30,7 @@ export function trimVideo(
           ? (video as any).captureStream()
           : (video as any).mozCaptureStream();
 
-        const mime = Recorder.pickMime();
+        const mime = opts?.mimeType || Recorder.pickMime();
         const chunks: Blob[] = [];
         const mr = new MediaRecorder(stream, {
           mimeType: mime || undefined,

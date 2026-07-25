@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { trimVideo } from "@/lib/studio/trim";
-import { Download, Scissors, RotateCcw, X } from "lucide-react";
+import { Recorder } from "@/lib/studio/recorder";
+import { Download, RotateCcw, X } from "lucide-react";
 
 function fmt(s: number) {
   if (!isFinite(s)) s = 0;
@@ -31,10 +32,12 @@ export function ExportPanel({
   onRetake: () => void;
 }) {
   const url = useMemo(() => URL.createObjectURL(blob), [blob]);
+  const mp4Mime = useMemo(() => Recorder.pickMp4(), []);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [dur, setDur] = useState(durationSec || 0);
   const [inSec, setInSec] = useState(0);
   const [outSec, setOutSec] = useState(durationSec || 0);
+  const [format, setFormat] = useState<"webm" | "mp4">("webm");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -48,20 +51,30 @@ export function ExportPanel({
     }
   }
 
-  const ts = Date.now();
-  async function trimAndDownload() {
+  const canTrim = dur > 0 && (inSec > 0.1 || outSec < dur - 0.1);
+  const ext = format === "mp4" ? "mp4" : "webm";
+
+  async function download() {
+    const ts = Date.now();
+    // WebM sin recorte: descarga directa (instantánea).
+    if (format === "webm" && !canTrim) {
+      downloadBlob(blob, `tvphi-${ts}.webm`);
+      return;
+    }
+    // Recorte y/o conversión de formato: re-graba el rango con el mime elegido.
     setBusy(true);
     setProgress(0);
     try {
-      const out = await trimVideo(blob, inSec, outSec, { onProgress: setProgress });
-      downloadBlob(out, `tvphi-${ts}-recorte.webm`);
+      const mime = format === "mp4" ? mp4Mime : Recorder.pickMime();
+      const start = canTrim ? inSec : 0;
+      const end = canTrim ? outSec : dur || durationSec;
+      const out = await trimVideo(blob, start, end, { mimeType: mime, onProgress: setProgress });
+      downloadBlob(out, `tvphi-${ts}.${ext}`);
     } catch (e: any) {
-      alert("No se pudo recortar: " + (e?.message ?? ""));
+      alert("No se pudo exportar: " + (e?.message ?? ""));
     }
     setBusy(false);
   }
-
-  const canTrim = dur > 0 && (inSec > 0.1 || outSec < dur - 0.1);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" onClick={onClose}>
@@ -96,21 +109,30 @@ export function ExportPanel({
 
         {busy && (
           <p className="mt-2 text-sm text-accent">
-            Recortando… {Math.round(progress * 100)}% (se reproduce el audio durante el proceso)
+            Exportando… {Math.round(progress * 100)}% (se reproduce el audio durante el proceso)
           </p>
         )}
 
-        <div className="mt-4 flex flex-wrap justify-end gap-2">
-          <button className="btn-ghost" onClick={onRetake} disabled={busy}>
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+          <button className="btn-ghost mr-auto" onClick={onRetake} disabled={busy}>
             <RotateCcw className="h-4 w-4" /> Grabar de nuevo
           </button>
-          <button className="btn-ghost" onClick={() => downloadBlob(blob, `tvphi-${ts}.webm`)} disabled={busy}>
-            <Download className="h-4 w-4" /> Descargar original
-          </button>
-          <button className="btn-brand" onClick={trimAndDownload} disabled={busy || !canTrim}>
-            <Scissors className="h-4 w-4" /> Recortar y descargar
+          <div>
+            <label className="label">Formato</label>
+            <select value={format} onChange={(e) => setFormat(e.target.value as "webm" | "mp4")} disabled={busy} className="input mt-1 max-w-[10rem]">
+              <option value="webm">WebM (recomendado)</option>
+              {mp4Mime && <option value="mp4">MP4 (H.264)</option>}
+            </select>
+          </div>
+          <button className="btn-brand self-end" onClick={download} disabled={busy}>
+            <Download className="h-4 w-4" /> Descargar {ext.toUpperCase()}
           </button>
         </div>
+        {!mp4Mime && (
+          <p className="mt-2 text-right text-[11px] text-muted">
+            Tu navegador no graba MP4 nativo; WebM funciona en YouTube. (MP4 universal llegará con conversión.)
+          </p>
+        )}
       </div>
     </div>
   );

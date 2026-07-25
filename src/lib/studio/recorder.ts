@@ -28,6 +28,20 @@ export class Recorder {
     return "";
   }
 
+  // MP4/H.264 si el navegador lo soporta al grabar (Chrome reciente, Safari).
+  static pickMp4(): string {
+    if (typeof MediaRecorder === "undefined") return "";
+    const candidates = [
+      "video/mp4;codecs=avc1.640028,mp4a.40.2",
+      "video/mp4;codecs=avc1,mp4a",
+      "video/mp4",
+    ];
+    for (const c of candidates) {
+      if (MediaRecorder.isTypeSupported(c)) return c;
+    }
+    return "";
+  }
+
   start(stream: MediaStream, opts?: { videoBitsPerSecond?: number }) {
     this.chunks = [];
     this.mimeType = Recorder.pickMime();

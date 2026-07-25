@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import {
   Video, MonitorUp, Type, Image as ImageIcon, Square, Plus, Trash2,
   Eye, EyeOff, Save, Layers as LayersIcon, Circle, Pause, Play, StopCircle,
-  Music, Pencil, Upload, RefreshCw, ChevronUp, ChevronDown,
+  Music, Pencil, Upload, RefreshCw, ChevronUp, ChevronDown, Bookmark,
 } from "lucide-react";
 
 const LAYER_TYPES: { type: LayerType; label: string; icon: any }[] = [
@@ -56,6 +56,7 @@ export function StudioApp({
   const [quality, setQuality] = useState<"720" | "1080">("1080");
   const [take, setTake] = useState<{ blob: Blob; durationSec: number } | null>(null);
   const [bgAudioName, setBgAudioName] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
 
   const compRef = useRef<Compositor | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -85,6 +86,47 @@ export function StudioApp({
     try {
       localStorage.setItem(`tvphi:transition:${channelSlug}`, k);
     } catch {}
+  }
+
+  // Plantillas: formatos de escenas guardados para reutilizar en otros videos.
+  useEffect(() => {
+    fetch("/api/templates")
+      .then((r) => r.json())
+      .then((d) => setTemplates(d.templates ?? []))
+      .catch(() => {});
+  }, []);
+  async function saveAsTemplate() {
+    const name = prompt("Nombre de la plantilla (p. ej. Curso, Tutorial, Podcast):");
+    if (!name?.trim()) return;
+    const res = await fetch("/api/templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim(), scenes }),
+    });
+    const d = await res.json();
+    if (res.ok) {
+      setTemplates((t) => [{ id: d.template.id, name: d.template.name }, ...t]);
+      setStatus("Plantilla guardada ✓");
+    } else setStatus(d.error ?? "Error");
+    setTimeout(() => setStatus(null), 2000);
+  }
+  async function applyTemplate(id: string) {
+    if (!id) return;
+    if (!confirm("¿Cargar esta plantilla? Reemplaza las escenas actuales del proyecto.")) return;
+    const res = await fetch(`/api/templates/${id}`);
+    const d = await res.json();
+    if (res.ok && d.scenes?.length) {
+      setScenes(d.scenes);
+      setActiveId(d.scenes[0].id);
+      setSelectedId(null);
+      compRef.current?.switchScene(d.scenes[0].id, "cut", 0);
+      setStatus("Plantilla cargada ✓");
+      setTimeout(() => setStatus(null), 2000);
+    }
+  }
+  async function deleteTemplate(id: string) {
+    await fetch(`/api/templates/${id}`, { method: "DELETE" });
+    setTemplates((t) => t.filter((x) => x.id !== id));
   }
 
   // Reordena una capa en el eje Z (intercambia con la vecina).
@@ -348,6 +390,31 @@ export function StudioApp({
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="mt-3">
+          <div className="flex items-center justify-between">
+            <span className="label">Plantillas</span>
+            <button onClick={saveAsTemplate} title="Guardar el formato actual" className="rounded-lg p-1 text-brand hover:bg-surface-2">
+              <Bookmark className="h-4 w-4" />
+            </button>
+          </div>
+          {templates.length === 0 ? (
+            <p className="mt-1 text-[11px] text-muted">Guarda tu formato de escenas para reutilizarlo en otros videos.</p>
+          ) : (
+            <div className="mt-1 space-y-1">
+              {templates.map((t) => (
+                <div key={t.id} className="group flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-1 text-xs">
+                  <button onClick={() => applyTemplate(t.id)} className="min-w-0 flex-1 truncate text-left" title="Cargar plantilla">
+                    {t.name}
+                  </button>
+                  <button onClick={() => deleteTemplate(t.id)} className="shrink-0 text-muted opacity-0 hover:text-danger group-hover:opacity-100" title="Eliminar">
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <p className="mt-3 rounded-lg bg-surface-2 p-2 text-[11px] leading-snug text-muted">
