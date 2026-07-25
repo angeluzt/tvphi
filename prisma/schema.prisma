@@ -78,6 +78,7 @@ model Channel {
   modActions    ModerationAction[]
   adAccruals    AdRevenueAccrual[]
   payouts       Payout[]
+  emotes        ChannelEmote[]
 }
 
 // Rol de un usuario dentro de un canal concreto
@@ -119,6 +120,21 @@ model Scene {
   channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@index([channelId, order])
+}
+
+// Emote personalizado de un canal. La imagen se guarda como data URL (base64) para
+// que persista sin depender de almacenamiento de objetos; los emotes son pequeños.
+model ChannelEmote {
+  id        String   @id @default(cuid())
+  channelId String
+  code      String // p.ej. "phiLove" -> se escribe :phiLove: en el chat
+  imageUrl  String   @db.Text
+  createdAt DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, code])
+  @@index([channelId])
 }
 
 model StreamSession {

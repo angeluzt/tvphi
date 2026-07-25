@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getBalance } from "@/lib/points/ledger";
 import { env } from "@/lib/env";
 import { formatMoney } from "@/lib/utils";
-import { SettingsForm, RewardsManager, MonetizationPanel } from "@/components/dashboard/dashboard-widgets";
+import { SettingsForm, RewardsManager, MonetizationPanel, EmoteManager } from "@/components/dashboard/dashboard-widgets";
 import { LiveBadge } from "@/components/ui/live-badge";
 import { Radio, ExternalLink } from "lucide-react";
 
@@ -17,13 +17,14 @@ export default async function DashboardPage() {
   if (!user.channel) redirect("/auth/register");
   const channel = user.channel;
 
-  const [balance, rewards, donations, donationAgg, recentDonations, overlay] = await Promise.all([
+  const [balance, rewards, donations, donationAgg, recentDonations, overlay, emotes] = await Promise.all([
     getBalance(channel.id, user.id),
     prisma.channelReward.findMany({ where: { channelId: channel.id }, orderBy: { cost: "asc" } }),
     prisma.donation.count({ where: { channelId: channel.id, status: "COMPLETED" } }),
     prisma.donation.aggregate({ where: { channelId: channel.id, status: "COMPLETED" }, _sum: { amountCents: true } }),
     prisma.donation.findMany({ where: { channelId: channel.id, status: "COMPLETED" }, orderBy: { createdAt: "desc" }, take: 6 }),
     prisma.overlayToken.findFirst({ where: { channelId: channel.id } }),
+    prisma.channelEmote.findMany({ where: { channelId: channel.id }, orderBy: { createdAt: "asc" } }),
   ]);
 
   const totalDonations = donationAgg._sum.amountCents ?? 0;
@@ -101,6 +102,16 @@ export default async function DashboardPage() {
             Los espectadores canjean puntos por acciones que aparecen en tu directo.
           </p>
           <RewardsManager initial={rewards.map((r) => ({ id: r.id, title: r.title, cost: r.cost, action: r.action }))} />
+        </section>
+
+        {/* Emotes */}
+        <section className="card p-5 lg:col-span-2">
+          <h2 className="mb-1 text-lg font-bold">Emotes del canal</h2>
+          <p className="mb-3 text-xs text-muted">
+            Sube tus emotes (se muestran arriba del selector del chat). Además, todos tienen miles
+            de emojis gratis buscables.
+          </p>
+          <EmoteManager initial={emotes.map((e) => ({ id: e.id, code: e.code, imageUrl: e.imageUrl }))} />
         </section>
       </div>
 
