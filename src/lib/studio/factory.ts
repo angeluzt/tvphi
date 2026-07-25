@@ -53,7 +53,7 @@ export function createLayer(type: LayerType): Layer {
         visible: true,
         type,
         transform: baseTransform({ x: 0, y: 0, w: 1, h: 1, z: 0 }),
-        props: { color: "#0b0b16", gradientTo: "#1a1030" },
+        props: { color: "#0a1312", gradientTo: "#0f2e2b" },
       };
     case "alerts":
       return { id, name: "Alertas", visible: true, type, transform: baseTransform({ x: 0, y: 0, w: 1, h: 1, z: 10 }) };

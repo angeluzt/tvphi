@@ -279,7 +279,7 @@ export function attachRealtime(httpServer: HttpServer) {
           kind: "redemption",
           title: `${d.displayName} canjeó ${String((overlay.payload as any).title ?? "un reward")}`,
           subtitle: userInput,
-          accent: "#8b5cf6",
+          accent: "#14b8a6",
           durationMs: 6000,
         });
         socket.emit("points:update", { balance: newBalance });
@@ -318,7 +318,7 @@ export function attachRealtime(httpServer: HttpServer) {
                 : "Reward canjeado",
         subtitle: "¡Mensaje de prueba desde el Studio!",
         amount: kind === "donation" ? "$9.99" : undefined,
-        accent: "#22d3ee",
+        accent: "#fb923c",
         durationMs: 6000,
       });
     });

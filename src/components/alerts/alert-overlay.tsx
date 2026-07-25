@@ -56,7 +56,7 @@ export function AlertOverlay({
           kind: "redemption",
           title: String((action.payload as any).user ?? "Alguien"),
           subtitle: String((action.payload as any).userInput ?? ""),
-          accent: "#8b5cf6",
+          accent: "#14b8a6",
           durationMs: 6000,
         });
         pump();
@@ -73,7 +73,7 @@ export function AlertOverlay({
   }, [channelSlug]);
 
   const Icon = current ? ICON[current.kind] : Gift;
-  const accent = current?.accent ?? "#8b5cf6";
+  const accent = current?.accent ?? "#14b8a6";
 
   return (
     <div
