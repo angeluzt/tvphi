@@ -26,6 +26,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   channel        Channel?
+  templates      Template[]
   chatMessages   ChatMessage[]
   pointsBalances PointsBalance[]
   pointsTx       PointsTransaction[] @relation("PointsTxUser")
@@ -135,6 +136,21 @@ model ChannelEmote {
 
   @@unique([channelId, code])
   @@index([channelId])
+}
+
+// Plantilla con nombre: una distribución de escenas/capas guardada para reutilizar
+// en varios videos. Se guarda como un único JSON (poco almacenamiento).
+model Template {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  data      Json     // array de Scene serializado
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model StreamSession {
