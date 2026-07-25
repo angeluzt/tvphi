@@ -6,7 +6,7 @@ import { HlsPlayer } from "@/components/player/hls-player";
 import { AlertOverlay } from "@/components/alerts/alert-overlay";
 import { LiveBadge, ViewerCount } from "@/components/ui/live-badge";
 import { formatCompact, formatMoney } from "@/lib/utils";
-import { Coins, Gift, Zap } from "lucide-react";
+import { Coins, Gift, Zap, Star } from "lucide-react";
 
 interface Reward {
   id: string;
@@ -17,11 +17,13 @@ interface Reward {
 
 export function ChannelInteractive({
   channelSlug,
-  playbackUrl,
+  playbackUrl: initialPlaybackUrl,
   isLive: initialLive,
   rewards,
   loggedIn,
   title,
+  isOwner,
+  subscribed: initialSubscribed,
 }: {
   channelSlug: string;
   playbackUrl: string | null;
@@ -29,11 +31,16 @@ export function ChannelInteractive({
   rewards: Reward[];
   loggedIn: boolean;
   title: string;
+  isOwner: boolean;
+  subscribed: boolean;
 }) {
   const [viewers, setViewers] = useState(0);
   const [isLive, setIsLive] = useState(initialLive);
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(initialPlaybackUrl);
   const [balance, setBalance] = useState<number | null>(null);
   const [donateOpen, setDonateOpen] = useState(false);
+  const [subscribed, setSubscribed] = useState(initialSubscribed);
+  const [subBusy, setSubBusy] = useState(false);
 
   useEffect(() => {
     const socket = getSocket();
@@ -42,7 +49,10 @@ export function ChannelInteractive({
     socket.on("connect", join);
     socket.on("presence", ({ viewers }) => setViewers(viewers));
     socket.on("points:update", ({ balance }) => setBalance(balance));
-    socket.on("channel:settings", (s) => setIsLive(s.isLive));
+    socket.on("channel:settings", (s) => {
+      setIsLive(s.isLive);
+      if (s.playbackUrl !== undefined) setPlaybackUrl(s.playbackUrl);
+    });
     return () => {
       socket.off("connect", join);
       socket.off("presence");
@@ -50,6 +60,30 @@ export function ChannelInteractive({
       socket.off("channel:settings");
     };
   }, [channelSlug]);
+
+  async function toggleSubscribe() {
+    if (!loggedIn) {
+      window.location.href = "/auth/login";
+      return;
+    }
+    setSubBusy(true);
+    const res = await fetch("/api/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channelSlug, action: subscribed ? "unsubscribe" : "subscribe" }),
+    });
+    const data = await res.json();
+    setSubBusy(false);
+    if (res.ok) {
+      if (data.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+        return;
+      }
+      setSubscribed(!subscribed);
+      // Refresca el rol en el socket (para que el chat solo-suscriptores lo reconozca).
+      getSocket().emit("join", { channelSlug });
+    }
+  }
 
   function redeem(r: Reward) {
     if (!loggedIn) {
@@ -91,6 +125,16 @@ export function ChannelInteractive({
         <button className="btn-brand" onClick={() => setDonateOpen(true)}>
           <Gift className="h-4 w-4" /> Donar
         </button>
+        {!isOwner && (
+          <button
+            className={subscribed ? "btn-ghost" : "btn-accent"}
+            onClick={toggleSubscribe}
+            disabled={subBusy}
+          >
+            <Star className={subscribed ? "h-4 w-4 text-gold" : "h-4 w-4"} />
+            {subscribed ? "Suscrito" : "Suscribirse"}
+          </button>
+        )}
         {balance !== null && (
           <span className="chip bg-gold/15 text-gold">
             <Coins className="h-3.5 w-3.5" /> {formatCompact(balance)} puntos

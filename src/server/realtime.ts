@@ -38,12 +38,14 @@ function settingsOf(ch: {
   subscriberOnlyChat: boolean;
   slowModeSeconds: number;
   emoteOnly: boolean;
+  playbackUrl?: string | null;
 }): ChannelSettings {
   return {
     isLive: ch.isLive,
     subscriberOnlyChat: ch.subscriberOnlyChat,
     slowModeSeconds: ch.slowModeSeconds,
     emoteOnly: ch.emoteOnly,
+    playbackUrl: ch.playbackUrl ?? null,
   };
 }
 

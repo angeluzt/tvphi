@@ -47,6 +47,7 @@ export async function POST() {
     subscriberOnlyChat: updated.subscriberOnlyChat,
     slowModeSeconds: updated.slowModeSeconds,
     emoteOnly: updated.emoteOnly,
+    playbackUrl,
   });
 
   return NextResponse.json({

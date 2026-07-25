@@ -18,6 +18,15 @@ export default async function ChannelPage({ params }: { params: { channel: strin
   if (!channel) notFound();
 
   const user = await getCurrentUser();
+  const isOwner = user?.id === channel.ownerId;
+  const subscribed = user
+    ? Boolean(
+        await prisma.subscription.findFirst({
+          where: { channelId: channel.id, userId: user.id, status: "ACTIVE" },
+          select: { id: true },
+        }),
+      )
+    : false;
 
   // Resuelve la URL de reproducción del proveedor de medios.
   let playbackUrl = channel.playbackUrl;
@@ -34,6 +43,8 @@ export default async function ChannelPage({ params }: { params: { channel: strin
           isLive={channel.isLive}
           title={channel.title}
           loggedIn={Boolean(user)}
+          isOwner={isOwner}
+          subscribed={subscribed}
           rewards={channel.rewards.map((r) => ({
             id: r.id,
             title: r.title,
