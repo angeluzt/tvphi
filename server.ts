@@ -5,7 +5,10 @@ import { attachRealtime } from "./src/server/realtime";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = Number(process.env.PORT ?? 3000);
-const hostname = process.env.HOSTNAME ?? "0.0.0.0";
+// Escuchar en 0.0.0.0 para que la plataforma (Railway, etc.) pueda alcanzar la app.
+// OJO: no usar process.env.HOSTNAME — en contenedores es el ID del contenedor y
+// ataría el servidor a la interfaz equivocada (healthcheck "service unavailable").
+const hostname = process.env.HOST ?? "0.0.0.0";
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
