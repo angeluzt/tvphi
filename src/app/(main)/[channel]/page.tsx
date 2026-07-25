@@ -13,6 +13,7 @@ export default async function ChannelPage({ params }: { params: { channel: strin
     include: {
       owner: true,
       rewards: { where: { enabled: true }, orderBy: { cost: "asc" } },
+      emotes: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!channel) notFound();
@@ -72,7 +73,11 @@ export default async function ChannelPage({ params }: { params: { channel: strin
 
       {/* Chat */}
       <aside className="card h-[calc(100vh-7rem)] overflow-hidden lg:sticky lg:top-20">
-        <ChatBox channelSlug={channel.slug} loggedIn={Boolean(user)} />
+        <ChatBox
+          channelSlug={channel.slug}
+          loggedIn={Boolean(user)}
+          emotes={channel.emotes.map((e) => ({ code: e.code, imageUrl: e.imageUrl }))}
+        />
       </aside>
     </div>
   );

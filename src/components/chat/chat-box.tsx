@@ -8,7 +8,10 @@ import type {
   ChannelSettings,
 } from "@/lib/realtime/events";
 import { cn, formatCompact } from "@/lib/utils";
-import { Coins, Send, Shield, Ban, Clock, Trash2, Plus } from "lucide-react";
+import { Coins, Send, Shield, Ban, Clock, Trash2, Plus, Smile } from "lucide-react";
+import { EmotePicker } from "./emote-picker";
+import { EmoteText } from "./emote-text";
+import type { ChannelEmoteLite } from "@/lib/emotes";
 
 const roleStyle: Record<ChannelRoleName, string> = {
   BROADCASTER: "text-gold",
@@ -30,9 +33,11 @@ function order(r: ChannelRoleName) {
 export function ChatBox({
   channelSlug,
   loggedIn,
+  emotes = [],
 }: {
   channelSlug: string;
   loggedIn: boolean;
+  emotes?: ChannelEmoteLite[];
 }) {
   const [messages, setMessages] = useState<ChatMessagePayload[]>([]);
   const [role, setRole] = useState<ChannelRoleName>("VIEWER");
@@ -40,8 +45,14 @@ export function ChatBox({
   const [balance, setBalance] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ level: "info" | "error"; message: string } | null>(null);
   const [input, setInput] = useState("");
+  const [showPicker, setShowPicker] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const isMod = order(role) >= order("MODERATOR");
+  const emoteMap = Object.fromEntries(emotes.map((e) => [e.code, e.imageUrl]));
+
+  function insertEmote(t: string) {
+    setInput((prev) => prev + (prev && !prev.endsWith(" ") ? " " : "") + t + " ");
+  }
 
   const scrollDown = useCallback(() => {
     const el = listRef.current;
@@ -137,7 +148,9 @@ export function ChatBox({
                 {m.user.displayName}
               </span>
               <span className="text-muted">: </span>
-              <span className="break-words text-fg/90">{m.body}</span>
+              <span className="break-words text-fg/90">
+                <EmoteText body={m.body} emotes={emoteMap} />
+              </span>
             </p>
             {isMod && m.user.role !== "BROADCASTER" && (
               <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
@@ -172,7 +185,10 @@ export function ChatBox({
 
       <form onSubmit={send} className="border-t border-border p-3">
         {loggedIn ? (
-          <div className="flex items-center gap-2">
+          <div className="relative flex items-center gap-2">
+            {showPicker && (
+              <EmotePicker channelEmotes={emotes} onPick={insertEmote} onClose={() => setShowPicker(false)} />
+            )}
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -180,6 +196,14 @@ export function ChatBox({
               maxLength={500}
               className="input"
             />
+            <button
+              type="button"
+              onClick={() => setShowPicker((v) => !v)}
+              className="btn-ghost shrink-0"
+              aria-label="Emotes"
+            >
+              <Smile className="h-4 w-4" />
+            </button>
             <button className="btn-brand shrink-0" aria-label="Enviar">
               <Send className="h-4 w-4" />
             </button>

@@ -5,6 +5,7 @@ import { tokenFromCookieHeader, verifySessionToken } from "../lib/jwt";
 import { getRestriction, resolveRole, roleAtLeast } from "../lib/channel";
 import { applyPoints } from "../lib/points/ledger";
 import { redeemReward } from "../lib/points/rewards";
+import { isEmoteOnly } from "../lib/emotes";
 import {
   channelRoom,
   type ChannelSettings,
@@ -156,6 +157,17 @@ export function attachRealtime(httpServer: HttpServer) {
           message: "El chat es solo para suscriptores",
         });
         return;
+      }
+      // Modo solo emotes (mods/creador exentos).
+      if (channel.emoteOnly && !roleAtLeast(d.role, "MODERATOR")) {
+        const chanEmotes = await prisma.channelEmote.findMany({
+          where: { channelId: d.channelId },
+          select: { code: true },
+        });
+        if (!isEmoteOnly(text, chanEmotes.map((e) => e.code))) {
+          socket.emit("system:notice", { level: "error", message: "Modo solo emotes: solo se permiten emotes" });
+          return;
+        }
       }
       // Slow mode (no aplica a mods/broadcaster)
       if (channel.slowModeSeconds > 0 && !roleAtLeast(d.role, "MODERATOR")) {

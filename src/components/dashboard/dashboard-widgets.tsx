@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { cn, formatCompact, formatMoney } from "@/lib/utils";
-import { Coins, Megaphone, Banknote, Plus, Trash2, Gift } from "lucide-react";
+import { Coins, Megaphone, Banknote, Plus, Trash2, Gift, Upload } from "lucide-react";
+import { EMOTE_CODE_RE } from "@/lib/emotes";
 
 export function SettingsForm({
   initial,
@@ -166,6 +167,122 @@ export function MonetizationPanel({ balance, pointsPerUsd }: { balance: number; 
         Los ingresos por publicidad y los retiros son <strong>simulados</strong> en esta versión.
         La integración real requiere una red de anuncios aprobada y verificación (KYC/Stripe Connect).
       </p>
+    </div>
+  );
+}
+
+type Emote = { id: string; code: string; imageUrl: string };
+
+// Redimensiona la imagen a 112x112 (contain) para que el emote pese poco.
+function fileToEmoteDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const size = 112;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d")!;
+      const scale = Math.min(size / img.width, size / img.height);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+export function EmoteManager({ initial }: { initial: Emote[] }) {
+  const [emotes, setEmotes] = useState<Emote[]>(initial);
+  const [code, setCode] = useState("");
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setDataUrl(await fileToEmoteDataUrl(file));
+      setError(null);
+    } catch {
+      setError("No se pudo leer la imagen");
+    }
+  }
+
+  async function add() {
+    setError(null);
+    if (!EMOTE_CODE_RE.test(code)) {
+      setError("Código inválido (2-24: letras, números, _)");
+      return;
+    }
+    if (!dataUrl) {
+      setError("Elige una imagen");
+      return;
+    }
+    setBusy(true);
+    const res = await fetch("/api/emotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, imageUrl: dataUrl }),
+    });
+    const data = await res.json();
+    setBusy(false);
+    if (!res.ok) return setError(data.error ?? "Error");
+    setEmotes((prev) => [...prev, data.emote]);
+    setCode("");
+    setDataUrl(null);
+  }
+
+  async function remove(id: string) {
+    await fetch(`/api/emotes/${id}`, { method: "DELETE" });
+    setEmotes((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {emotes.map((e) => (
+          <div key={e.id} className="group relative rounded-xl border border-border bg-surface-2 p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={e.imageUrl} alt={e.code} className="h-10 w-10 object-contain" />
+            <p className="mt-1 max-w-[4rem] truncate text-center text-[11px] text-muted">:{e.code}:</p>
+            <button
+              onClick={() => remove(e.id)}
+              className="absolute -right-1 -top-1 hidden rounded-full bg-danger p-0.5 text-white group-hover:block"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+        {emotes.length === 0 && <p className="text-sm text-muted">Aún no tienes emotes.</p>}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 p-2">
+        <label className="btn-ghost cursor-pointer">
+          <Upload className="h-4 w-4" /> Imagen
+          <input type="file" accept="image/*" className="hidden" onChange={onFile} />
+        </label>
+        {dataUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={dataUrl} alt="" className="h-8 w-8 rounded object-contain" />
+        )}
+        <input
+          className="input max-w-[10rem]"
+          placeholder="codigo"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
+        />
+        <button className="btn-brand" onClick={add} disabled={busy}>
+          <Plus className="h-4 w-4" /> Añadir emote
+        </button>
+      </div>
+      {error && <p className="text-sm text-danger">{error}</p>}
+      <p className="text-xs text-muted">Se usan escribiendo <code>:codigo:</code> en el chat.</p>
     </div>
   );
 }
