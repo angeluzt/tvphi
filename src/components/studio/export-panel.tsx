@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { trimVideo } from "@/lib/studio/trim";
 import { Recorder } from "@/lib/studio/recorder";
-import { Download, RotateCcw, X } from "lucide-react";
+import { Download, RotateCcw, X, Scissors } from "lucide-react";
 
 function fmt(s: number) {
   if (!isFinite(s)) s = 0;
@@ -25,11 +25,13 @@ export function ExportPanel({
   durationSec,
   onClose,
   onRetake,
+  onEdit,
 }: {
   blob: Blob;
   durationSec: number;
   onClose: () => void;
   onRetake: () => void;
+  onEdit: () => void;
 }) {
   const url = useMemo(() => URL.createObjectURL(blob), [blob]);
   const mp4Mime = useMemo(() => Recorder.pickMp4(), []);
@@ -116,6 +118,9 @@ export function ExportPanel({
         <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
           <button className="btn-ghost mr-auto" onClick={onRetake} disabled={busy}>
             <RotateCcw className="h-4 w-4" /> Grabar de nuevo
+          </button>
+          <button className="btn-accent" onClick={onEdit} disabled={busy}>
+            <Scissors className="h-4 w-4" /> Editar
           </button>
           <div>
             <label className="label">Formato</label>

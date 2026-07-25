@@ -5,6 +5,7 @@ import { Compositor } from "@/lib/studio/compositor";
 import { Recorder } from "@/lib/studio/recorder";
 import { createLayer, createScene } from "@/lib/studio/factory";
 import { ExportPanel } from "@/components/studio/export-panel";
+import { EditorModal } from "@/components/editor/editor-modal";
 import { TransitionKinds, type Layer, type LayerType, type Scene, type TransitionKind, type Transform } from "@/lib/scene";
 import { cn } from "@/lib/utils";
 import {
@@ -55,6 +56,7 @@ export function StudioApp({
   const [elapsed, setElapsed] = useState(0);
   const [quality, setQuality] = useState<"720" | "1080">("1080");
   const [take, setTake] = useState<{ blob: Blob; durationSec: number } | null>(null);
+  const [editing, setEditing] = useState(false);
   const [bgAudioName, setBgAudioName] = useState<string | null>(null);
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
 
@@ -555,12 +557,20 @@ export function StudioApp({
         )}
       </aside>
 
-      {take && (
+      {take && !editing && (
         <ExportPanel
           blob={take.blob}
           durationSec={take.durationSec}
           onClose={() => setTake(null)}
           onRetake={() => setTake(null)}
+          onEdit={() => setEditing(true)}
+        />
+      )}
+
+      {take && editing && (
+        <EditorModal
+          take={take}
+          onClose={() => setEditing(false)}
         />
       )}
     </div>
