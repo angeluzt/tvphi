@@ -42,6 +42,8 @@ export interface ChannelSettings {
   subscriberOnlyChat: boolean;
   slowModeSeconds: number;
   emoteOnly: boolean;
+  // URL de reproducción actual (para que los espectadores vean el vivo sin recargar).
+  playbackUrl?: string | null;
 }
 
 // Eventos servidor -> cliente

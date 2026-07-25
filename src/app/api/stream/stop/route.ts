@@ -21,6 +21,7 @@ export async function POST() {
     subscriberOnlyChat: channel.subscriberOnlyChat,
     slowModeSeconds: channel.slowModeSeconds,
     emoteOnly: channel.emoteOnly,
+    playbackUrl: null,
   });
 
   return NextResponse.json({ ok: true });

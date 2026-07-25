@@ -35,7 +35,12 @@ export default async function StudioPage() {
           <p className="text-sm text-muted">Compón tu directo con escenas y capas — sin OBS.</p>
         </div>
       </div>
-      <StudioApp initialScenes={scenes} channelSlug={user.channel.slug} overlayUrl={overlayUrl} />
+      <StudioApp
+        initialScenes={scenes}
+        channelSlug={user.channel.slug}
+        overlayUrl={overlayUrl}
+        initialLive={user.channel.isLive}
+      />
     </div>
   );
 }

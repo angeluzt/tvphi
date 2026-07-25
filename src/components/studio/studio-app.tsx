@@ -5,12 +5,12 @@ import { Compositor } from "@/lib/studio/compositor";
 import { createLayer, createScene } from "@/lib/studio/factory";
 import { publishWhip, type WhipSession } from "@/lib/media/whip-client";
 import { getSocket } from "@/lib/socket-client";
-import { TransitionKinds, type Layer, type LayerType, type Scene, type TransitionKind } from "@/lib/scene";
+import { TransitionKinds, type Layer, type LayerType, type Scene, type TransitionKind, type Transform } from "@/lib/scene";
 import { cn } from "@/lib/utils";
 import {
   Video, MonitorUp, Type, Image as ImageIcon, Square, Bell, Plus, Trash2,
   Eye, EyeOff, Save, Radio, CircleStop, Copy, Layers as LayersIcon, TestTube,
-  Pencil, Upload, RefreshCw,
+  Pencil, Upload, RefreshCw, ChevronUp, ChevronDown,
 } from "lucide-react";
 
 const LAYER_TYPES: { type: LayerType; label: string; icon: any }[] = [
@@ -34,18 +34,20 @@ export function StudioApp({
   initialScenes,
   channelSlug,
   overlayUrl,
+  initialLive = false,
 }: {
   initialScenes: Scene[];
   channelSlug: string;
   overlayUrl: string;
+  initialLive?: boolean;
 }) {
   const [scenes, setScenes] = useState<Scene[]>(
     initialScenes.length ? initialScenes : [createScene("Escena 1")],
   );
   const [activeId, setActiveId] = useState(scenes[0].id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [transition, setTransition] = useState<TransitionKind>("fade");
-  const [live, setLive] = useState(false);
+  const [transition, setTransitionState] = useState<TransitionKind>("fade");
+  const [live, setLive] = useState(initialLive);
   const [ingest, setIngest] = useState<IngestInfo | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -63,6 +65,44 @@ export function StudioApp({
   async function refreshCameras() {
     const list = await compRef.current?.listCameras();
     if (list) setCameras(list);
+  }
+
+  // Recuerda el tipo de transición elegido (por canal, en el navegador).
+  useEffect(() => {
+    const saved = localStorage.getItem(`tvphi:transition:${channelSlug}`);
+    if (saved && (TransitionKinds as readonly string[]).includes(saved)) {
+      setTransitionState(saved as TransitionKind);
+    }
+  }, [channelSlug]);
+  function setTransition(k: TransitionKind) {
+    setTransitionState(k);
+    try {
+      localStorage.setItem(`tvphi:transition:${channelSlug}`, k);
+    } catch {}
+  }
+
+  // Reordena una capa en el eje Z (intercambia con la vecina).
+  function reorderLayer(layerId: string, dir: "up" | "down") {
+    mutateScene(activeScene.id, (s) => {
+      const asc = [...s.layers].sort((a, b) => (a.transform.z ?? 0) - (b.transform.z ?? 0));
+      const idx = asc.findIndex((l) => l.id === layerId);
+      const swap = dir === "up" ? idx + 1 : idx - 1; // "up" = más al frente (mayor z)
+      if (swap < 0 || swap >= asc.length) return s;
+      const a = asc[idx];
+      const b = asc[swap];
+      const az = a.transform.z ?? 0;
+      const bz = b.transform.z ?? 0;
+      return {
+        ...s,
+        layers: s.layers.map((l) =>
+          l.id === a.id
+            ? ({ ...l, transform: { ...l.transform, z: bz } } as Layer)
+            : l.id === b.id
+              ? ({ ...l, transform: { ...l.transform, z: az } } as Layer)
+              : l,
+        ),
+      };
+    });
   }
 
   // Inicializa el compositor.
@@ -306,8 +346,21 @@ export function StudioApp({
 
       {/* Preview + controles */}
       <section className="space-y-3">
-        <div className="relative aspect-video overflow-hidden rounded-2xl border border-border bg-black" ref={previewRef}>
-          <div className="pointer-events-none absolute left-3 top-3 z-10">
+        <div className="relative aspect-video overflow-hidden rounded-2xl border border-border bg-black">
+          {/* El canvas del compositor se monta aquí (imperativo). */}
+          <div ref={previewRef} className="absolute inset-0" />
+          {/* Capa interactiva: arrastrar y redimensionar la capa seleccionada. */}
+          <PreviewOverlay
+            layer={selected}
+            onChange={(t) =>
+              selected &&
+              updateLayer(
+                selected.id,
+                (l) => ({ ...l, transform: { ...l.transform, ...t } }) as Layer,
+              )
+            }
+          />
+          <div className="pointer-events-none absolute left-3 top-3 z-30">
             {live ? (
               <span className="chip bg-live/15 text-live">
                 <span className="h-1.5 w-1.5 rounded-full bg-live animate-pulse-live" /> EN VIVO
@@ -386,6 +439,12 @@ export function StudioApp({
                   {l.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </button>
                 <span className="flex-1 truncate">{l.name}</span>
+                <button onClick={(e) => { e.stopPropagation(); reorderLayer(l.id, "up"); }} className="text-muted hover:text-fg" title="Traer al frente">
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); reorderLayer(l.id, "down"); }} className="text-muted hover:text-fg" title="Enviar atrás">
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
                 <button onClick={(e) => { e.stopPropagation(); removeLayer(l.id); }} className="text-muted hover:text-danger">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -524,6 +583,81 @@ function LayerEditor({
         <span className="text-xs uppercase text-muted">Opacidad</span>
         <input type="range" min={0} max={1} step={0.05} value={t.opacity} onChange={(e) => setT("opacity", Number(e.target.value))} className="w-full" />
       </label>
+    </div>
+  );
+}
+
+// Capa interactiva sobre el preview: arrastrar (mover) y redimensionar la capa seleccionada.
+function PreviewOverlay({
+  layer,
+  onChange,
+}: {
+  layer: Layer | null;
+  onChange: (t: Partial<Transform>) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef<
+    | null
+    | { mode: "move" | "resize"; sx: number; sy: number; start: Transform; rectW: number; rectH: number }
+  >(null);
+
+  function begin(mode: "move" | "resize", e: React.PointerEvent) {
+    if (!layer || !ref.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = ref.current.getBoundingClientRect();
+    drag.current = {
+      mode,
+      sx: e.clientX,
+      sy: e.clientY,
+      start: { ...layer.transform },
+      rectW: rect.width,
+      rectH: rect.height,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function move(e: React.PointerEvent) {
+    const d = drag.current;
+    if (!d) return;
+    const dx = (e.clientX - d.sx) / d.rectW;
+    const dy = (e.clientY - d.sy) / d.rectH;
+    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+    if (d.mode === "move") {
+      onChange({ x: clamp(d.start.x + dx, 0, 1 - d.start.w), y: clamp(d.start.y + dy, 0, 1 - d.start.h) });
+    } else {
+      onChange({ w: clamp(d.start.w + dx, 0.05, 1 - d.start.x), h: clamp(d.start.h + dy, 0.05, 1 - d.start.y) });
+    }
+  }
+  function end(e: React.PointerEvent) {
+    drag.current = null;
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+  }
+
+  return (
+    <div ref={ref} className="pointer-events-none absolute inset-0 z-20">
+      {layer && (
+        <div
+          onPointerDown={(e) => begin("move", e)}
+          onPointerMove={move}
+          onPointerUp={end}
+          className="pointer-events-auto absolute cursor-move rounded border-2 border-accent/80 bg-accent/5"
+          style={{
+            left: `${layer.transform.x * 100}%`,
+            top: `${layer.transform.y * 100}%`,
+            width: `${layer.transform.w * 100}%`,
+            height: `${layer.transform.h * 100}%`,
+          }}
+        >
+          <div
+            onPointerDown={(e) => begin("resize", e)}
+            onPointerMove={move}
+            onPointerUp={end}
+            className="absolute -bottom-1.5 -right-1.5 h-3.5 w-3.5 cursor-se-resize rounded-sm border border-black/60 bg-accent"
+          />
+        </div>
+      )}
     </div>
   );
 }
