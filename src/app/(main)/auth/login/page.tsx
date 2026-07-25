@@ -26,7 +26,7 @@ export default function LoginPage() {
     const data = await res.json();
     setLoading(false);
     if (!res.ok) return setError(data.error ?? "Error");
-    router.push(data.slug ? `/${data.slug}` : "/");
+    router.push("/studio");
     router.refresh();
   }
 
