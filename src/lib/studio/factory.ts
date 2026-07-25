@@ -16,7 +16,7 @@ export function createLayer(type: LayerType): Layer {
   const id = `l_${nanoid(8)}`;
   switch (type) {
     case "webcam":
-      return { id, name: "Cámara", visible: true, type, transform: baseTransform({ x: 0.02, y: 0.55, w: 0.28, h: 0.42, z: 2 }) };
+      return { id, name: "Cámara", visible: true, type, transform: baseTransform({ x: 0.02, y: 0.55, w: 0.28, h: 0.42, z: 2 }), props: {} };
     case "screen":
       return { id, name: "Pantalla", visible: true, type, transform: baseTransform({ x: 0, y: 0, w: 1, h: 1, z: 1 }) };
     case "image":

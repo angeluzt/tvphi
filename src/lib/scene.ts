@@ -22,7 +22,14 @@ export const layerBase = {
 };
 
 export const layerSchema = z.discriminatedUnion("type", [
-  z.object({ ...layerBase, type: z.literal("webcam") }),
+  z.object({
+    ...layerBase,
+    type: z.literal("webcam"),
+    // Recuerda qué cámara física usar (persiste en la BD).
+    props: z
+      .object({ deviceId: z.string().optional(), label: z.string().optional() })
+      .default({}),
+  }),
   z.object({ ...layerBase, type: z.literal("screen") }),
   z.object({
     ...layerBase,
@@ -122,6 +129,7 @@ export function defaultScenes(): Scene[] {
           visible: true,
           type: "webcam",
           transform: { x: 0.02, y: 0.55, w: 0.28, h: 0.42, rotation: 0, opacity: 1, z: 2 },
+          props: {},
         },
         {
           id: "l_alerts2",
