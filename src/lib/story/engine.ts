@@ -1,5 +1,6 @@
 import {
   flatten, locate, lerpFrame, framePx, resolveFrames, moveProgress, overlayBox,
+  dialogueStarts, sfxStarts, loopSpan,
   type StoryProject, type FlatShot, type PngOverlay, type Frame,
 } from "./model";
 import { getAsset, assetUrl } from "./store";
@@ -32,6 +33,9 @@ export class StoryEngine {
   private raf = 0;
   private running = false;
   private playing = false;
+  // Tramo acotado: al reproducir una escena o una toma sueltas, solo suena eso.
+  private rangeStart = 0;
+  private rangeEnd = Infinity;
   playhead = 0;
   onTime: ((t: number) => void) | null = null;
   onEnded: (() => void) | null = null;
@@ -146,25 +150,50 @@ export class StoryEngine {
     this.audioStartHead = fromT;
     this.gains.clear();
 
-    const events: { key: string; t: number; audioId: string; gain: number; loop: boolean }[] = [];
-    for (const f of this.flat) {
-      for (const d of f.shot.dialogues) {
-        if (d.audioId) {
-          events.push({ key: `dlg:${d.id}`, t: f.start + d.startSec, audioId: d.audioId, gain: this.project.narrationVolume, loop: false });
-        }
-      }
-      for (const s of f.shot.sfx) {
-        events.push({ key: `sfx:${s.id}`, t: f.start + s.startSec, audioId: s.audioId, gain: s.volume, loop: false });
-      }
+    const total = this.duration();
+    interface Ev {
+      key: string; t: number; audioId: string; gain: number; loop: boolean;
+      until: number; // cuándo deja de sonar (los bucles se cortan a mano)
+      changes?: { at: number; volume: number }[];
     }
+    const events: Ev[] = [];
+
+    this.flat.forEach((f, i) => {
+      const dStarts = dialogueStarts(f.shot);
+      f.shot.dialogues.forEach((d, k) => {
+        if (!d.audioId) return;
+        events.push({
+          key: `dlg:${d.id}`, t: f.start + dStarts[k], audioId: d.audioId,
+          gain: this.project!.narrationVolume, loop: false, until: Infinity,
+        });
+      });
+      const sStarts = sfxStarts(f.shot);
+      f.shot.sfx.forEach((s, k) => {
+        if (s.loop) {
+          // Sigue sonando en las tomas siguientes hasta que alguna lo corte,
+          // aplicando por el camino los cambios de volumen que le pongan.
+          const span = loopSpan(this.flat, i, s.id, total);
+          events.push({
+            key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
+            gain: s.volume, loop: true, until: span.end, changes: span.changes,
+          });
+        } else {
+          events.push({
+            key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
+            gain: s.volume, loop: false, until: Infinity,
+          });
+        }
+      });
+    });
+
     for (const l of this.project.audioLayers) {
-      events.push({ key: `lay:${l.id}`, t: l.startSec, audioId: l.audioId, gain: l.volume, loop: l.loop });
+      events.push({ key: `lay:${l.id}`, t: l.startSec, audioId: l.audioId, gain: l.volume, loop: l.loop, until: Infinity });
     }
 
     for (const ev of events) {
       const buf = this.buffers.get(ev.audioId);
       if (!buf) continue;
-      const endT = ev.loop ? Infinity : ev.t + buf.duration;
+      const endT = Math.min(ev.until, ev.loop ? Infinity : ev.t + buf.duration);
       if (endT <= fromT) continue;
       const src = ctx.createBufferSource();
       src.buffer = buf;
@@ -178,6 +207,12 @@ export class StoryEngine {
       const offset = Math.max(0, fromT - ev.t);
       try {
         src.start(when, ev.loop ? offset % buf.duration : offset);
+        // Cambios de volumen al entrar en tomas que lo pidan.
+        for (const c of ev.changes ?? []) {
+          if (c.at <= fromT) g.gain.value = c.volume;
+          else g.gain.setValueAtTime(c.volume, now + (c.at - fromT));
+        }
+        if (isFinite(endT)) src.stop(now + Math.max(0, endT - fromT));
         this.sources.push(src);
         this.gains.set(ev.key, g);
       } catch {}
@@ -192,8 +227,9 @@ export class StoryEngine {
       if (!this.running) return;
       if (this.playing && this.audioCtx) {
         this.playhead = this.audioStartHead + (this.audioCtx.currentTime - this.audioStartCtx);
-        if (this.playhead >= this.duration()) {
-          this.playhead = this.duration();
+        const limit = Math.min(this.duration(), this.rangeEnd);
+        if (this.playhead >= limit) {
+          this.playhead = limit;
           this.pause();
           this.onTime?.(this.playhead);
           this.onEnded?.();
@@ -218,11 +254,26 @@ export class StoryEngine {
     this.audioCtx?.close().catch(() => {});
   }
 
+  // Acota la reproducción a un tramo (una escena o una toma). Sin argumentos,
+  // vuelve al video completo.
+  setRange(start: number, end: number) {
+    this.rangeStart = Math.max(0, start);
+    this.rangeEnd = Math.max(this.rangeStart + 0.05, end);
+  }
+  clearRange() {
+    this.rangeStart = 0;
+    this.rangeEnd = Infinity;
+  }
+
   async play() {
     if (!this.project || this.playing) return;
     this.ensureAudio();
     await this.audioCtx?.resume().catch(() => {});
-    if (this.playhead >= this.duration() - 0.05) this.playhead = 0;
+    const limit = Math.min(this.duration(), this.rangeEnd);
+    // Fuera del tramo (o al final) se vuelve al principio de lo que toque sonar.
+    if (this.playhead >= limit - 0.05 || this.playhead < this.rangeStart) {
+      this.playhead = this.rangeStart;
+    }
     this.scheduleAudio(this.playhead);
     this.playing = true;
     this.start();
@@ -234,7 +285,9 @@ export class StoryEngine {
   seek(t: number) {
     const was = this.playing;
     this.pause();
-    this.playhead = Math.max(0, Math.min(this.duration(), t));
+    const lo = this.rangeStart;
+    const hi = Math.min(this.duration(), this.rangeEnd);
+    this.playhead = Math.max(lo, Math.min(hi, t));
     this.onTime?.(this.playhead);
     this.render();
     if (was) void this.play();
@@ -332,6 +385,7 @@ export class StoryEngine {
   async export(mimeType: string, onProgress?: (p: number) => void): Promise<Blob> {
     if (!this.project) throw new Error("Sin proyecto");
     this.pause();
+    this.clearRange(); // se exporta siempre el video entero
     this.ensureAudio();
     await this.audioCtx?.resume().catch(() => {});
     const dur = this.duration();

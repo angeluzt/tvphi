@@ -4,15 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
-  Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2,
+  Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical,
 } from "lucide-react";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl } from "@/lib/story/store";
-import { ShotEditor, newSfx } from "./shot-editor";
+import { ShotEditor } from "./shot-editor";
 import {
-  emptyProject, newScene, newShot, newOverlay, moveScene, reorderScene, moveShot, migrateProject,
-  flatten, shotDur, totalDuration,
+  emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
+  flatten, shotDur, totalDuration, sceneRange, inheritedLoops,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
@@ -56,6 +56,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [selShot, setSelShot] = useState<string | null>(null);
   const [selOverlay, setSelOverlay] = useState<string | null>(null);
   const [dragScene, setDragScene] = useState<string | null>(null);
+  // Tramo que se está viendo suelto (una escena o una toma) + su miniatura flotante.
+  const [section, setSection] = useState<{ start: number; end: number; label: string; shotId?: string; sceneId?: string } | null>(null);
+  // Escena cuya posición se está cambiando escribiendo el número.
+  const [movingScene, setMovingScene] = useState<{ id: string; value: string } | null>(null);
 
   // Encargos de voz en marcha, por id de diálogo (la generación no bloquea la página).
   const [voiceJobs, setVoiceJobs] = useState<Record<string, VoiceStatus>>({});
@@ -68,6 +72,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   const engineRef = useRef<StoryEngine | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const floatRef = useRef<HTMLDivElement>(null);
   const projRef = useRef(project);
   projRef.current = project;
 
@@ -85,6 +90,15 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   }, []);
 
   useEffect(() => { engineRef.current?.update(project); }, [project]);
+
+  // El lienzo es uno solo: se muda a la miniatura flotante mientras se ve un
+  // tramo suelto, y vuelve a su sitio al cerrarla.
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    const host = section ? floatRef.current : previewRef.current;
+    if (host && eng.canvas.parentElement !== host) host.appendChild(eng.canvas);
+  }, [section]);
 
   useEffect(() => {
     const h = (e: BeforeUnloadEvent) => {
@@ -136,6 +150,50 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setSelOverlay(null);
     engineRef.current?.seekToShot(shotId);
     setPlaying(false);
+  }
+
+  // Ver solo un tramo (una escena o una toma) en la miniatura flotante, sin
+  // tener que subir hasta el reproductor de arriba.
+  async function playSection(start: number, end: number, label: string, ids: { shotId?: string; sceneId?: string }) {
+    const eng = engineRef.current!;
+    if (section && section.start === start && section.end === end && playing) {
+      eng.pause();
+      setPlaying(false);
+      return;
+    }
+    setSection({ start, end, label, ...ids });
+    eng.setRange(start, end);
+    eng.seek(start);
+    await eng.play();
+    setPlaying(true);
+  }
+  function playScene(sc: StoryScene, i: number) {
+    const r = sceneRange(flat, sc.id);
+    if (r) void playSection(r.start, r.end, `Escena ${i + 1}`, { sceneId: sc.id });
+  }
+  function playShot(sc: StoryScene, shotId: string, si: number, hi: number) {
+    const f = flat.find((x) => x.shot.id === shotId);
+    if (f) void playSection(f.start, f.start + f.dur, `Escena ${si + 1} · toma ${hi + 1}`, { shotId });
+  }
+  function closeSection() {
+    const eng = engineRef.current!;
+    eng.pause();
+    eng.clearRange();
+    setPlaying(false);
+    setSection(null);
+  }
+
+  // Coloca una escena en la posición que se escriba, sin subirla clic a clic.
+  function applyMove(sc: StoryScene) {
+    if (!movingScene) return;
+    const n = Number(movingScene.value);
+    if (!Number.isFinite(n) || n < 1 || n > project.scenes.length) {
+      setStatus(`Escribe una posición entre 1 y ${project.scenes.length}.`);
+      return;
+    }
+    mut((p) => reorderScene(p, sc.id, Math.round(n) - 1));
+    setMovingScene(null);
+    setStatus(null);
   }
 
   // ---------- escenas ----------
@@ -241,7 +299,19 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     if (!f) return;
     const audioId = nanoid(10);
     await putAsset(audioId, f);
-    updShot(sceneId, shot.id, { ...shot, sfx: [...shot.sfx, newSfx(audioId, f.name)] });
+    // La duración hace falta para poder encadenar el siguiente sonido tras su pausa.
+    const secs = await audioDuration(f).catch(() => 0);
+    mut((p) => ({
+      ...p,
+      scenes: p.scenes.map((sc) =>
+        sc.id !== sceneId ? sc : {
+          ...sc,
+          shots: sc.shots.map((sh) =>
+            sh.id !== shot.id ? sh : { ...sh, sfx: [...sh.sfx, newSfx(audioId, f.name, secs)] },
+          ),
+        },
+      ),
+    }));
   }
   async function addSticker(sceneId: string, shot: Shot, e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -490,6 +560,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                       {sc.shots.reduce((a, s) => a + shotDur(s), 0).toFixed(1)}s
                     </p>
                   </div>
+                  <button
+                    onClick={() => playScene(sc, si)}
+                    className="grid h-8 w-8 place-items-center rounded-lg border border-brand/60 text-brand hover:bg-brand/10"
+                    title="Ver solo esta escena"
+                  >
+                    {section?.sceneId === sc.id && playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                  </button>
                   <button onClick={() => addShot(sc)} className="btn-ghost text-xs" title="Añadir sub-escena">
                     <Plus className="h-3.5 w-3.5 text-accent" /> Toma
                   </button>
@@ -497,6 +574,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                     <button onClick={() => mut((p) => moveScene(p, sc.id, -1))} title="Subir escena" className="text-muted hover:text-fg"><ChevronUp className="h-4 w-4" /></button>
                     <button onClick={() => mut((p) => moveScene(p, sc.id, 1))} title="Bajar escena" className="text-muted hover:text-fg"><ChevronDown className="h-4 w-4" /></button>
                   </div>
+                  <button
+                    onClick={() => setMovingScene(movingScene?.id === sc.id ? null : { id: sc.id, value: String(si + 1) })}
+                    title="Colocar en una posición concreta"
+                    className="text-muted hover:text-fg"
+                  ><MoveVertical className="h-4 w-4" /></button>
                   <button onClick={() => delScene(sc, si)} title="Borrar escena" className="text-muted hover:text-danger"><Trash2 className="h-4 w-4" /></button>
                   <button
                     onClick={() => setOpenScene(openScene === sc.id ? null : sc.id)}
@@ -505,6 +587,22 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                     <Layers className="h-3.5 w-3.5" /> {openScene === sc.id ? "Cerrar" : "Editar"}
                   </button>
                 </div>
+
+                {movingScene?.id === sc.id && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-brand/50 bg-brand/5 p-2 text-sm">
+                    <span className="text-xs text-muted">Colocar esta escena en la posición</span>
+                    <input
+                      type="number" min={1} max={project.scenes.length} autoFocus
+                      className="input w-20 py-0.5"
+                      value={movingScene.value}
+                      onChange={(e) => setMovingScene({ id: sc.id, value: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === "Enter") applyMove(sc); if (e.key === "Escape") setMovingScene(null); }}
+                    />
+                    <span className="text-xs text-muted">de {project.scenes.length}</span>
+                    <button onClick={() => applyMove(sc)} className="btn-brand py-1 text-xs">Aceptar</button>
+                    <button onClick={() => setMovingScene(null)} className="btn-ghost py-1 text-xs">Cancelar</button>
+                  </div>
+                )}
 
                 {openScene === sc.id && (
                   <div className="mt-3 space-y-3">
@@ -520,10 +618,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         expanded={selShot === sh.id}
                         voiceJobs={voiceJobs}
                         selectedOverlay={selShot === sh.id ? selOverlay : null}
+                        inherited={inheritedLoops(flat, flat.findIndex((f) => f.shot.id === sh.id))}
+                        playing={section?.shotId === sh.id && playing}
                         onChange={(next) => updShot(sc.id, sh.id, next)}
                         onDelete={() => delShot(sc, sh.id, hi)}
                         onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
                         onToggle={() => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id))}
+                        onPlay={() => playShot(sc, sh.id, si, hi)}
                         onGenVoice={(d) => genVoice(sc.id, sh.id, d)}
                         onAddSfx={(e) => addSfx(sc.id, sh, e)}
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
@@ -661,6 +762,46 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
         {status && <p className="text-sm text-accent">{status}</p>}
       </aside>
+
+      {/* Miniatura flotante: al ver una escena o una toma sueltas, el video viene
+          a donde estás editando en vez de tener que subir al reproductor de arriba.
+          Se mueve aquí el mismo lienzo del motor. */}
+      {section && (
+        <div className="fixed inset-x-0 top-2 z-50 mx-auto w-[min(92vw,460px)] rounded-2xl border border-brand/60 bg-bg/95 p-2 shadow-2xl backdrop-blur">
+          {/* En móvil el ancho es justo: la etiqueta se recorta y el botón de
+              cerrar nunca se queda fuera del panel. */}
+          <div className="flex items-center gap-2 px-1 pb-1">
+            <span className="chip min-w-0 max-w-[55%] truncate bg-brand/15 text-brand">{section.label}</span>
+            <span className="min-w-0 flex-1 truncate text-right text-[11px] tabular-nums text-muted">
+              {fmt(Math.max(0, playhead - section.start))} / {fmt(section.end - section.start)}
+            </span>
+            <button
+              onClick={closeSection}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted hover:bg-surface-2 hover:text-fg"
+              title="Cerrar y volver al video completo"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div ref={floatRef} className="relative aspect-video overflow-hidden rounded-xl bg-black" />
+          <div className="mt-2 flex items-center gap-2 px-1">
+            <button onClick={togglePlay} className="btn-brand py-1">
+              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            </button>
+            {/* El recorrido va solo de esta escena/toma, no de todo el video */}
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0.1, section.end - section.start)}
+              step={0.05}
+              value={Math.max(0, Math.min(section.end - section.start, playhead - section.start))}
+              onChange={(e) => seek(section.start + Number(e.target.value))}
+              className="flex-1"
+              aria-label="Avanzar dentro de este tramo"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
