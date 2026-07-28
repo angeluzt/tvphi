@@ -45,7 +45,10 @@ export interface Dialogue {
   text: string; // texto oculto que narra la voz IA
   audioId?: string; // audio generado (IndexedDB)
   dur: number; // duración del audio (s), 0 si aún no se generó
-  startSec: number; // cuándo arranca dentro de la toma
+  // Pausa antes de este diálogo, contada desde que acaba el anterior. Se usa una
+  // pausa en vez de un instante absoluto para que el orden siga teniendo sentido
+  // aunque la voz todavía no se haya generado (y por tanto no se sepa cuánto dura).
+  gapSec: number;
 }
 
 export interface ShotSfx {
@@ -53,7 +56,18 @@ export interface ShotSfx {
   audioId: string;
   name: string;
   volume: number; // 0..1
-  startSec: number; // cuándo suena dentro de la toma (0 = al entrar la transición)
+  dur: number; // duración del archivo (s)
+  gapSec: number; // pausa antes: tras el sonido anterior, o desde el inicio si va en bucle
+  // En bucle el sonido no forma parte de la secuencia: arranca y sigue sonando en
+  // las tomas siguientes hasta que alguna lo corte.
+  loop: boolean;
+}
+
+// Excepción de una toma sobre un sonido en bucle que le llega de más arriba.
+export interface AudioOverride {
+  sfxId: string;
+  stop: boolean; // corta el sonido desde esta toma en adelante
+  volume: number | null; // otro volumen desde esta toma en adelante
 }
 
 // Movimiento propio de un sticker PNG:
@@ -84,6 +98,7 @@ export interface Shot {
   transitionDur: number; // duración de esa entrada (s)
   dialogues: Dialogue[];
   sfx: ShotSfx[];
+  audioOverrides: AudioOverride[]; // qué hacer con los bucles que vienen de arriba
   overlays: PngOverlay[];
 }
 
@@ -224,10 +239,42 @@ export function distanceRange(kind: MotionKind): { min: number; max: number } {
 // Duraciones y recorrido del tiempo
 // --------------------------------------------------------------------------
 
+// Instante en que arranca cada diálogo dentro de la toma. Se encadenan: cada uno
+// empieza tras su pausa, contada desde el final del anterior.
+export function dialogueStarts(s: Shot): number[] {
+  const out: number[] = [];
+  let t = 0;
+  for (const d of s.dialogues) {
+    t += Math.max(0, d.gapSec || 0);
+    out.push(t);
+    t += d.dur || 0;
+  }
+  return out;
+}
+
+// Igual para los sonidos: los que no van en bucle se encadenan entre sí; los de
+// bucle arrancan desde el inicio de la toma más su pausa.
+export function sfxStarts(s: Shot): number[] {
+  const out: number[] = [];
+  let t = 0;
+  for (const x of s.sfx) {
+    const gap = Math.max(0, x.gapSec || 0);
+    if (x.loop) {
+      out.push(gap);
+    } else {
+      t += gap;
+      out.push(t);
+      t += x.dur || 0;
+    }
+  }
+  return out;
+}
+
 export function shotDur(s: Shot) {
   if (!s.autoDuration) return Math.max(0.3, s.durationSec);
+  const starts = dialogueStarts(s);
   let end = 0;
-  for (const d of s.dialogues) end = Math.max(end, d.startSec + (d.dur || 0));
+  s.dialogues.forEach((d, i) => { end = Math.max(end, starts[i] + (d.dur || 0)); });
   return Math.max(MIN_SHOT, end + (end > 0 ? TAIL : 0)) + Math.max(0, s.holdSec);
 }
 
@@ -266,6 +313,57 @@ export function flatten(p: StoryProject): FlatShot[] {
 
 export function totalDuration(p: StoryProject) {
   return flatten(p).reduce((a, f) => a + f.dur, 0);
+}
+
+// Tramo (inicio, fin) que ocupa una escena entera en la línea de tiempo.
+export function sceneRange(flat: FlatShot[], sceneId: string): { start: number; end: number } | null {
+  const parts = flat.filter((f) => f.scene.id === sceneId);
+  if (!parts.length) return null;
+  return { start: parts[0].start, end: parts[parts.length - 1].start + parts[parts.length - 1].dur };
+}
+
+// Sonido en bucle que llega a una toma desde una anterior.
+export interface InheritedLoop {
+  sfx: ShotSfx;
+  volume: number; // volumen efectivo en esta toma
+  fromSceneIndex: number;
+  fromShotIndex: number;
+}
+
+// Bucles que siguen sonando al llegar a la toma `index`: los que arrancaron antes
+// y ninguna toma intermedia (ni esta) ha cortado. El volumen es el de la última
+// excepción que se haya puesto por el camino.
+export function inheritedLoops(flat: FlatShot[], index: number): InheritedLoop[] {
+  const out: InheritedLoop[] = [];
+  for (let j = 0; j < index; j++) {
+    for (const s of flat[j].shot.sfx) {
+      if (!s.loop) continue;
+      let stopped = false;
+      let volume = s.volume;
+      for (let k = j + 1; k <= index; k++) {
+        const ov = flat[k].shot.audioOverrides?.find((o) => o.sfxId === s.id);
+        if (!ov) continue;
+        if (ov.stop) { stopped = true; break; }
+        if (typeof ov.volume === "number") volume = ov.volume;
+      }
+      if (!stopped) out.push({ sfx: s, volume, fromSceneIndex: flat[j].sceneIndex, fromShotIndex: flat[j].shotIndex });
+    }
+  }
+  return out;
+}
+
+// Cuándo deja de sonar un bucle: en la primera toma posterior que lo corte, o al
+// final del video. Devuelve también los cambios de volumen por el camino.
+export function loopSpan(flat: FlatShot[], fromIndex: number, sfxId: string, total: number) {
+  const changes: { at: number; volume: number }[] = [];
+  let end = total;
+  for (let k = fromIndex + 1; k < flat.length; k++) {
+    const ov = flat[k].shot.audioOverrides?.find((o) => o.sfxId === sfxId);
+    if (!ov) continue;
+    if (ov.stop) { end = flat[k].start; break; }
+    if (typeof ov.volume === "number") changes.push({ at: flat[k].start, volume: ov.volume });
+  }
+  return { end, changes };
 }
 
 // Índice de la toma activa en un instante dado.
@@ -341,6 +439,7 @@ export function newShot(imgW: number, imgH: number, kind: MotionKind = "in"): Sh
     transitionDur: DEFAULT_TRANS_DUR,
     dialogues: [],
     sfx: [],
+    audioOverrides: [],
     overlays: [],
   };
 }
@@ -349,8 +448,12 @@ export function newScene(imageId: string, imgW: number, imgH: number): StoryScen
   return { id: nanoid(6), imageId, imgW, imgH, shots: [newShot(imgW, imgH)] };
 }
 
-export function newDialogue(startSec = 0): Dialogue {
-  return { id: nanoid(6), text: "", dur: 0, startSec };
+export function newDialogue(gapSec = 0.3): Dialogue {
+  return { id: nanoid(6), text: "", dur: 0, gapSec };
+}
+
+export function newSfx(audioId: string, name: string, dur: number): ShotSfx {
+  return { id: nanoid(6), audioId, name, volume: 0.8, dur, gapSec: 0, loop: false };
 }
 
 export function newOverlay(imageId: string): PngOverlay {
@@ -421,6 +524,20 @@ function normalizeOverlay(o: any): PngOverlay {
   };
 }
 
+// Los modelos anteriores guardaban un instante absoluto (startSec). Se convierte
+// a pausas encadenadas para no perder los tiempos ya ajustados.
+function startsToGaps<T extends { startSec?: number; gapSec?: number; dur?: number }>(items: T[]): T[] {
+  let prevEnd = 0;
+  return items.map((it) => {
+    if (typeof it.gapSec === "number") return it;
+    const start = Math.max(0, it.startSec ?? 0);
+    const gapSec = Math.max(0, Number((start - prevEnd).toFixed(3)));
+    prevEnd = start + (it.dur ?? 0);
+    const { startSec: _drop, ...rest } = it as any;
+    return { ...rest, gapSec } as T;
+  });
+}
+
 function normalizeShot(s: any, imgW: number, imgH: number): Shot {
   const base = newShot(imgW, imgH);
   const hasFrames = s.from && s.to && typeof s.from.cx === "number";
@@ -437,8 +554,9 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     to: hasFrames ? s.to : base.to,
     transition: s.transition ?? base.transition,
     transitionDur: s.transitionDur ?? base.transitionDur,
-    dialogues: s.dialogues ?? [],
-    sfx: s.sfx ?? [],
+    dialogues: startsToGaps<Dialogue>(s.dialogues ?? []),
+    sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
+    audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
   };
 }
@@ -476,7 +594,7 @@ export function migrateProject(raw: any): StoryProject {
       ...base,
       transition: s.transition ?? "fade",
       dialogues: s.narration
-        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, startSec: 0 }]
+        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0 }]
         : [],
       overlays: (s.overlays ?? []).map(normalizeOverlay),
     };

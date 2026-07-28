@@ -1,16 +1,16 @@
 "use client";
 
-import { nanoid } from "nanoid";
 import {
   Plus, Trash2, Wand2, Volume2, Sticker, Image as ImageIcon, ChevronUp, ChevronDown, Clock,
-  Loader2,
+  Loader2, Repeat, Play, Pause,
 } from "lucide-react";
 import type { VoiceStatus } from "@/lib/story/tts";
 import { MotionEditor } from "./motion-editor";
 import { Slider } from "./slider";
+import { GapInput } from "./gap-input";
 import {
-  newDialogue, shotDur,
-  type Shot, type Dialogue, type ShotSfx, type PngOverlay,
+  newDialogue, shotDur, dialogueStarts, sfxStarts,
+  type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop,
   type TransitionKind, type OverlayTransition, type OverlayMotion,
 } from "@/lib/story/model";
 
@@ -26,10 +26,13 @@ export function ShotEditor({
   expanded,
   voiceJobs,
   selectedOverlay,
+  inherited,
+  playing,
   onChange,
   onDelete,
   onMove,
   onToggle,
+  onPlay,
   onGenVoice,
   onAddSfx,
   onAddSticker,
@@ -44,16 +47,37 @@ export function ShotEditor({
   expanded: boolean;
   voiceJobs: Record<string, VoiceStatus>;
   selectedOverlay: string | null;
+  inherited: InheritedLoop[];
+  playing: boolean;
   onChange: (s: Shot) => void;
   onDelete: () => void;
   onMove: (dir: -1 | 1) => void;
   onToggle: () => void;
+  onPlay: () => void;
   onGenVoice: (d: Dialogue) => void;
   onAddSfx: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddSticker: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSelectOverlay: (id: string | null) => void;
 }) {
   const dur = shotDur(shot);
+  const dStarts = dialogueStarts(shot);
+  const sStarts = sfxStarts(shot);
+  const sueltos = shot.sfx.map((s, i) => ({ s, i })).filter(({ s }) => !s.loop);
+  const bucles = shot.sfx.map((s, i) => ({ s, i })).filter(({ s }) => s.loop);
+
+  // Excepción de esta toma sobre un bucle que viene de arriba.
+  function setOverride(sfxId: string, patch: { stop?: boolean; volume?: number | null }) {
+    const prev = shot.audioOverrides.find((o) => o.sfxId === sfxId);
+    const next = {
+      sfxId,
+      stop: patch.stop ?? prev?.stop ?? false,
+      volume: patch.volume !== undefined ? patch.volume : (prev?.volume ?? null),
+    };
+    onChange({
+      ...shot,
+      audioOverrides: [...shot.audioOverrides.filter((o) => o.sfxId !== sfxId), next],
+    });
+  }
 
   const updDialogue = (id: string, patch: Partial<Dialogue>) =>
     onChange({ ...shot, dialogues: shot.dialogues.map((d) => (d.id === id ? { ...d, ...patch } : d)) });
@@ -81,6 +105,13 @@ export function ShotEditor({
           )}
         </button>
         <div className="flex items-center gap-1">
+          <button
+            onClick={onPlay}
+            className="grid h-7 w-7 place-items-center rounded-lg border border-brand/60 text-brand hover:bg-brand/10"
+            title="Ver solo esta toma"
+          >
+            {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          </button>
           {canMove && (
             <>
               <button onClick={() => onMove(-1)} className="text-muted hover:text-fg" title="Subir toma"><ChevronUp className="h-4 w-4" /></button>
@@ -167,7 +198,7 @@ export function ShotEditor({
         <div className="flex items-center gap-2">
           <span className="label">Diálogos (voz IA)</span>
           <button
-            onClick={() => onChange({ ...shot, dialogues: [...shot.dialogues, newDialogue(nextStart(shot))] })}
+            onClick={() => onChange({ ...shot, dialogues: [...shot.dialogues, newDialogue()] })}
             className="btn-ghost ml-auto text-xs"
           >
             <Plus className="h-3.5 w-3.5 text-accent" /> Añadir diálogo
@@ -198,17 +229,13 @@ export function ShotEditor({
                   )}
                   {voiceJobs[d.id] ? voiceLabel(voiceJobs[d.id]) : d.audioId ? "Regenerar voz" : "Generar voz"}
                 </button>
-                <label className="flex items-center gap-1 text-[11px] text-muted">
-                  Empieza a los
-                  <input
-                    type="number" step={0.1} min={0} className="input w-20 py-0.5"
-                    value={d.startSec}
-                    onChange={(e) => updDialogue(d.id, { startSec: Math.max(0, Number(e.target.value)) })}
-                  />
-                  s
-                </label>
+                <GapInput
+                  value={d.gapSec}
+                  onChange={(v) => updDialogue(d.id, { gapSec: v })}
+                  label={i === 0 ? "Pausa al empezar" : "Pausa antes"}
+                />
                 {d.audioId ? (
-                  <span className="text-[11px] text-muted">🔊 {d.dur.toFixed(1)}s</span>
+                  <span className="text-[11px] text-muted">🔊 {d.dur.toFixed(1)}s · empieza en {dStarts[i].toFixed(1)}s</span>
                 ) : (
                   <span className="text-[11px] text-muted">sin voz aún</span>
                 )}
@@ -226,7 +253,7 @@ export function ShotEditor({
         </div>
       </div>
 
-      {/* Efectos de sonido de la toma */}
+      {/* Sonidos de la toma */}
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Sonidos de esta toma</span>
@@ -235,35 +262,131 @@ export function ShotEditor({
             <input type="file" accept="audio/*" className="hidden" onChange={onAddSfx} />
           </label>
         </div>
+
+        {/* Sueltos: se encadenan con su pausa, como los diálogos */}
         <div className="mt-2 space-y-1">
-          {shot.sfx.map((s) => (
+          {sueltos.map(({ s, i }) => (
             <div key={s.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-2 py-1 text-xs">
               <Volume2 className="h-3.5 w-3.5 text-accent" />
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
-              <label className="flex items-center gap-1 text-[11px] text-muted">
-                a los
-                <input
-                  type="number" step={0.1} min={0} className="input w-16 py-0.5"
-                  value={s.startSec}
-                  onChange={(e) => updSfx(s.id, { startSec: Math.max(0, Number(e.target.value)) })}
-                />
-                s
-              </label>
+              <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Pausa antes" />
+              <span className="text-[11px] text-muted">en {sStarts[i].toFixed(1)}s</span>
               <input
                 type="range" min={0} max={1} step={0.05} value={s.volume}
                 onChange={(e) => updSfx(s.id, { volume: Number(e.target.value) })}
                 className="w-20" title="Volumen"
               />
               <button
+                onClick={() => updSfx(s.id, { loop: true })}
+                className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2"
+                title="Que siga sonando en las tomas siguientes"
+              >
+                <Repeat className="inline h-3 w-3" /> a bucle
+              </button>
+              <button
                 onClick={() => onChange({ ...shot, sfx: shot.sfx.filter((x) => x.id !== s.id) })}
                 className="text-muted hover:text-danger"
               ><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
           ))}
-          {!shot.sfx.length && (
-            <p className="text-[11px] text-muted">Golpes, choques, ambiente… suenan en el momento que marques dentro de la toma.</p>
+          {!sueltos.length && (
+            <p className="text-[11px] text-muted">Golpes, choques, ambiente… se encadenan uno tras otro con la pausa que pongas.</p>
           )}
         </div>
+
+        {/* En bucle: arrancan aquí y siguen en las tomas de abajo */}
+        {!!bucles.length && (
+          <div className="mt-2 rounded-lg border border-accent/40 bg-accent/5 p-2">
+            <span className="flex items-center gap-1 text-[11px] font-medium text-accent">
+              <Repeat className="h-3 w-3" /> En bucle desde esta toma
+            </span>
+            <div className="mt-1 space-y-1">
+              {bucles.map(({ s, i }) => (
+                <div key={s.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                  <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Empieza tras" />
+                  <input
+                    type="range" min={0} max={1} step={0.05} value={s.volume}
+                    onChange={(e) => updSfx(s.id, { volume: Number(e.target.value) })}
+                    className="w-20" title="Volumen"
+                  />
+                  <button
+                    onClick={() => updSfx(s.id, { loop: false })}
+                    className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2"
+                    title="Que suene solo en esta toma"
+                  >
+                    solo aquí
+                  </button>
+                  <button
+                    onClick={() => onChange({ ...shot, sfx: shot.sfx.filter((x) => x.id !== s.id) })}
+                    className="text-muted hover:text-danger"
+                  ><Trash2 className="h-3.5 w-3.5" /></button>
+                </div>
+              ))}
+            </div>
+            <p className="mt-1 text-[10px] text-muted">Sigue sonando en las tomas de abajo hasta que alguna lo corte.</p>
+          </div>
+        )}
+
+        {/* Bucles que llegan de tomas anteriores */}
+        {!!inherited.length && (
+          <div className="mt-2 rounded-lg border border-border p-2">
+            <span className="flex items-center gap-1 text-[11px] font-medium text-muted">
+              <Repeat className="h-3 w-3" /> Viene sonando de antes
+            </span>
+            <div className="mt-1 space-y-1">
+              {inherited.map((l) => {
+                const ov = shot.audioOverrides.find((o) => o.sfxId === l.sfx.id);
+                return (
+                  <div key={l.sfx.id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate">
+                      {l.sfx.name}
+                      <span className="text-[10px] text-muted"> · desde escena {l.fromSceneIndex + 1}, toma {l.fromShotIndex + 1}</span>
+                    </span>
+                    <label className="flex items-center gap-1 text-[11px] text-muted">
+                      Volumen aquí
+                      <input
+                        type="range" min={0} max={1} step={0.05} value={l.volume}
+                        onChange={(e) => setOverride(l.sfx.id, { volume: Number(e.target.value) })}
+                        className="w-20"
+                      />
+                    </label>
+                    {ov && typeof ov.volume === "number" && (
+                      <button
+                        onClick={() => setOverride(l.sfx.id, { volume: null })}
+                        className="text-[10px] text-muted hover:text-fg"
+                        title="Volver al volumen que traía"
+                      >
+                        restablecer
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setOverride(l.sfx.id, { stop: true })}
+                      className="rounded border border-danger/50 px-1.5 py-0.5 text-[10px] text-danger hover:bg-danger/10"
+                      title="Deja de sonar desde esta toma en adelante"
+                    >
+                      Cortar aquí
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Bucles ya cortados en esta toma: se puede deshacer */}
+        {shot.audioOverrides.filter((o) => o.stop).map((o) => (
+          <div key={o.sfxId} className="mt-1 flex items-center gap-2 rounded-lg border border-border px-2 py-1 text-[11px] text-muted">
+            <Repeat className="h-3 w-3" />
+            <span className="flex-1">Un sonido en bucle se corta en esta toma</span>
+            <button
+              onClick={() => onChange({ ...shot, audioOverrides: shot.audioOverrides.filter((x) => x.sfxId !== o.sfxId) })}
+              className="rounded border border-border px-1.5 py-0.5 hover:bg-surface-2"
+            >
+              Deshacer
+            </button>
+          </div>
+        ))}
       </div>
 
       {/* Stickers PNG */}
@@ -408,13 +531,4 @@ const OVERLAY_PRESETS: { label: string; apply: (o: PngOverlay) => Partial<PngOve
   { label: "−", apply: (o) => ({ toX: o.x, toY: o.y, toW: Math.max(0.03, o.w * 0.6), toH: Math.max(0.03, o.h * 0.6) }) },
 ];
 
-// Coloca el nuevo diálogo justo después del último.
-function nextStart(shot: Shot) {
-  let end = 0;
-  for (const d of shot.dialogues) end = Math.max(end, d.startSec + (d.dur || 0));
-  return Number(end.toFixed(2));
-}
 
-export function newSfx(audioId: string, name: string): ShotSfx {
-  return { id: nanoid(6), audioId, name, volume: 0.8, startSec: 0 };
-}

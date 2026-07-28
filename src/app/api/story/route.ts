@@ -24,14 +24,21 @@ const dialogueSchema = z.object({
   text: z.string().max(5000),
   audioId: z.string().optional(),
   dur: z.number(),
-  startSec: z.number(),
+  gapSec: z.number(),
 });
 const shotSfxSchema = z.object({
   id: z.string(),
   audioId: z.string(),
   name: z.string().max(120),
   volume: z.number(),
-  startSec: z.number(),
+  dur: z.number(),
+  gapSec: z.number(),
+  loop: z.boolean(),
+});
+const audioOverrideSchema = z.object({
+  sfxId: z.string(),
+  stop: z.boolean(),
+  volume: z.number().nullable(),
 });
 const shotSchema = z.object({
   id: z.string(),
@@ -46,6 +53,7 @@ const shotSchema = z.object({
   transitionDur: z.number(),
   dialogues: z.array(dialogueSchema).max(50),
   sfx: z.array(shotSfxSchema).max(20),
+  audioOverrides: z.array(audioOverrideSchema).max(30),
   overlays: z.array(overlaySchema).max(20),
 });
 const sceneSchema = z.object({
