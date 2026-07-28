@@ -90,8 +90,8 @@ export function ShotEditor({
     <div className={`rounded-xl border bg-surface-2/40 p-3 ${expanded ? "border-brand/60" : "border-border"}`}>
       <div className="flex items-center gap-2">
         <button onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-          <span className="chip bg-brand/15 text-brand">Toma {index + 1}</span>
-          <span className="flex items-center gap-1 text-xs text-muted">
+          <span className="chip shrink-0 bg-brand/15 text-brand">Toma {index + 1}</span>
+          <span className="flex shrink-0 items-center gap-1 text-xs text-muted">
             <Clock className="h-3 w-3" /> {dur.toFixed(1)}s
           </span>
           {!expanded && (
@@ -104,7 +104,7 @@ export function ShotEditor({
             </span>
           )}
         </button>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             onClick={onPlay}
             className="grid h-7 w-7 place-items-center rounded-lg border border-brand/60 text-brand hover:bg-brand/10"

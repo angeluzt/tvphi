@@ -556,7 +556,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                 }}
                 className={`rounded-xl border p-3 ${openScene === sc.id ? "border-brand bg-brand/5" : "border-border"} ${dragScene === sc.id ? "opacity-50" : ""}`}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted" />
                   <button
                     onClick={() => { setOpenScene(openScene === sc.id ? null : sc.id); focusShot(sc.shots[0].id); }}
@@ -572,32 +572,36 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                       {sc.shots.reduce((a, s) => a + shotDur(s), 0).toFixed(1)}s
                     </p>
                   </div>
-                  <button
-                    onClick={() => playScene(sc, si)}
-                    className="grid h-8 w-8 place-items-center rounded-lg border border-brand/60 text-brand hover:bg-brand/10"
-                    title="Ver solo esta escena"
-                  >
-                    {section?.sceneId === sc.id && playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                  </button>
-                  <button onClick={() => addShot(sc)} className="btn-ghost text-xs" title="Añadir sub-escena">
-                    <Plus className="h-3.5 w-3.5 text-accent" /> Toma
-                  </button>
-                  <div className="flex flex-col items-center gap-0.5">
-                    <button onClick={() => mut((p) => moveScene(p, sc.id, -1))} title="Subir escena" className="text-muted hover:text-fg"><ChevronUp className="h-4 w-4" /></button>
-                    <button onClick={() => mut((p) => moveScene(p, sc.id, 1))} title="Bajar escena" className="text-muted hover:text-fg"><ChevronDown className="h-4 w-4" /></button>
+                  {/* En móvil los controles bajan a su propia línea: en una sola
+                      no caben y se salían de la tarjeta. */}
+                  <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:gap-3">
+                    <button
+                      onClick={() => playScene(sc, si)}
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-brand/60 text-brand hover:bg-brand/10"
+                      title="Ver solo esta escena"
+                    >
+                      {section?.sceneId === sc.id && playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                    </button>
+                    <button onClick={() => addShot(sc)} className="btn-ghost shrink-0 text-xs" title="Añadir sub-escena">
+                      <Plus className="h-3.5 w-3.5 text-accent" /> Toma
+                    </button>
+                    <div className="flex shrink-0 flex-col items-center gap-0.5">
+                      <button onClick={() => mut((p) => moveScene(p, sc.id, -1))} title="Subir escena" className="text-muted hover:text-fg"><ChevronUp className="h-4 w-4" /></button>
+                      <button onClick={() => mut((p) => moveScene(p, sc.id, 1))} title="Bajar escena" className="text-muted hover:text-fg"><ChevronDown className="h-4 w-4" /></button>
+                    </div>
+                    <button
+                      onClick={() => setMovingScene(movingScene?.id === sc.id ? null : { id: sc.id, value: String(si + 1) })}
+                      title="Colocar en una posición concreta"
+                      className="shrink-0 text-muted hover:text-fg"
+                    ><MoveVertical className="h-4 w-4" /></button>
+                    <button onClick={() => delScene(sc, si)} title="Borrar escena" className="shrink-0 text-muted hover:text-danger"><Trash2 className="h-4 w-4" /></button>
+                    <button
+                      onClick={() => setOpenScene(openScene === sc.id ? null : sc.id)}
+                      className="btn-ghost ml-auto shrink-0 text-xs"
+                    >
+                      <Layers className="h-3.5 w-3.5" /> {openScene === sc.id ? "Cerrar" : "Editar"}
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setMovingScene(movingScene?.id === sc.id ? null : { id: sc.id, value: String(si + 1) })}
-                    title="Colocar en una posición concreta"
-                    className="text-muted hover:text-fg"
-                  ><MoveVertical className="h-4 w-4" /></button>
-                  <button onClick={() => delScene(sc, si)} title="Borrar escena" className="text-muted hover:text-danger"><Trash2 className="h-4 w-4" /></button>
-                  <button
-                    onClick={() => setOpenScene(openScene === sc.id ? null : sc.id)}
-                    className="btn-ghost text-xs"
-                  >
-                    <Layers className="h-3.5 w-3.5" /> {openScene === sc.id ? "Cerrar" : "Editar"}
-                  </button>
                 </div>
 
                 {movingScene?.id === sc.id && (

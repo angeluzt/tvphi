@@ -11,20 +11,23 @@ interface HeaderUser {
 export function SiteHeader({ user }: { user: HeaderUser | null }) {
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-bg/70 backdrop-blur-xl">
-      <div className="mx-auto flex h-14 w-full max-w-[1400px] items-center gap-4 px-4">
-        <Link href="/" className="shrink-0">
+      <div className="mx-auto flex h-14 w-full max-w-[1400px] items-center gap-2 px-3 sm:gap-4 sm:px-4">
+        <Link href="/" className="min-w-0 shrink">
           <Logo />
         </Link>
 
-        <div className="ml-auto flex items-center gap-2">
+        {/* En pantallas estrechas los rótulos se ocultan: si no, la cabecera no
+            cabe y arrastra toda la página hacia los lados. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           {user ? (
             <>
               <Link href="/story" className="btn-ghost" title="Historias narradas">
                 <Sparkles className="h-4 w-4 text-accent" />
                 <span className="hidden sm:inline">Historias</span>
               </Link>
-              <Link href="/studio" className="btn-brand">
-                <Clapperboard className="h-4 w-4" /> Studio
+              <Link href="/studio" className="btn-brand" title="Studio">
+                <Clapperboard className="h-4 w-4" />
+                <span className="hidden sm:inline">Studio</span>
               </Link>
               <Link
                 href="/dashboard"
