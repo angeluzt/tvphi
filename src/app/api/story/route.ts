@@ -6,21 +6,45 @@ import { getCurrentUser } from "@/lib/auth";
 // Metadatos del proyecto (ligeros): texto/movimiento/transición de cada slide y
 // capas de audio. Las imágenes/audios pesados viven en IndexedDB del navegador y
 // se referencian por id (assetId/imageId/audioId), no se suben aquí.
+const frameSchema = z.object({ cx: z.number(), cy: z.number(), w: z.number() });
 const overlaySchema = z.object({
   id: z.string(),
   imageId: z.string(),
   x: z.number(), y: z.number(), w: z.number(), h: z.number(),
+  transition: z.enum(["inherit", "cut", "fade", "slide"]),
 });
-const slideSchema = z.object({
+const dialogueSchema = z.object({
+  id: z.string(),
+  text: z.string().max(5000),
+  audioId: z.string().optional(),
+  dur: z.number(),
+  startSec: z.number(),
+});
+const shotSfxSchema = z.object({
+  id: z.string(),
+  audioId: z.string(),
+  name: z.string().max(120),
+  volume: z.number(),
+  startSec: z.number(),
+});
+const shotSchema = z.object({
+  id: z.string(),
+  durationSec: z.number(),
+  autoDuration: z.boolean(),
+  from: frameSchema,
+  to: frameSchema,
+  transition: z.enum(["cut", "fade", "slide"]),
+  transitionDur: z.number(),
+  dialogues: z.array(dialogueSchema).max(50),
+  sfx: z.array(shotSfxSchema).max(20),
+  overlays: z.array(overlaySchema).max(20),
+});
+const sceneSchema = z.object({
   id: z.string(),
   imageId: z.string(),
-  narration: z.string().max(5000),
-  audioId: z.string().optional(),
-  narrationDur: z.number(),
-  pan: z.enum(["none", "up", "down", "left", "right"]),
-  zoom: z.enum(["none", "in", "out"]),
-  transition: z.enum(["cut", "fade", "slide"]),
-  overlays: z.array(overlaySchema).max(20),
+  imgW: z.number(),
+  imgH: z.number(),
+  shots: z.array(shotSchema).max(50),
 });
 const audioLayerSchema = z.object({
   id: z.string(),
@@ -32,7 +56,7 @@ const audioLayerSchema = z.object({
   loop: z.boolean(),
 });
 const dataSchema = z.object({
-  slides: z.array(slideSchema).max(200),
+  scenes: z.array(sceneSchema).max(200),
   audioLayers: z.array(audioLayerSchema).max(30),
   narrationVolume: z.number(),
 });

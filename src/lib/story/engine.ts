@@ -1,24 +1,27 @@
 import {
-  slideDur, slideStarts, totalDuration, locate, TRANSITION_DUR,
-  type StoryProject, type StorySlide, type PanDir, type ZoomKind,
+  flatten, locate, lerpFrame, framePx,
+  type StoryProject, type FlatShot, type PngOverlay,
 } from "./model";
 import { getAsset, assetUrl } from "./store";
 import { Recorder } from "@/lib/studio/recorder";
 
 const W = 1280;
 const H = 720;
-const lerp = (a: number, b: number, p: number) => a + (b - a) * Math.max(0, Math.min(1, p));
 
-// Motor de "Historias narradas": anima imágenes (Ken Burns) con transiciones y
-// overlays, mezcla el audio (narración + música + SFX) y exporta re-grabando.
+// Motor de "Historias narradas": anima el encuadre de cada toma sobre su imagen,
+// encadena transiciones, dibuja los stickers, mezcla el audio (diálogos + efectos
+// por toma + música global) y exporta re-grabando la composición.
 export class StoryEngine {
   readonly canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private project: StoryProject | null = null;
+  private flat: FlatShot[] = [];
 
   private audioCtx: AudioContext | null = null;
   private dest: MediaStreamAudioDestinationNode | null = null;
   private sources: AudioBufferSourceNode[] = [];
+  // Ganancias vivas por clip, para que mover un volumen se oiga al momento.
+  private gains = new Map<string, GainNode>();
   private audioStartCtx = 0;
   private audioStartHead = 0;
 
@@ -47,22 +50,28 @@ export class StoryEngine {
 
   async setProject(p: StoryProject) {
     this.project = p;
+    this.flat = flatten(p);
     await this.ensureAssets(p);
     this.render();
   }
   update(p: StoryProject) {
     this.project = p;
+    this.flat = flatten(p);
     void this.ensureAssets(p);
+    this.applyVolumes();
     if (!this.playing) this.render();
   }
 
   private async ensureAssets(p: StoryProject) {
     const imgIds = new Set<string>();
     const audioIds = new Set<string>();
-    for (const s of p.slides) {
-      imgIds.add(s.imageId);
-      if (s.audioId) audioIds.add(s.audioId);
-      for (const o of s.overlays) imgIds.add(o.imageId);
+    for (const sc of p.scenes) {
+      imgIds.add(sc.imageId);
+      for (const sh of sc.shots) {
+        for (const d of sh.dialogues) if (d.audioId) audioIds.add(d.audioId);
+        for (const s of sh.sfx) audioIds.add(s.audioId);
+        for (const o of sh.overlays) imgIds.add(o.imageId);
+      }
     }
     for (const l of p.audioLayers) audioIds.add(l.audioId);
 
@@ -74,6 +83,8 @@ export class StoryEngine {
         const img = new Image();
         img.src = url;
         this.images.set(id, img);
+        // Repinta en cuanto la imagen esté lista (si no se está reproduciendo).
+        img.decode?.().then(() => { if (!this.playing) this.render(); }).catch(() => {});
       }),
       ...[...audioIds].map(async (id) => {
         if (this.buffers.has(id)) return;
@@ -89,14 +100,29 @@ export class StoryEngine {
   }
 
   duration() {
-    return this.project ? totalDuration(this.project) : 0;
+    return this.flat.reduce((a, f) => a + f.dur, 0);
   }
 
   // ---------------- audio ----------------
   private stopSources() {
     for (const s of this.sources) { try { s.stop(); } catch {} }
     this.sources = [];
+    this.gains.clear();
   }
+
+  // Vuelca los volúmenes actuales del proyecto sobre las ganancias ya sonando,
+  // para que mover un deslizador se oiga sin reiniciar la reproducción.
+  private applyVolumes() {
+    const p = this.project;
+    if (!p || !this.gains.size || !this.audioCtx) return;
+    const now = this.audioCtx.currentTime;
+    for (const f of this.flat) {
+      for (const d of f.shot.dialogues) this.gains.get(`dlg:${d.id}`)?.gain.setTargetAtTime(p.narrationVolume, now, 0.02);
+      for (const s of f.shot.sfx) this.gains.get(`sfx:${s.id}`)?.gain.setTargetAtTime(s.volume, now, 0.02);
+    }
+    for (const l of p.audioLayers) this.gains.get(`lay:${l.id}`)?.gain.setTargetAtTime(l.volume, now, 0.02);
+  }
+
   private scheduleAudio(fromT: number) {
     if (!this.project) return;
     this.ensureAudio();
@@ -104,24 +130,30 @@ export class StoryEngine {
     const now = ctx.currentTime + 0.06;
     this.audioStartCtx = now;
     this.audioStartHead = fromT;
+    this.gains.clear();
 
-    const events: { t: number; buf: AudioBuffer; gain: number; loop: boolean }[] = [];
-    const starts = slideStarts(this.project);
-    this.project.slides.forEach((s, i) => {
-      if (s.audioId && this.buffers.has(s.audioId)) {
-        events.push({ t: starts[i], buf: this.buffers.get(s.audioId)!, gain: this.project!.narrationVolume, loop: false });
+    const events: { key: string; t: number; audioId: string; gain: number; loop: boolean }[] = [];
+    for (const f of this.flat) {
+      for (const d of f.shot.dialogues) {
+        if (d.audioId) {
+          events.push({ key: `dlg:${d.id}`, t: f.start + d.startSec, audioId: d.audioId, gain: this.project.narrationVolume, loop: false });
+        }
       }
-    });
+      for (const s of f.shot.sfx) {
+        events.push({ key: `sfx:${s.id}`, t: f.start + s.startSec, audioId: s.audioId, gain: s.volume, loop: false });
+      }
+    }
     for (const l of this.project.audioLayers) {
-      const buf = this.buffers.get(l.audioId);
-      if (buf) events.push({ t: l.startSec, buf, gain: l.volume, loop: l.loop });
+      events.push({ key: `lay:${l.id}`, t: l.startSec, audioId: l.audioId, gain: l.volume, loop: l.loop });
     }
 
     for (const ev of events) {
-      const endT = ev.loop ? Infinity : ev.t + ev.buf.duration;
+      const buf = this.buffers.get(ev.audioId);
+      if (!buf) continue;
+      const endT = ev.loop ? Infinity : ev.t + buf.duration;
       if (endT <= fromT) continue;
       const src = ctx.createBufferSource();
-      src.buffer = ev.buf;
+      src.buffer = buf;
       src.loop = ev.loop;
       const g = ctx.createGain();
       g.gain.value = ev.gain;
@@ -131,8 +163,9 @@ export class StoryEngine {
       const when = now + Math.max(0, ev.t - fromT);
       const offset = Math.max(0, fromT - ev.t);
       try {
-        src.start(when, ev.loop ? offset % ev.buf.duration : offset);
+        src.start(when, ev.loop ? offset % buf.duration : offset);
         this.sources.push(src);
+        this.gains.set(ev.key, g);
       } catch {}
     }
   }
@@ -193,68 +226,77 @@ export class StoryEngine {
     if (was) void this.play();
   }
 
+  // Coloca el reproductor al principio de una toma concreta.
+  seekToShot(shotId: string) {
+    const f = this.flat.find((x) => x.shot.id === shotId);
+    if (f) this.seek(f.start + 0.01);
+  }
+
   // ---------------- render ----------------
   private render() {
     const ctx = this.ctx;
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
-    if (!this.project) return;
-    const loc = locate(this.project, this.playhead);
-    if (!loc) return;
-    const i = loc.index;
-    const slide = this.project.slides[i];
-    if (!slide) return;
-    const dur = slideDur(slide);
-    const inT = loc.progress * dur;
-    const entering = i > 0 && slide.transition !== "cut" && inT < TRANSITION_DUR;
+    if (!this.project || !this.flat.length) return;
+
+    const i = locate(this.flat, this.playhead);
+    if (i < 0) return;
+    const cur = this.flat[i];
+    const lt = Math.max(0, Math.min(cur.dur, this.playhead - cur.start));
+    const tDur = Math.max(0, Math.min(cur.dur, cur.shot.transitionDur));
+    const entering = i > 0 && cur.shot.transition !== "cut" && tDur > 0 && lt < tDur;
 
     if (entering) {
-      const prev = this.project.slides[i - 1];
-      this.drawSlide(prev, 1, 1, 0);
-      const a = inT / TRANSITION_DUR;
-      if (slide.transition === "fade") this.drawSlide(slide, loc.progress, a, 0);
-      else this.drawSlide(slide, loc.progress, 1, (1 - a) * W);
+      const prev = this.flat[i - 1];
+      this.drawShot(prev, prev.dur, 1, 0); // la anterior, en su estado final
+      const a = lt / tDur;
+      if (cur.shot.transition === "fade") this.drawShot(cur, lt, a, 0);
+      else this.drawShot(cur, lt, 1, (1 - a) * W);
     } else {
-      this.drawSlide(slide, loc.progress, 1, 0);
+      this.drawShot(cur, lt, 1, 0);
     }
   }
 
-  private drawSlide(slide: StorySlide, p: number, alpha: number, offsetX: number) {
+  private drawShot(f: FlatShot, lt: number, alpha: number, offsetX: number) {
     const ctx = this.ctx;
+    const p = f.dur ? Math.max(0, Math.min(1, lt / f.dur)) : 0;
     ctx.save();
     ctx.globalAlpha = alpha;
     if (offsetX) ctx.translate(offsetX, 0);
-    const img = this.images.get(slide.imageId);
-    if (img && img.complete && img.naturalWidth) this.drawKenBurns(img, p, slide.pan, slide.zoom);
-    // overlays PNG
-    for (const o of slide.overlays) {
-      const oi = this.images.get(o.imageId);
-      if (oi && oi.complete && oi.naturalWidth) {
-        const x = o.x * W, y = o.y * H, w = o.w * W, h = o.h * H;
-        const sc = Math.min(w / oi.naturalWidth, h / oi.naturalHeight);
-        const dw = oi.naturalWidth * sc, dh = oi.naturalHeight * sc;
-        ctx.drawImage(oi, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
-      }
+
+    const img = this.images.get(f.scene.imageId);
+    if (img && img.complete && img.naturalWidth) {
+      const fr = lerpFrame(f.shot.from, f.shot.to, p);
+      const { sx, sy, sw, sh } = framePx(fr, img.naturalWidth, img.naturalHeight);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
     }
     ctx.restore();
+
+    // Stickers: heredan la transición de la toma o llevan la suya propia.
+    for (const o of f.shot.overlays) {
+      const oi = this.images.get(o.imageId);
+      if (!oi || !oi.complete || !oi.naturalWidth) continue;
+      let oa = alpha;
+      let ox = offsetX;
+      if (o.transition !== "inherit") {
+        const td = Math.max(0.01, f.shot.transitionDur);
+        const a = Math.max(0, Math.min(1, lt / td));
+        oa = o.transition === "fade" ? a : 1;
+        ox = o.transition === "slide" ? (1 - a) * W : 0;
+      }
+      ctx.save();
+      ctx.globalAlpha = oa;
+      if (ox) ctx.translate(ox, 0);
+      this.drawOverlay(o, oi);
+      ctx.restore();
+    }
   }
 
-  private drawKenBurns(img: HTMLImageElement, p: number, pan: PanDir, zoom: ZoomKind) {
-    const iw = img.naturalWidth, ih = img.naturalHeight;
-    const cover = Math.max(W / iw, H / ih);
-    const zf = zoom === "in" ? lerp(1.0, 1.18, p) : zoom === "out" ? lerp(1.18, 1.0, p) : 1.1;
-    const s = cover * zf;
-    const dw = iw * s, dh = ih * s;
-    const exX = dw - W, exY = dh - H;
-    const travel = 0.6;
-    let cx = 0.5, cy = 0.5;
-    if (pan === "left") cx = lerp(0.5 - 0.5 * travel, 0.5 + 0.5 * travel, p);
-    else if (pan === "right") cx = lerp(0.5 + 0.5 * travel, 0.5 - 0.5 * travel, p);
-    else if (pan === "up") cy = lerp(0.5 - 0.5 * travel, 0.5 + 0.5 * travel, p);
-    else if (pan === "down") cy = lerp(0.5 + 0.5 * travel, 0.5 - 0.5 * travel, p);
-    const tx = -(exX * cx);
-    const ty = -(exY * cy);
-    this.ctx.drawImage(img, tx, ty, dw, dh);
+  private drawOverlay(o: PngOverlay, img: HTMLImageElement) {
+    const x = o.x * W, y = o.y * H, w = o.w * W, h = o.h * H;
+    const sc = Math.min(w / img.naturalWidth, h / img.naturalHeight);
+    const dw = img.naturalWidth * sc, dh = img.naturalHeight * sc;
+    this.ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
   }
 
   // ---------------- export ----------------
