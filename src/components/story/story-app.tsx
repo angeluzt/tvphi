@@ -477,6 +477,18 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                 Sube imágenes para empezar tu historia.
               </div>
             )}
+            {/* El lienzo está prestado a la miniatura flotante: se explica en vez
+                de dejar un recuadro negro. */}
+            {section && (
+              <div className="absolute inset-0 grid place-items-center gap-2 p-4 text-center">
+                <div>
+                  <p className="text-sm text-fg/80">Viendo <strong>{section.label}</strong> en la ventana de arriba</p>
+                  <button onClick={closeSection} className="btn-ghost mx-auto mt-2 text-xs">
+                    <X className="h-3.5 w-3.5" /> Volver al video completo
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mt-3 flex items-center gap-3">
