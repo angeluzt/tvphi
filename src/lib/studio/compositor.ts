@@ -80,6 +80,16 @@ export class Compositor {
     if (!this.audioCtx) {
       this.audioCtx = new AudioContext();
       this.dest = this.audioCtx.createMediaStreamDestination();
+      // Fuente muda permanente: si al destino no llega audio (grabar sin micro
+      // ni música), la pista no emite muestras y la grabación sale vacía.
+      try {
+        const keep = this.audioCtx.createConstantSource();
+        const g = this.audioCtx.createGain();
+        g.gain.value = 0;
+        keep.connect(g);
+        g.connect(this.dest);
+        keep.start();
+      } catch {}
     }
   }
 

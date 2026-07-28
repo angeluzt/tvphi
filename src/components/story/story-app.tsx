@@ -9,9 +9,9 @@ import {
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl } from "@/lib/story/store";
-import { ShotEditor, newSfx, newOverlay } from "./shot-editor";
+import { ShotEditor, newSfx } from "./shot-editor";
 import {
-  emptyProject, newScene, newShot, moveScene, reorderScene, moveShot, migrateProject,
+  emptyProject, newScene, newShot, newOverlay, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
@@ -357,9 +357,23 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         {/* Previsualización: se queda fija al desplazarse para poder colocar
             stickers y ver el encuadre mientras se edita una toma larga. */}
         <div className="card p-3 lg:sticky lg:top-16 lg:z-20">
-          <div className="relative aspect-video overflow-hidden rounded-2xl border border-border bg-black">
+          {/* Se limita la altura para que, al quedarse fija, deje sitio al editor. */}
+          <div className="relative mx-auto aspect-video w-full max-w-[calc(42vh*16/9)] overflow-hidden rounded-2xl border border-border bg-black">
             <div ref={previewRef} className="absolute inset-0" />
-            {curOverlay && overlayVisible && <StickerBox overlay={curOverlay} onChange={updOverlayPos} />}
+            {curOverlay && overlayVisible && (
+              <>
+                <StickerBox
+                  overlay={curOverlay} which="a"
+                  onChange={updOverlayPos}
+                />
+                {curOverlay.motion === "free" && (
+                  <StickerBox
+                    overlay={curOverlay} which="b"
+                    onChange={updOverlayPos}
+                  />
+                )}
+              </>
+            )}
             {!project.scenes.length && (
               <div className="absolute inset-0 grid place-items-center p-4 text-center text-sm text-muted">
                 Sube imágenes para empezar tu historia.
@@ -631,33 +645,59 @@ function Thumb({ id }: { id: string }) {
 }
 
 // Recuadro para mover/redimensionar un sticker PNG sobre la previsualización.
-function StickerBox({ overlay, onChange }: { overlay: PngOverlay; onChange: (t: Partial<PngOverlay>) => void }) {
+// Con movimiento libre se muestran dos: A (dónde empieza) y B (dónde termina).
+function StickerBox({
+  overlay,
+  which,
+  onChange,
+}: {
+  overlay: PngOverlay;
+  which: "a" | "b";
+  onChange: (t: Partial<PngOverlay>) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const drag = useRef<null | { mode: "move" | "resize"; sx: number; sy: number; ox: number; oy: number; ow: number; oh: number; rw: number; rh: number }>(null);
+
+  const isB = which === "b";
+  const box = isB
+    ? { x: overlay.toX, y: overlay.toY, w: overlay.toW, h: overlay.toH }
+    : { x: overlay.x, y: overlay.y, w: overlay.w, h: overlay.h };
+  const emit = (x: number, y: number, w: number, h: number) =>
+    onChange(isB ? { toX: x, toY: y, toW: w, toH: h } : { x, y, w, h });
 
   function begin(mode: "move" | "resize", e: React.PointerEvent) {
     if (!ref.current) return;
     e.preventDefault(); e.stopPropagation();
     const rect = ref.current.getBoundingClientRect();
-    drag.current = { mode, sx: e.clientX, sy: e.clientY, ox: overlay.x, oy: overlay.y, ow: overlay.w, oh: overlay.h, rw: rect.width, rh: rect.height };
+    drag.current = { mode, sx: e.clientX, sy: e.clientY, ox: box.x, oy: box.y, ow: box.w, oh: box.h, rw: rect.width, rh: rect.height };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
   function move(e: React.PointerEvent) {
     const d = drag.current; if (!d) return;
     const dx = (e.clientX - d.sx) / d.rw, dy = (e.clientY - d.sy) / d.rh;
     const cl = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-    if (d.mode === "move") onChange({ x: cl(d.ox + dx, 0, 1 - d.ow), y: cl(d.oy + dy, 0, 1 - d.oh) });
-    else onChange({ w: cl(d.ow + dx, 0.05, 1 - d.ox), h: cl(d.oh + dy, 0.05, 1 - d.oy) });
+    if (d.mode === "move") emit(cl(d.ox + dx, 0, 1 - d.ow), cl(d.oy + dy, 0, 1 - d.oh), d.ow, d.oh);
+    else {
+      const w = cl(d.ow + dx, 0.03, 1 - d.ox);
+      emit(d.ox, d.oy, w, cl(d.oh + dy, 0.03, 1 - d.oy));
+    }
   }
   function end(e: React.PointerEvent) { drag.current = null; try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {} }
+
+  const color = isB ? "border-gold/80 bg-gold/5" : "border-accent/80 bg-accent/5";
+  const handle = isB ? "bg-gold" : "bg-accent";
+  const label = overlay.motion === "free" ? (isB ? "B" : "A") : null;
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20" ref={ref}>
       <div onPointerDown={(e) => begin("move", e)} onPointerMove={move} onPointerUp={end}
-        className="pointer-events-auto absolute cursor-move rounded border-2 border-accent/80 bg-accent/5"
-        style={{ left: `${overlay.x * 100}%`, top: `${overlay.y * 100}%`, width: `${overlay.w * 100}%`, height: `${overlay.h * 100}%` }}>
+        className={`pointer-events-auto absolute cursor-move rounded border-2 ${color}`}
+        style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.w * 100}%`, height: `${box.h * 100}%` }}>
+        {label && (
+          <span className={`absolute left-1 top-1 rounded px-1 text-[10px] font-bold text-black ${handle}`}>{label}</span>
+        )}
         <div onPointerDown={(e) => begin("resize", e)} onPointerMove={move} onPointerUp={end}
-          className="absolute -bottom-1.5 -right-1.5 h-3.5 w-3.5 cursor-se-resize rounded-sm border border-black/60 bg-accent" />
+          className={`absolute -bottom-1.5 -right-1.5 h-4 w-4 cursor-se-resize rounded-sm border border-black/60 ${handle}`} />
       </div>
     </div>
   );
