@@ -27,6 +27,7 @@ model User {
 
   channel        Channel?
   templates      Template[]
+  storyProjects  StoryProject[]
   chatMessages   ChatMessage[]
   pointsBalances PointsBalance[]
   pointsTx       PointsTransaction[] @relation("PointsTxUser")
@@ -145,6 +146,22 @@ model Template {
   userId    String
   name      String
   data      Json     // array de Scene serializado
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Proyecto de "Historias narradas": metadatos (slides con texto/movimiento/transición,
+// capas de audio con volumen/tiempo) en un único JSON. Las imágenes y audios pesados
+// NO se suben: viven en IndexedDB del navegador. Poco almacenamiento en la BD.
+model StoryProject {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  data      Json     // { slides[], audioLayers[], narrationVolume } serializado
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
-import { Clapperboard, Layers, Scissors, Download, Camera, MonitorUp, Sparkles } from "lucide-react";
+import { Clapperboard, Layers, Scissors, Download, Camera, MonitorUp, Sparkles, Mic, Image as ImageIcon, Music } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -30,9 +30,14 @@ export default async function HomePage() {
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             {user ? (
-              <Link href="/studio" className="btn-brand">
-                <Clapperboard className="h-4 w-4" /> Abrir el Studio
-              </Link>
+              <>
+                <Link href="/studio" className="btn-brand">
+                  <Clapperboard className="h-4 w-4" /> Abrir el Studio
+                </Link>
+                <Link href="/story" className="btn-ghost">
+                  <Mic className="h-4 w-4 text-accent" /> Historias narradas
+                </Link>
+              </>
             ) : (
               <>
                 <Link href="/auth/register" className="btn-brand">
@@ -59,6 +64,38 @@ export default async function HomePage() {
               <p className="mt-2 text-sm font-medium">{f.t}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Historias narradas */}
+      <section className="card relative overflow-hidden p-6 md:p-8">
+        <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-accent/15 blur-3xl" />
+        <div className="relative">
+          <span className="chip bg-accent/15 text-accent">
+            <Mic className="h-3.5 w-3.5" /> Nuevo
+          </span>
+          <h2 className="mt-3 text-2xl font-bold">Historias narradas — videos sin cámara</h2>
+          <p className="mt-2 max-w-2xl text-muted">
+            Sube tus imágenes, escribe el texto de cada una y una voz IA lo narra. Dale movimiento y
+            zoom, transiciones, stickers PNG y capas de música y efectos. Exporta el video con la voz
+            ya incrustada — ideal para esos videos de YouTube sin salir en cámara.
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { icon: ImageIcon, t: "Tus imágenes" },
+              { icon: Mic, t: "Voz IA gratis" },
+              { icon: Layers, t: "Movimiento y zoom" },
+              { icon: Music, t: "Música y efectos" },
+            ].map((f) => (
+              <div key={f.t} className="rounded-xl border border-border bg-surface-2/60 p-3">
+                <f.icon className="h-5 w-5 text-accent" />
+                <p className="mt-2 text-sm font-medium">{f.t}</p>
+              </div>
+            ))}
+          </div>
+          <Link href={user ? "/story" : "/auth/register"} className="btn-brand mt-5">
+            <Sparkles className="h-4 w-4" /> Crear una historia
+          </Link>
         </div>
       </section>
 

@@ -6,6 +6,7 @@ import { Recorder } from "@/lib/studio/recorder";
 import { createLayer, createScene } from "@/lib/studio/factory";
 import { ExportPanel } from "@/components/studio/export-panel";
 import { EditorModal } from "@/components/editor/editor-modal";
+import { saveTake, loadTake, clearTake } from "@/lib/editor/idb";
 import { TransitionKinds, type Layer, type LayerType, type Scene, type TransitionKind, type Transform } from "@/lib/scene";
 import { cn } from "@/lib/utils";
 import {
@@ -75,6 +76,29 @@ export function StudioApp({
     const list = await compRef.current?.listCameras();
     if (list) setCameras(list);
   }
+
+  // Recupera la última grabación si la página se recargó sin querer.
+  useEffect(() => {
+    let alive = true;
+    loadTake().then((t) => {
+      if (!alive || !t || !t.blob.size) return;
+      if (confirm("Se encontró una grabación sin descargar de esta sesión. ¿Recuperarla?")) {
+        setTake(t);
+      } else {
+        void clearTake();
+      }
+    });
+    return () => { alive = false; };
+  }, []);
+
+  // Evita perder por accidente una grabación no descargada (o una toma en curso).
+  useEffect(() => {
+    const h = (e: BeforeUnloadEvent) => {
+      if (recording || take) { e.preventDefault(); e.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [recording, take]);
 
   // Recuerda el tipo de transición elegido (por proyecto, en el navegador).
   useEffect(() => {
@@ -317,6 +341,15 @@ export function StudioApp({
     const res = await rec.stop();
     recRef.current = null;
     setTake({ blob: res.blob, durationSec: res.durationMs / 1000 });
+    // Guarda la toma en el navegador por si se recarga la página sin querer.
+    void saveTake(res.blob, res.durationMs / 1000);
+  }
+
+  // Descarta la toma actual (y la copia guardada en el navegador).
+  function discardTake() {
+    setTake(null);
+    setEditing(false);
+    void clearTake();
   }
 
   function onAudioFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -561,8 +594,8 @@ export function StudioApp({
         <ExportPanel
           blob={take.blob}
           durationSec={take.durationSec}
-          onClose={() => setTake(null)}
-          onRetake={() => setTake(null)}
+          onClose={discardTake}
+          onRetake={discardTake}
           onEdit={() => setEditing(true)}
         />
       )}
