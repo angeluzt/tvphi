@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
-import { Clapperboard, LogOut, User } from "lucide-react";
+import { Clapperboard, LogOut, User, Sparkles } from "lucide-react";
 
 interface HeaderUser {
   username: string;
@@ -19,6 +19,10 @@ export function SiteHeader({ user }: { user: HeaderUser | null }) {
         <div className="ml-auto flex items-center gap-2">
           {user ? (
             <>
+              <Link href="/story" className="btn-ghost" title="Historias narradas">
+                <Sparkles className="h-4 w-4 text-accent" />
+                <span className="hidden sm:inline">Historias</span>
+              </Link>
               <Link href="/studio" className="btn-brand">
                 <Clapperboard className="h-4 w-4" /> Studio
               </Link>

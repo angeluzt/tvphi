@@ -78,6 +78,10 @@ export class EditorEngine {
         this.video.onloadeddata = () => res();
         this.video.onerror = () => res();
       });
+      // Fuerza el decodificado de un fotograma para que el preview no salga negro
+      // (un <video> pausado en t=0 puede no tener frame hasta que se hace seek).
+      await this.seekVideo(Math.min(0.1, p.source.duration || 0.1));
+      this.video.addEventListener("seeked", () => { if (!this.playing) this.render(); });
     }
     this.applyVolumes();
     this.applyMusicSource();
