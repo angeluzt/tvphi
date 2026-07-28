@@ -3,7 +3,9 @@
 import { nanoid } from "nanoid";
 import {
   Plus, Trash2, Wand2, Volume2, Sticker, Image as ImageIcon, ChevronUp, ChevronDown, Clock,
+  Loader2,
 } from "lucide-react";
+import type { VoiceStatus } from "@/lib/story/tts";
 import { MotionEditor } from "./motion-editor";
 import { Slider } from "./slider";
 import {
@@ -22,7 +24,7 @@ export function ShotEditor({
   imgH,
   canMove,
   expanded,
-  busyDialogue,
+  voiceJobs,
   selectedOverlay,
   onChange,
   onDelete,
@@ -40,7 +42,7 @@ export function ShotEditor({
   imgH: number;
   canMove: boolean;
   expanded: boolean;
-  busyDialogue: string | null;
+  voiceJobs: Record<string, VoiceStatus>;
   selectedOverlay: string | null;
   onChange: (s: Shot) => void;
   onDelete: () => void;
@@ -188,9 +190,13 @@ export function ShotEditor({
                 ><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
-                <button onClick={() => onGenVoice(d)} disabled={busyDialogue === d.id} className="btn-ghost text-xs">
-                  <Wand2 className="h-3.5 w-3.5 text-accent" />
-                  {busyDialogue === d.id ? "Generando…" : d.audioId ? "Regenerar voz" : "Generar voz"}
+                <button onClick={() => onGenVoice(d)} disabled={!!voiceJobs[d.id]} className="btn-ghost text-xs">
+                  {voiceJobs[d.id] ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                  ) : (
+                    <Wand2 className="h-3.5 w-3.5 text-accent" />
+                  )}
+                  {voiceJobs[d.id] ? voiceLabel(voiceJobs[d.id]) : d.audioId ? "Regenerar voz" : "Generar voz"}
                 </button>
                 <label className="flex items-center gap-1 text-[11px] text-muted">
                   Empieza a los
@@ -207,6 +213,11 @@ export function ShotEditor({
                   <span className="text-[11px] text-muted">sin voz aún</span>
                 )}
               </div>
+              {voiceJobs[d.id]?.stage === "loading" && (
+                <div className="mt-1 h-1 w-full overflow-hidden rounded bg-surface-2">
+                  <div className="h-full bg-accent transition-all" style={{ width: `${Math.round(voiceJobs[d.id].pct)}%` }} />
+                </div>
+              )}
             </div>
           ))}
           {!shot.dialogues.length && (
@@ -370,6 +381,12 @@ export function ShotEditor({
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+function voiceLabel(s: VoiceStatus) {
+  if (s.stage === "queued") return "En cola…";
+  if (s.stage === "loading") return `Descargando voz ${Math.round(s.pct)}%`;
+  return "Generando…";
+}
 
 const MOTION_LABEL: Record<string, string> = {
   fixed: "Fijo", in: "Acercar", out: "Alejar",

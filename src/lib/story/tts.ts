@@ -4,6 +4,10 @@
 // audio resultante (WAV) se puede incrustar en el video exportado. Suena algo
 // robótico (temporal); para voces más realistas se puede añadir un provider de
 // nube (OpenAI/ElevenLabs) vía /api/tts sin cambiar el resto.
+//
+// El cálculo ocurre en un Web Worker (ver tts-worker.ts) para que la página siga
+// respondiendo mientras se genera: se pueden encolar varias voces y seguir
+// editando. Los encargos se atienden de uno en uno dentro del worker.
 
 export interface Voice {
   id: string;
@@ -19,74 +23,84 @@ export const VOICES: Voice[] = [
   { id: "fr", label: "Français", model: "Xenova/mms-tts-fra" },
 ];
 
-const pipes: Record<string, Promise<any>> = {};
-
-function getPipe(model: string, onProgress?: (pct: number) => void): Promise<any> {
-  if (!pipes[model]) {
-    pipes[model] = (async () => {
-      const mod: any = await import("@xenova/transformers");
-      mod.env.allowLocalModels = false;
-      return mod.pipeline("text-to-speech", model, {
-        progress_callback: (p: any) => {
-          if (p?.status === "progress" && typeof p.progress === "number") onProgress?.(p.progress);
-        },
-      });
-    })();
-  }
-  return pipes[model];
+// Estado de un encargo de voz, para poder mostrarlo en la interfaz.
+export type VoiceStage = "queued" | "loading" | "generating";
+export interface VoiceStatus {
+  stage: VoiceStage;
+  pct: number; // progreso de la descarga del modelo (0..100)
 }
 
-// Genera la narración de un texto y la devuelve como WAV (Blob).
-export async function synthesize(
+interface Pending {
+  resolve: (b: Blob) => void;
+  reject: (e: Error) => void;
+  onStatus?: (s: VoiceStatus) => void;
+}
+
+let worker: Worker | null = null;
+const pending = new Map<string, Pending>();
+let seq = 0;
+
+function getWorker(): Worker | null {
+  if (worker) return worker;
+  if (typeof window === "undefined" || typeof Worker === "undefined") return null;
+  try {
+    worker = new Worker(new URL("./tts-worker.ts", import.meta.url));
+  } catch {
+    return null;
+  }
+  worker.onmessage = (e: MessageEvent<any>) => {
+    const msg = e.data;
+    const job = pending.get(msg?.id);
+    if (!job) return;
+    if (msg.type === "queued") job.onStatus?.({ stage: "queued", pct: 0 });
+    else if (msg.type === "loading") job.onStatus?.({ stage: "loading", pct: msg.pct ?? 0 });
+    else if (msg.type === "generating") job.onStatus?.({ stage: "generating", pct: 100 });
+    else if (msg.type === "done") {
+      pending.delete(msg.id);
+      job.resolve(msg.blob as Blob);
+    } else if (msg.type === "error") {
+      pending.delete(msg.id);
+      job.reject(new Error(friendlyError(msg.message)));
+    }
+  };
+  worker.onerror = () => {
+    // Si el worker muere, se rechaza todo lo pendiente y se reintentará con uno nuevo.
+    for (const [, job] of pending) job.reject(new Error("el generador de voz se detuvo. Inténtalo de nuevo."));
+    pending.clear();
+    worker?.terminate();
+    worker = null;
+  };
+  return worker;
+}
+
+function friendlyError(message: string) {
+  if (/fetch|network|Failed to load|ENOTFOUND|tunnel/i.test(message)) {
+    return "no se pudo descargar el modelo de voz. Revisa tu conexión (se descarga desde huggingface.co) e inténtalo de nuevo.";
+  }
+  return message;
+}
+
+// Encarga la narración de un texto. Devuelve una promesa con el WAV; mientras
+// tanto la página sigue usable y se pueden encolar más encargos.
+export function synthesize(
   text: string,
   voiceId: string,
-  onStatus?: (s: string) => void,
+  onStatus?: (s: VoiceStatus) => void,
 ): Promise<Blob> {
   const v = VOICES.find((x) => x.id === voiceId) ?? VOICES[0];
-  onStatus?.("Cargando voz (la 1ª vez descarga el modelo)…");
-  let pipe: any;
-  try {
-    pipe = await getPipe(v.model, (pct) => onStatus?.(`Descargando la voz… ${Math.round(pct)}%`));
-  } catch (e: any) {
-    // Si falla la descarga (sin conexión o red que bloquea huggingface.co), se
-    // reintenta la próxima vez en vez de dejar la promesa fallida en caché.
-    delete pipes[v.model];
-    throw new Error(
-      "no se pudo descargar el modelo de voz. Revisa tu conexión (se descarga desde huggingface.co) e inténtalo de nuevo.",
-    );
-  }
-  onStatus?.("Generando voz…");
-  const out = await pipe(text.trim() || " ");
-  return encodeWav(out.audio as Float32Array, out.sampling_rate as number);
+  const w = getWorker();
+  if (!w) return Promise.reject(new Error("este navegador no admite la generación de voz."));
+  const id = `v${++seq}`;
+  return new Promise<Blob>((resolve, reject) => {
+    pending.set(id, { resolve, reject, onStatus });
+    onStatus?.({ stage: "queued", pct: 0 });
+    w.postMessage({ id, text, model: v.model });
+  });
 }
 
-// Codifica PCM float32 mono a WAV de 16 bits.
-function encodeWav(samples: Float32Array, sampleRate: number): Blob {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  const writeStr = (off: number, s: string) => {
-    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
-  };
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-  let off = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    off += 2;
-  }
-  return new Blob([buffer], { type: "audio/wav" });
+// Cuántos encargos de voz siguen en marcha.
+export function pendingVoices() {
+  return pending.size;
 }
 
 // Duración (s) de un blob de audio, decodificándolo.
