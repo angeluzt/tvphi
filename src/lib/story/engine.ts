@@ -1,6 +1,6 @@
 import {
-  flatten, locate, lerpFrame, framePx,
-  type StoryProject, type FlatShot, type PngOverlay,
+  flatten, locate, lerpFrame, framePx, resolveFrames, moveProgress, overlayBox,
+  type StoryProject, type FlatShot, type PngOverlay, type Frame,
 } from "./model";
 import { getAsset, assetUrl } from "./store";
 import { Recorder } from "@/lib/studio/recorder";
@@ -19,6 +19,7 @@ export class StoryEngine {
 
   private audioCtx: AudioContext | null = null;
   private dest: MediaStreamAudioDestinationNode | null = null;
+  private keepAlive: ConstantSourceNode | null = null;
   private sources: AudioBufferSourceNode[] = [];
   // Ganancias vivas por clip, para que mover un volumen se oiga al momento.
   private gains = new Map<string, GainNode>();
@@ -46,6 +47,19 @@ export class StoryEngine {
     if (this.audioCtx) return;
     this.audioCtx = new AudioContext();
     this.dest = this.audioCtx.createMediaStreamDestination();
+    // Fuente muda permanente: si al destino no hay nada conectado, la pista de
+    // audio no emite muestras y el grabador acaba produciendo un archivo vacío.
+    // Con esto la mezcla siempre fluye, aunque la historia aún no tenga voz ni
+    // música (suena a silencio: la ganancia es 0).
+    try {
+      const keep = this.audioCtx.createConstantSource();
+      const g = this.audioCtx.createGain();
+      g.gain.value = 0;
+      keep.connect(g);
+      g.connect(this.dest);
+      keep.start();
+      this.keepAlive = keep;
+    } catch {}
   }
 
   async setProject(p: StoryProject) {
@@ -259,20 +273,26 @@ export class StoryEngine {
 
   private drawShot(f: FlatShot, lt: number, alpha: number, offsetX: number) {
     const ctx = this.ctx;
-    const p = f.dur ? Math.max(0, Math.min(1, lt / f.dur)) : 0;
+    // La velocidad la marca la duración de la toma; la pausa final deja la
+    // imagen quieta en el punto 2.
+    const p = moveProgress(f.shot, lt);
+    const img = this.images.get(f.scene.imageId);
+    const iw = img?.naturalWidth || f.scene.imgW || 16;
+    const ih = img?.naturalHeight || f.scene.imgH || 9;
+    const frames = resolveFrames(f.shot, iw, ih);
+
     ctx.save();
     ctx.globalAlpha = alpha;
     if (offsetX) ctx.translate(offsetX, 0);
-
-    const img = this.images.get(f.scene.imageId);
     if (img && img.complete && img.naturalWidth) {
-      const fr = lerpFrame(f.shot.from, f.shot.to, p);
-      const { sx, sy, sw, sh } = framePx(fr, img.naturalWidth, img.naturalHeight);
+      const fr = lerpFrame(frames.from, frames.to, p);
+      const { sx, sy, sw, sh } = framePx(fr, iw, ih);
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
     }
     ctx.restore();
 
-    // Stickers: heredan la transición de la toma o llevan la suya propia.
+    // Stickers: heredan la transición de entrada de la toma o llevan la suya,
+    // y se mueven según su propio modo (quieto, pegado a la imagen o libre).
     for (const o of f.shot.overlays) {
       const oi = this.images.get(o.imageId);
       if (!oi || !oi.complete || !oi.naturalWidth) continue;
@@ -287,13 +307,22 @@ export class StoryEngine {
       ctx.save();
       ctx.globalAlpha = oa;
       if (ox) ctx.translate(ox, 0);
-      this.drawOverlay(o, oi);
+      this.drawOverlay(o, oi, p, frames, iw, ih);
       ctx.restore();
     }
   }
 
-  private drawOverlay(o: PngOverlay, img: HTMLImageElement) {
-    const x = o.x * W, y = o.y * H, w = o.w * W, h = o.h * H;
+  private drawOverlay(
+    o: PngOverlay,
+    img: HTMLImageElement,
+    p: number,
+    frames: { from: Frame; to: Frame },
+    iw: number,
+    ih: number,
+  ) {
+    const b = overlayBox(o, p, frames, iw, ih);
+    const x = b.x * W, y = b.y * H, w = b.w * W, h = b.h * H;
+    if (w <= 0 || h <= 0) return;
     const sc = Math.min(w / img.naturalWidth, h / img.naturalHeight);
     const dw = img.naturalWidth * sc, dh = img.naturalHeight * sc;
     this.ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);

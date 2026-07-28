@@ -67,6 +67,17 @@ export class EditorEngine {
     } catch {
       this.wired = false;
     }
+    // Fuente muda permanente: si al destino no llega audio (un video sin pista de
+    // sonido y sin música), la pista no emite muestras y el archivo exportado
+    // sale vacío. Con ganancia 0 no se oye nada, pero la mezcla siempre fluye.
+    try {
+      const keep = this.audioCtx.createConstantSource();
+      const g = this.audioCtx.createGain();
+      g.gain.value = 0;
+      keep.connect(g);
+      g.connect(this.dest);
+      keep.start();
+    } catch {}
   }
 
   async setProject(p: EditorProject) {

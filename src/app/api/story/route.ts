@@ -7,10 +7,16 @@ import { getCurrentUser } from "@/lib/auth";
 // capas de audio. Las imágenes/audios pesados viven en IndexedDB del navegador y
 // se referencian por id (assetId/imageId/audioId), no se suben aquí.
 const frameSchema = z.object({ cx: z.number(), cy: z.number(), w: z.number() });
+const presetSchema = z.object({
+  kind: z.enum(["fixed", "left", "right", "up", "down", "in", "out"]),
+  cx: z.number(), cy: z.number(), w: z.number(), distance: z.number(),
+});
 const overlaySchema = z.object({
   id: z.string(),
   imageId: z.string(),
   x: z.number(), y: z.number(), w: z.number(), h: z.number(),
+  motion: z.enum(["fixed", "follow", "free"]),
+  toX: z.number(), toY: z.number(), toW: z.number(), toH: z.number(),
   transition: z.enum(["inherit", "cut", "fade", "slide"]),
 });
 const dialogueSchema = z.object({
@@ -31,6 +37,9 @@ const shotSchema = z.object({
   id: z.string(),
   durationSec: z.number(),
   autoDuration: z.boolean(),
+  holdSec: z.number(),
+  motionMode: z.enum(["preset", "free"]),
+  preset: presetSchema,
   from: frameSchema,
   to: frameSchema,
   transition: z.enum(["cut", "fade", "slide"]),
