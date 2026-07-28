@@ -8,6 +8,7 @@ import type { VoiceStatus } from "@/lib/story/tts";
 import { MotionEditor } from "./motion-editor";
 import { Slider } from "./slider";
 import { GapInput } from "./gap-input";
+import { LockToggle } from "./lock-toggle";
 import {
   newDialogue, shotDur, dialogueStarts, sfxStarts,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop,
@@ -28,6 +29,9 @@ export function ShotEditor({
   selectedOverlay,
   inherited,
   playing,
+  locked,
+  lockedByScene,
+  onToggleLock,
   onChange,
   onDelete,
   onMove,
@@ -49,6 +53,9 @@ export function ShotEditor({
   selectedOverlay: string | null;
   inherited: InheritedLoop[];
   playing: boolean;
+  locked: boolean;
+  lockedByScene: boolean; // bloqueada porque lo está su escena entera
+  onToggleLock: (v: boolean) => void;
   onChange: (s: Shot) => void;
   onDelete: () => void;
   onMove: (dir: -1 | 1) => void;
@@ -94,6 +101,9 @@ export function ShotEditor({
           <span className="flex shrink-0 items-center gap-1 text-xs text-muted">
             <Clock className="h-3 w-3" /> {dur.toFixed(1)}s
           </span>
+          {!expanded && locked && (
+            <span className="chip shrink-0 bg-gold/15 text-gold">Bloqueada</span>
+          )}
           {!expanded && (
             <span className="truncate text-xs text-muted">
               · {shot.motionMode === "preset" ? MOTION_LABEL[shot.preset.kind] : "Libre 1→2"}
@@ -114,11 +124,14 @@ export function ShotEditor({
           </button>
           {canMove && (
             <>
-              <button onClick={() => onMove(-1)} className="text-muted hover:text-fg" title="Subir toma"><ChevronUp className="h-4 w-4" /></button>
-              <button onClick={() => onMove(1)} className="text-muted hover:text-fg" title="Bajar toma"><ChevronDown className="h-4 w-4" /></button>
+              <button onClick={() => onMove(-1)} disabled={locked} className="text-muted hover:text-fg disabled:opacity-40" title="Subir toma"><ChevronUp className="h-4 w-4" /></button>
+              <button onClick={() => onMove(1)} disabled={locked} className="text-muted hover:text-fg disabled:opacity-40" title="Bajar toma"><ChevronDown className="h-4 w-4" /></button>
             </>
           )}
-          <button onClick={onDelete} className="text-muted hover:text-danger" title="Borrar toma"><Trash2 className="h-4 w-4" /></button>
+          {!lockedByScene && (
+            <LockToggle checked={locked} onChange={onToggleLock} label="" title={locked ? "Toma bloqueada: desactiva para editar" : "Bloquear esta toma"} />
+          )}
+          <button onClick={onDelete} disabled={locked} className="text-muted hover:text-danger disabled:opacity-40" title="Borrar toma"><Trash2 className="h-4 w-4" /></button>
           <button onClick={onToggle} className="text-muted hover:text-fg" title={expanded ? "Contraer" : "Editar toma"}>
             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </button>
@@ -127,6 +140,18 @@ export function ShotEditor({
 
       {!expanded ? null : (
       <>
+      {locked && (
+        <p className="mt-2 rounded-lg border border-gold/50 bg-gold/10 px-2 py-1.5 text-[11px] text-gold">
+          Toma bloqueada: no se puede cambiar nada.
+          {lockedByScene
+            ? " La escena entera está bloqueada; desactiva su candado para editar."
+            : " Desactiva el candado de arriba para editar."}
+        </p>
+      )}
+      {/* Con el candado puesto se apagan los controles (fieldset) y también los
+          arrastres, que no son controles de formulario. */}
+      <div className={locked ? "pointer-events-none select-none opacity-60" : ""}>
+      <fieldset disabled={locked} className="contents">
       {/* Movimiento */}
       <div className="mt-3">
         <MotionEditor shot={shot} imageId={imageId} imgW={imgW} imgH={imgH} onChange={onChange} />
@@ -271,11 +296,7 @@ export function ShotEditor({
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
               <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Pausa antes" />
               <span className="text-[11px] text-muted">en {sStarts[i].toFixed(1)}s</span>
-              <input
-                type="range" min={0} max={1} step={0.05} value={s.volume}
-                onChange={(e) => updSfx(s.id, { volume: Number(e.target.value) })}
-                className="w-20" title="Volumen"
-              />
+              <VolumeInput value={s.volume} onChange={(v) => updSfx(s.id, { volume: v })} />
               <button
                 onClick={() => updSfx(s.id, { loop: true })}
                 className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2"
@@ -305,11 +326,7 @@ export function ShotEditor({
                 <div key={s.id} className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="min-w-0 flex-1 truncate">{s.name}</span>
                   <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Empieza tras" />
-                  <input
-                    type="range" min={0} max={1} step={0.05} value={s.volume}
-                    onChange={(e) => updSfx(s.id, { volume: Number(e.target.value) })}
-                    className="w-20" title="Volumen"
-                  />
+                  <VolumeInput value={s.volume} onChange={(v) => updSfx(s.id, { volume: v })} />
                   <button
                     onClick={() => updSfx(s.id, { loop: false })}
                     className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2"
@@ -345,11 +362,7 @@ export function ShotEditor({
                     </span>
                     <label className="flex items-center gap-1 text-[11px] text-muted">
                       Volumen aquí
-                      <input
-                        type="range" min={0} max={1} step={0.05} value={l.volume}
-                        onChange={(e) => setOverride(l.sfx.id, { volume: Number(e.target.value) })}
-                        className="w-20"
-                      />
+                      <VolumeInput value={l.volume} onChange={(v) => setOverride(l.sfx.id, { volume: v })} />
                     </label>
                     {ov && typeof ov.volume === "number" && (
                       <button
@@ -497,6 +510,8 @@ export function ShotEditor({
           )}
         </div>
       </div>
+      </fieldset>
+      </div>
       </>
       )}
     </div>
@@ -504,6 +519,20 @@ export function ShotEditor({
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+// Volumen con pasos finos (1 %) y el valor a la vista, para poder afinar.
+function VolumeInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <span className="flex items-center gap-1">
+      <input
+        type="range" min={0} max={1} step={0.01} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-20" title="Volumen" aria-label="Volumen"
+      />
+      <span className="w-9 text-right text-[11px] tabular-nums text-muted">{pct(value)}</span>
+    </span>
+  );
+}
 
 function voiceLabel(s: VoiceStatus) {
   if (s.stage === "queued") return "En cola…";

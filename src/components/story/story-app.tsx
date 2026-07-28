@@ -10,6 +10,9 @@ import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
+import { Slider } from "./slider";
+import { LockToggle } from "./lock-toggle";
+import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops,
@@ -60,6 +63,19 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [section, setSection] = useState<{ start: number; end: number; label: string; shotId?: string; sceneId?: string } | null>(null);
   // Escena cuya posición se está cambiando escribiendo el número.
   const [movingScene, setMovingScene] = useState<{ id: string; value: string } | null>(null);
+
+  // Escenas y tomas bloqueadas para no cambiarlas por accidente. Viven en el
+  // navegador, así que se recuerdan aunque no se guarde el proyecto.
+  const [locks, setLocks] = useState<Locks>({});
+  useEffect(() => { setLocks(loadLocks()); }, []);
+  function setLock(id: string, v: boolean) {
+    setLocks((prev) => {
+      const next = { ...prev, [id]: v };
+      if (!v) delete next[id];
+      saveLocks(next);
+      return next;
+    });
+  }
 
   // Encargos de voz en marcha, por id de diálogo (la generación no bloquea la página).
   const [voiceJobs, setVoiceJobs] = useState<Record<string, VoiceStatus>>({});
@@ -212,6 +228,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     }
   }
   function delScene(sc: StoryScene, i: number) {
+    if (locks[sc.id]) return;
     const n = sc.shots.length;
     const msg = n > 1
       ? `¿Borrar la escena ${i + 1} y sus ${n} tomas?`
@@ -228,6 +245,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setSelShot(s.id);
   }
   function delShot(sc: StoryScene, shotId: string, i: number) {
+    if (locks[sc.id] || locks[shotId]) return;
     if (sc.shots.length === 1) {
       setStatus("Una escena necesita al menos una toma. Borra la escena entera si ya no la quieres.");
       return;
@@ -394,8 +412,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       setProject(data);
       setProjectId(j.project.id);
       setName(j.project.name);
-      setOpenScene(data.scenes[0]?.id ?? null);
-      setSelShot(data.scenes[0]?.shots[0]?.id ?? null);
+      // Si la primera escena está bloqueada, se respeta y no se abre sola.
+      const primera = data.scenes[0];
+      const abrible = primera && !loadLocks()[primera.id] ? primera : null;
+      setOpenScene(abrible?.id ?? null);
+      setSelShot(abrible?.shots[0]?.id ?? null);
       setDirty(false);
       seek(0);
       setStatus("Proyecto cargado ✓");
@@ -545,13 +566,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             {project.scenes.map((sc, si) => (
               <div
                 key={sc.id}
-                draggable
+                draggable={!locks[sc.id]}
                 onDragStart={() => setDragScene(sc.id)}
                 onDragEnd={() => setDragScene(null)}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault();
-                  if (dragScene && dragScene !== sc.id) mut((p) => reorderScene(p, dragScene, si));
+                  if (dragScene && dragScene !== sc.id && !locks[dragScene]) mut((p) => reorderScene(p, dragScene, si));
                   setDragScene(null);
                 }}
                 className={`rounded-xl border p-3 ${openScene === sc.id ? "border-brand bg-brand/5" : "border-border"} ${dragScene === sc.id ? "opacity-50" : ""}`}
@@ -582,27 +603,41 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                     >
                       {section?.sceneId === sc.id && playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                     </button>
-                    <button onClick={() => addShot(sc)} className="btn-ghost shrink-0 text-xs" title="Añadir sub-escena">
+                    <button onClick={() => addShot(sc)} disabled={locks[sc.id]} className="btn-ghost shrink-0 text-xs disabled:opacity-40" title="Añadir sub-escena">
                       <Plus className="h-3.5 w-3.5 text-accent" /> Toma
                     </button>
                     <div className="flex shrink-0 flex-col items-center gap-0.5">
-                      <button onClick={() => mut((p) => moveScene(p, sc.id, -1))} title="Subir escena" className="text-muted hover:text-fg"><ChevronUp className="h-4 w-4" /></button>
-                      <button onClick={() => mut((p) => moveScene(p, sc.id, 1))} title="Bajar escena" className="text-muted hover:text-fg"><ChevronDown className="h-4 w-4" /></button>
+                      <button onClick={() => mut((p) => moveScene(p, sc.id, -1))} disabled={locks[sc.id]} title="Subir escena" className="text-muted hover:text-fg disabled:opacity-40"><ChevronUp className="h-4 w-4" /></button>
+                      <button onClick={() => mut((p) => moveScene(p, sc.id, 1))} disabled={locks[sc.id]} title="Bajar escena" className="text-muted hover:text-fg disabled:opacity-40"><ChevronDown className="h-4 w-4" /></button>
                     </div>
                     <button
                       onClick={() => setMovingScene(movingScene?.id === sc.id ? null : { id: sc.id, value: String(si + 1) })}
+                      disabled={locks[sc.id]}
                       title="Colocar en una posición concreta"
-                      className="shrink-0 text-muted hover:text-fg"
+                      className="shrink-0 text-muted hover:text-fg disabled:opacity-40"
                     ><MoveVertical className="h-4 w-4" /></button>
-                    <button onClick={() => delScene(sc, si)} title="Borrar escena" className="shrink-0 text-muted hover:text-danger"><Trash2 className="h-4 w-4" /></button>
+                    <button onClick={() => delScene(sc, si)} disabled={locks[sc.id]} title="Borrar escena" className="shrink-0 text-muted hover:text-danger disabled:opacity-40"><Trash2 className="h-4 w-4" /></button>
+                    <LockToggle
+                      checked={!!locks[sc.id]}
+                      onChange={(v) => { setLock(sc.id, v); if (v && openScene === sc.id) setOpenScene(null); }}
+                      title={locks[sc.id] ? "Escena bloqueada: desactiva para poder abrirla" : "Bloquear esta escena entera"}
+                    />
                     <button
                       onClick={() => setOpenScene(openScene === sc.id ? null : sc.id)}
-                      className="btn-ghost ml-auto shrink-0 text-xs"
+                      disabled={locks[sc.id]}
+                      className="btn-ghost ml-auto shrink-0 text-xs disabled:opacity-40"
                     >
                       <Layers className="h-3.5 w-3.5" /> {openScene === sc.id ? "Cerrar" : "Editar"}
                     </button>
                   </div>
                 </div>
+
+                {locks[sc.id] && (
+                  <p className="mt-2 rounded-lg border border-gold/50 bg-gold/10 px-2 py-1.5 text-xs text-gold">
+                    Escena bloqueada para no cambiarla sin querer. Quita el candado para poder
+                    abrirla y editarla.
+                  </p>
+                )}
 
                 {movingScene?.id === sc.id && (
                   <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-brand/50 bg-brand/5 p-2 text-sm">
@@ -636,6 +671,9 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         selectedOverlay={selShot === sh.id ? selOverlay : null}
                         inherited={inheritedLoops(flat, flat.findIndex((f) => f.shot.id === sh.id))}
                         playing={section?.shotId === sh.id && playing}
+                        locked={!!locks[sh.id] || !!locks[sc.id]}
+                        lockedByScene={!!locks[sc.id]}
+                        onToggleLock={(v) => setLock(sh.id, v)}
                         onChange={(next) => updShot(sc.id, sh.id, next)}
                         onDelete={() => delShot(sc, sh.id, hi)}
                         onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
@@ -706,11 +744,14 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               {pendientes === 1 ? "1 voz generándose" : `${pendientes} voces en cola`} · puedes seguir editando
             </p>
           )}
-          <label className="mt-3 block space-y-1 text-sm">
-            <span className="flex items-center gap-1 text-xs text-muted"><Volume2 className="h-3.5 w-3.5" /> Volumen narración</span>
-            <input type="range" min={0} max={1} step={0.05} value={project.narrationVolume}
-              onChange={(e) => mut((p) => ({ ...p, narrationVolume: Number(e.target.value) }))} className="w-full" />
-          </label>
+          <div className="mt-3">
+            <Slider
+              label="Volumen de la narración" value={project.narrationVolume}
+              min={0} max={1} step={0.01}
+              onChange={(v) => mut((p) => ({ ...p, narrationVolume: v }))}
+              format={(v) => `${Math.round(v * 100)}%`}
+            />
+          </div>
           <p className="mt-2 text-[11px] text-muted">
             Voz IA gratis en tu navegador (la 1ª vez descarga el modelo, ~30–60&nbsp;MB). Suena algo
             robótica; es temporal.
@@ -739,10 +780,9 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                   ><Trash2 className="h-3.5 w-3.5" /></button>
                 </div>
                 <div className="mt-1 grid grid-cols-2 gap-2">
-                  <label className="space-y-0.5 text-[11px] text-muted">Volumen
-                    <input type="range" min={0} max={1} step={0.05} value={l.volume}
-                      onChange={(e) => updLayer(l.id, { volume: Number(e.target.value) })} className="w-full" />
-                  </label>
+                  <Slider label="Volumen" value={l.volume} min={0} max={1} step={0.01}
+                    onChange={(v) => updLayer(l.id, { volume: v })}
+                    format={(v) => `${Math.round(v * 100)}%`} />
                   <label className="space-y-0.5 text-[11px] text-muted">Inicio (s)
                     <input type="number" min={0} step={0.1} value={l.startSec}
                       onChange={(e) => updLayer(l.id, { startSec: Math.max(0, Number(e.target.value)) })} className="input" />
