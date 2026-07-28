@@ -4,10 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
-  Mic, Music, Volume2, Save, FolderOpen, Film, Layers,
+  Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2,
 } from "lucide-react";
 import { StoryEngine } from "@/lib/story/engine";
-import { synthesize, audioDuration, VOICES } from "@/lib/story/tts";
+import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl } from "@/lib/story/store";
 import { ShotEditor, newSfx } from "./shot-editor";
 import {
@@ -57,7 +57,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [selOverlay, setSelOverlay] = useState<string | null>(null);
   const [dragScene, setDragScene] = useState<string | null>(null);
 
-  const [busyDialogue, setBusyDialogue] = useState<string | null>(null);
+  // Encargos de voz en marcha, por id de diálogo (la generación no bloquea la página).
+  const [voiceJobs, setVoiceJobs] = useState<Record<string, VoiceStatus>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [format, setFormat] = useState<"webm" | "mp4" | "gif" | "mp3">("webm");
@@ -87,12 +88,17 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   useEffect(() => {
     const h = (e: BeforeUnloadEvent) => {
-      if (dirty && project.scenes.length) { e.preventDefault(); e.returnValue = ""; }
+      // También avisa si hay voces a medias: al recargar se perderían.
+      if ((dirty && project.scenes.length) || Object.keys(voiceJobs).length) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
     };
     window.addEventListener("beforeunload", h);
     return () => window.removeEventListener("beforeunload", h);
-  }, [dirty, project.scenes.length]);
+  }, [dirty, project.scenes.length, voiceJobs]);
 
+  const pendientes = Object.keys(voiceJobs).length;
   const dur = totalDuration(project);
   const flat = flatten(project);
   const curFlat = flat.find((f) => f.shot.id === selShot) ?? null;
@@ -174,33 +180,55 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   }
 
   // ---------- voz ----------
-  async function genVoice(sceneId: string, shot: Shot, d: Dialogue) {
-    if (!d.text.trim()) { setStatus("Escribe el texto del diálogo primero."); return; }
-    setBusyDialogue(d.id);
-    setStatus(null);
-    try {
-      const blob = await synthesize(d.text, voice, (s) => setStatus(s));
-      const audioId = nanoid(10);
-      await putAsset(audioId, blob);
-      const secs = await audioDuration(blob);
-      updShot(sceneId, shot.id, {
-        ...shot,
-        dialogues: shot.dialogues.map((x) => (x.id === d.id ? { ...x, audioId, dur: secs } : x)),
-      });
-      setStatus("Voz generada ✓");
-    } catch (err: any) {
-      setStatus("Error generando voz: " + (err?.message ?? ""));
-    }
-    setBusyDialogue(null);
+  // Actualiza un diálogo por id. La generación tarda, así que no se puede
+  // partir de una copia capturada antes: mientras tanto se puede haber editado.
+  function patchDialogue(sceneId: string, shotId: string, dId: string, patch: Partial<Dialogue>) {
+    mut((p) => ({
+      ...p,
+      scenes: p.scenes.map((sc) =>
+        sc.id !== sceneId ? sc : {
+          ...sc,
+          shots: sc.shots.map((sh) =>
+            sh.id !== shotId ? sh : {
+              ...sh,
+              dialogues: sh.dialogues.map((x) => (x.id !== dId ? x : { ...x, ...patch })),
+            },
+          ),
+        },
+      ),
+    }));
   }
-  async function genAllVoices() {
+
+  // No espera: encarga la voz al worker y sigue. Se puede seguir editando y
+  // encolar más voces mientras tanto.
+  function genVoice(sceneId: string, shotId: string, d: Dialogue) {
+    if (!d.text.trim()) { setStatus("Escribe el texto del diálogo primero."); return; }
+    if (voiceJobs[d.id]) return;
+    setStatus(null);
+    setVoiceJobs((j) => ({ ...j, [d.id]: { stage: "queued", pct: 0 } }));
+    synthesize(d.text, voice, (s) => setVoiceJobs((j) => (j[d.id] ? { ...j, [d.id]: s } : j)))
+      .then(async (blob) => {
+        const audioId = nanoid(10);
+        await putAsset(audioId, blob);
+        const secs = await audioDuration(blob);
+        patchDialogue(sceneId, shotId, d.id, { audioId, dur: secs });
+        setStatus("Voz generada ✓");
+      })
+      .catch((err: any) => {
+        setStatus("Error generando voz: " + (err?.message ?? ""));
+      })
+      .finally(() => {
+        setVoiceJobs((j) => {
+          const { [d.id]: _drop, ...rest } = j;
+          return rest;
+        });
+      });
+  }
+  function genAllVoices() {
     for (const sc of projRef.current.scenes) {
       for (const sh of sc.shots) {
         for (const d of sh.dialogues) {
-          if (d.text.trim() && !d.audioId) {
-            const live = projRef.current.scenes.find((x) => x.id === sc.id)?.shots.find((x) => x.id === sh.id);
-            if (live) await genVoice(sc.id, live, d);
-          }
+          if (d.text.trim() && !d.audioId) genVoice(sc.id, sh.id, d);
         }
       }
     }
@@ -490,13 +518,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         imgH={sc.imgH}
                         canMove={sc.shots.length > 1}
                         expanded={selShot === sh.id}
-                        busyDialogue={busyDialogue}
+                        voiceJobs={voiceJobs}
                         selectedOverlay={selShot === sh.id ? selOverlay : null}
                         onChange={(next) => updShot(sc.id, sh.id, next)}
                         onDelete={() => delShot(sc, sh.id, hi)}
                         onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
                         onToggle={() => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id))}
-                        onGenVoice={(d) => genVoice(sc.id, sh, d)}
+                        onGenVoice={(d) => genVoice(sc.id, sh.id, d)}
                         onAddSfx={(e) => addSfx(sc.id, sh, e)}
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
                         onSelectOverlay={(id) => { setSelShot(sh.id); setSelOverlay(id); if (id) engineRef.current?.seekToShot(sh.id); }}
@@ -555,6 +583,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           <button onClick={genAllVoices} className="btn-ghost mt-2 w-full text-sm">
             <Mic className="h-4 w-4 text-accent" /> Generar la voz de los diálogos que falten
           </button>
+          {pendientes > 0 && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-accent">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {pendientes === 1 ? "1 voz generándose" : `${pendientes} voces en cola`} · puedes seguir editando
+            </p>
+          )}
           <label className="mt-3 block space-y-1 text-sm">
             <span className="flex items-center gap-1 text-xs text-muted"><Volume2 className="h-3.5 w-3.5" /> Volumen narración</span>
             <input type="range" min={0} max={1} step={0.05} value={project.narrationVolume}
