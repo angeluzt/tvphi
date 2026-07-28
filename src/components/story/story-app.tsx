@@ -3,16 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import {
-  X, Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon,
-  Mic, Music, Volume2, Sticker, Wand2, Save, FolderOpen, Film,
+  Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
+  Mic, Music, Volume2, Save, FolderOpen, Film, Layers,
 } from "lucide-react";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl } from "@/lib/story/store";
+import { ShotEditor, newSfx, newOverlay } from "./shot-editor";
 import {
-  emptyProject, newSlide, moveSlide, slideDur, slideStarts, totalDuration,
-  type StoryProject, type StorySlide, type PanDir, type ZoomKind, type TransitionKind,
-  type AudioLayer, type PngOverlay,
+  emptyProject, newScene, newShot, moveScene, reorderScene, moveShot, migrateProject,
+  flatten, shotDur, totalDuration,
+  type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
 import { convert } from "@/lib/editor/ffmpeg";
@@ -31,6 +32,16 @@ function download(blob: Blob, name: string) {
   a.href = u; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(u), 5000);
 }
+// Lee el tamaño natural de una imagen para poder calcular los encuadres.
+function imageSize(file: Blob): Promise<{ w: number; h: number }> {
+  return new Promise((res) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { res({ w: img.naturalWidth, h: img.naturalHeight }); URL.revokeObjectURL(url); };
+    img.onerror = () => { res({ w: 16, h: 9 }); URL.revokeObjectURL(url); };
+    img.src = url;
+  });
+}
 
 export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [project, setProject] = useState<StoryProject>(emptyProject());
@@ -41,9 +52,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [selSlide, setSelSlide] = useState<string | null>(null);
+  const [openScene, setOpenScene] = useState<string | null>(null);
+  const [selShot, setSelShot] = useState<string | null>(null);
   const [selOverlay, setSelOverlay] = useState<string | null>(null);
+  const [dragScene, setDragScene] = useState<string | null>(null);
 
+  const [busyDialogue, setBusyDialogue] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [format, setFormat] = useState<"webm" | "mp4" | "gif" | "mp3">("webm");
@@ -56,7 +70,6 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const projRef = useRef(project);
   projRef.current = project;
 
-  // --- engine lifecycle ---
   useEffect(() => {
     const eng = new StoryEngine();
     engineRef.current = eng;
@@ -70,34 +83,39 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     return () => eng.destroy();
   }, []);
 
-  useEffect(() => {
-    engineRef.current?.update(project);
-  }, [project]);
+  useEffect(() => { engineRef.current?.update(project); }, [project]);
 
-  // --- warn before leaving with unsaved/unexported work ---
   useEffect(() => {
     const h = (e: BeforeUnloadEvent) => {
-      if (dirty && project.slides.length) { e.preventDefault(); e.returnValue = ""; }
+      if (dirty && project.scenes.length) { e.preventDefault(); e.returnValue = ""; }
     };
     window.addEventListener("beforeunload", h);
     return () => window.removeEventListener("beforeunload", h);
-  }, [dirty, project.slides.length]);
+  }, [dirty, project.scenes.length]);
 
   const dur = totalDuration(project);
-  const starts = slideStarts(project);
-  const active = selSlide ?? (project.slides[0]?.id ?? null);
-  const activeSlide = project.slides.find((s) => s.id === active) ?? null;
-  const activeOverlay = activeSlide?.overlays.find((o) => o.id === selOverlay) ?? null;
+  const flat = flatten(project);
+  const curFlat = flat.find((f) => f.shot.id === selShot) ?? null;
+  const curOverlay = curFlat?.shot.overlays.find((o) => o.id === selOverlay) ?? null;
+  // El recuadro para colocar el sticker solo tiene sentido si el reproductor
+  // está dentro de la toma a la que pertenece.
+  const overlayVisible =
+    !!curFlat && playhead >= curFlat.start - 0.001 && playhead <= curFlat.start + curFlat.dur;
 
   function mut(fn: (p: StoryProject) => StoryProject) {
     setDirty(true);
     setProject((prev) => fn(prev));
   }
-  function mutSlide(id: string, patch: Partial<StorySlide>) {
-    mut((p) => ({ ...p, slides: p.slides.map((s) => (s.id === id ? { ...s, ...patch } : s)) }));
+  function updShot(sceneId: string, shotId: string, next: Shot) {
+    mut((p) => ({
+      ...p,
+      scenes: p.scenes.map((sc) =>
+        sc.id === sceneId ? { ...sc, shots: sc.shots.map((s) => (s.id === shotId ? next : s)) } : sc,
+      ),
+    }));
   }
 
-  // --- playback ---
+  // ---------- reproducción ----------
   async function togglePlay() {
     const eng = engineRef.current!;
     if (playing) { eng.pause(); setPlaying(false); }
@@ -107,85 +125,120 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     engineRef.current?.seek(t);
     setPlaying(false);
   }
-  function focusSlide(id: string) {
-    setSelSlide(id);
+  function focusShot(shotId: string) {
+    setSelShot(shotId);
     setSelOverlay(null);
-    const i = project.slides.findIndex((s) => s.id === id);
-    if (i >= 0) seek(starts[i] + 0.01);
+    engineRef.current?.seekToShot(shotId);
+    setPlaying(false);
   }
 
-  // --- slides ---
+  // ---------- escenas ----------
   async function addImages(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     for (const f of files) {
       const id = nanoid(10);
       await putAsset(id, f);
-      await assetUrl(id); // cachea la object URL
-      const s = newSlide(id);
-      mut((p) => ({ ...p, slides: [...p.slides, s] }));
-      setSelSlide(s.id);
+      await assetUrl(id);
+      const { w, h } = await imageSize(f);
+      const sc = newScene(id, w, h);
+      mut((p) => ({ ...p, scenes: [...p.scenes, sc] }));
+      setOpenScene(sc.id);
+      setSelShot(sc.shots[0].id);
     }
   }
-  function delSlide(id: string) {
-    mut((p) => ({ ...p, slides: p.slides.filter((s) => s.id !== id) }));
-    if (selSlide === id) setSelSlide(null);
+  function delScene(sc: StoryScene, i: number) {
+    const n = sc.shots.length;
+    const msg = n > 1
+      ? `¿Borrar la escena ${i + 1} y sus ${n} tomas?`
+      : `¿Borrar la escena ${i + 1}?`;
+    if (!confirm(msg)) return;
+    mut((p) => ({ ...p, scenes: p.scenes.filter((x) => x.id !== sc.id) }));
+    if (openScene === sc.id) setOpenScene(null);
+    if (sc.shots.some((s) => s.id === selShot)) setSelShot(null);
   }
-  function mvSlide(id: string, d: -1 | 1) { mut((p) => moveSlide(p, id, d)); }
+  function addShot(sc: StoryScene) {
+    const s = newShot(sc.imgW, sc.imgH, "in");
+    mut((p) => ({ ...p, scenes: p.scenes.map((x) => (x.id === sc.id ? { ...x, shots: [...x.shots, s] } : x)) }));
+    setOpenScene(sc.id);
+    setSelShot(s.id);
+  }
+  function delShot(sc: StoryScene, shotId: string, i: number) {
+    if (sc.shots.length === 1) {
+      setStatus("Una escena necesita al menos una toma. Borra la escena entera si ya no la quieres.");
+      return;
+    }
+    if (!confirm(`¿Borrar la toma ${i + 1}?`)) return;
+    mut((p) => ({ ...p, scenes: p.scenes.map((x) => (x.id === sc.id ? { ...x, shots: x.shots.filter((s) => s.id !== shotId) } : x)) }));
+    if (selShot === shotId) setSelShot(null);
+  }
 
-  // --- narración (TTS) ---
-  async function genVoice(slide: StorySlide) {
-    if (!slide.narration.trim()) { setStatus("Escribe el texto a narrar primero."); return; }
-    setBusy(slide.id);
+  // ---------- voz ----------
+  async function genVoice(sceneId: string, shot: Shot, d: Dialogue) {
+    if (!d.text.trim()) { setStatus("Escribe el texto del diálogo primero."); return; }
+    setBusyDialogue(d.id);
     setStatus(null);
     try {
-      const blob = await synthesize(slide.narration, voice, (s) => setStatus(s));
+      const blob = await synthesize(d.text, voice, (s) => setStatus(s));
       const audioId = nanoid(10);
       await putAsset(audioId, blob);
-      const d = await audioDuration(blob);
-      mutSlide(slide.id, { audioId, narrationDur: d });
+      const secs = await audioDuration(blob);
+      updShot(sceneId, shot.id, {
+        ...shot,
+        dialogues: shot.dialogues.map((x) => (x.id === d.id ? { ...x, audioId, dur: secs } : x)),
+      });
       setStatus("Voz generada ✓");
     } catch (err: any) {
       setStatus("Error generando voz: " + (err?.message ?? ""));
     }
-    setBusy(null);
+    setBusyDialogue(null);
   }
   async function genAllVoices() {
-    for (const s of projRef.current.slides) {
-      if (s.narration.trim() && !s.audioId) await genVoice(s);
+    for (const sc of projRef.current.scenes) {
+      for (const sh of sc.shots) {
+        for (const d of sh.dialogues) {
+          if (d.text.trim() && !d.audioId) {
+            const live = projRef.current.scenes.find((x) => x.id === sc.id)?.shots.find((x) => x.id === sh.id);
+            if (live) await genVoice(sc.id, live, d);
+          }
+        }
+      }
     }
   }
 
-  // --- stickers PNG ---
-  async function addSticker(slideId: string, e: React.ChangeEvent<HTMLInputElement>) {
+  // ---------- sonidos y stickers por toma ----------
+  async function addSfx(sceneId: string, shot: Shot, e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     e.target.value = "";
     if (!f) return;
-    const id = nanoid(10);
-    await putAsset(id, f);
-    await assetUrl(id);
-    const ov: PngOverlay = { id: nanoid(6), imageId: id, x: 0.35, y: 0.35, w: 0.3, h: 0.3 };
-    mut((p) => ({ ...p, slides: p.slides.map((s) => (s.id === slideId ? { ...s, overlays: [...s.overlays, ov] } : s)) }));
-    setSelSlide(slideId);
+    const audioId = nanoid(10);
+    await putAsset(audioId, f);
+    updShot(sceneId, shot.id, { ...shot, sfx: [...shot.sfx, newSfx(audioId, f.name)] });
+  }
+  async function addSticker(sceneId: string, shot: Shot, e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    const imageId = nanoid(10);
+    await putAsset(imageId, f);
+    await assetUrl(imageId);
+    const ov = newOverlay(imageId);
+    updShot(sceneId, shot.id, { ...shot, overlays: [...shot.overlays, ov] });
+    setSelShot(shot.id);
     setSelOverlay(ov.id);
+    // Coloca el reproductor en la toma para poder situar el sticker al momento.
+    engineRef.current?.seekToShot(shot.id);
+    setPlaying(false);
   }
-  function updOverlay(slideId: string, ovId: string, patch: Partial<PngOverlay>) {
-    mut((p) => ({
-      ...p,
-      slides: p.slides.map((s) =>
-        s.id === slideId ? { ...s, overlays: s.overlays.map((o) => (o.id === ovId ? { ...o, ...patch } : o)) } : s,
-      ),
-    }));
-  }
-  function delOverlay(slideId: string, ovId: string) {
-    mut((p) => ({
-      ...p,
-      slides: p.slides.map((s) => (s.id === slideId ? { ...s, overlays: s.overlays.filter((o) => o.id !== ovId) } : s)),
-    }));
-    if (selOverlay === ovId) setSelOverlay(null);
+  function updOverlayPos(patch: Partial<PngOverlay>) {
+    if (!curFlat || !curOverlay) return;
+    updShot(curFlat.scene.id, curFlat.shot.id, {
+      ...curFlat.shot,
+      overlays: curFlat.shot.overlays.map((o) => (o.id === curOverlay.id ? { ...o, ...patch } : o)),
+    });
   }
 
-  // --- audio layers ---
+  // ---------- audio global ----------
   async function addAudioLayer(kind: "music" | "sfx", e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     e.target.value = "";
@@ -194,18 +247,15 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     await putAsset(audioId, f);
     const layer: AudioLayer = {
       id: nanoid(6), kind, audioId, name: f.name,
-      volume: kind === "music" ? 0.4 : 0.8, startSec: 0, loop: kind === "music",
+      volume: kind === "music" ? 0.35 : 0.8, startSec: 0, loop: kind === "music",
     };
     mut((p) => ({ ...p, audioLayers: [...p.audioLayers, layer] }));
   }
   function updLayer(id: string, patch: Partial<AudioLayer>) {
     mut((p) => ({ ...p, audioLayers: p.audioLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)) }));
   }
-  function delLayer(id: string) {
-    mut((p) => ({ ...p, audioLayers: p.audioLayers.filter((l) => l.id !== id) }));
-  }
 
-  // --- persistencia (metadatos) ---
+  // ---------- persistencia ----------
   async function save() {
     setBusy("save");
     setStatus(null);
@@ -218,10 +268,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || "Error");
       setProjectId(j.project.id);
-      setProjects((prev) => {
-        const rest = prev.filter((p) => p.id !== j.project.id);
-        return [{ id: j.project.id, name: j.project.name, updatedAt: j.project.updatedAt }, ...rest];
-      });
+      setProjects((prev) => [
+        { id: j.project.id, name: j.project.name, updatedAt: j.project.updatedAt },
+        ...prev.filter((p) => p.id !== j.project.id),
+      ]);
       setDirty(false);
       setStatus("Proyecto guardado ✓");
     } catch (err: any) {
@@ -236,15 +286,18 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       const res = await fetch(`/api/story?id=${id}`);
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || "Error");
-      const data = j.project.data as StoryProject;
-      // precachea las object URLs de imágenes que sigan en IndexedDB
+      const data = migrateProject(j.project.data);
       const ids = new Set<string>();
-      for (const s of data.slides) { ids.add(s.imageId); s.overlays.forEach((o) => ids.add(o.imageId)); }
+      for (const sc of data.scenes) {
+        ids.add(sc.imageId);
+        for (const sh of sc.shots) sh.overlays.forEach((o) => ids.add(o.imageId));
+      }
       await Promise.all([...ids].map((i) => assetUrl(i)));
       setProject(data);
       setProjectId(j.project.id);
       setName(j.project.name);
-      setSelSlide(data.slides[0]?.id ?? null);
+      setOpenScene(data.scenes[0]?.id ?? null);
+      setSelShot(data.scenes[0]?.shots[0]?.id ?? null);
       setDirty(false);
       seek(0);
       setStatus("Proyecto cargado ✓");
@@ -258,15 +311,16 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setProject(emptyProject());
     setProjectId(null);
     setName("Mi historia");
-    setSelSlide(null);
+    setOpenScene(null);
+    setSelShot(null);
     setSelOverlay(null);
     setDirty(false);
     seek(0);
   }
 
-  // --- export ---
+  // ---------- exportar ----------
   async function doExport() {
-    if (!project.slides.length) { setStatus("Añade al menos una imagen."); return; }
+    if (!project.scenes.length) { setStatus("Añade al menos una imagen."); return; }
     const eng = engineRef.current!;
     setExporting(true);
     setPlaying(false);
@@ -275,24 +329,20 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     try {
       const webmMime = Recorder.pickMime();
       if (format === "webm") {
-        const b = await eng.export(webmMime, setProgress);
-        download(b, `tvphi-historia-${Date.now()}.webm`);
+        download(await eng.export(webmMime, setProgress), `tvphi-historia-${Date.now()}.webm`);
       } else if (format === "mp4") {
         const mp4 = Recorder.pickMp4();
         if (mp4) {
-          const b = await eng.export(mp4, setProgress);
-          download(b, `tvphi-historia-${Date.now()}.mp4`);
+          download(await eng.export(mp4, setProgress), `tvphi-historia-${Date.now()}.mp4`);
         } else {
           setStatus("Convirtiendo a MP4 (puede tardar)…");
           const b = await eng.export(webmMime, (p) => setProgress(p * 0.5));
-          const c = await convert(b, "mp4", (p) => setProgress(0.5 + p * 0.5));
-          download(c, `tvphi-historia-${Date.now()}.mp4`);
+          download(await convert(b, "mp4", (p) => setProgress(0.5 + p * 0.5)), `tvphi-historia-${Date.now()}.mp4`);
         }
       } else {
         setStatus(`Convirtiendo a ${format.toUpperCase()} (puede tardar)…`);
         const b = await eng.export(webmMime, (p) => setProgress(p * 0.5));
-        const c = await convert(b, format, (p) => setProgress(0.5 + p * 0.5));
-        download(c, `tvphi-historia-${Date.now()}.${format}`);
+        download(await convert(b, format, (p) => setProgress(0.5 + p * 0.5)), `tvphi-historia-${Date.now()}.${format}`);
       }
       setStatus("Descarga lista ✓");
     } catch (err: any) {
@@ -303,27 +353,22 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-      {/* Columna izquierda: preview + slides */}
       <div className="space-y-4">
-        {/* Preview */}
-        <div className="card p-3">
+        {/* Previsualización: se queda fija al desplazarse para poder colocar
+            stickers y ver el encuadre mientras se edita una toma larga. */}
+        <div className="card p-3 lg:sticky lg:top-16 lg:z-20">
           <div className="relative aspect-video overflow-hidden rounded-2xl border border-border bg-black">
             <div ref={previewRef} className="absolute inset-0" />
-            {activeSlide && activeOverlay && (
-              <StickerBox
-                overlay={activeOverlay}
-                onChange={(t) => updOverlay(activeSlide.id, activeOverlay.id, t)}
-              />
-            )}
-            {!project.slides.length && (
+            {curOverlay && overlayVisible && <StickerBox overlay={curOverlay} onChange={updOverlayPos} />}
+            {!project.scenes.length && (
               <div className="absolute inset-0 grid place-items-center p-4 text-center text-sm text-muted">
                 Sube imágenes para empezar tu historia.
               </div>
             )}
           </div>
-          {/* transporte */}
+
           <div className="mt-3 flex items-center gap-3">
-            <button onClick={togglePlay} className="btn-brand" disabled={!project.slides.length}>
+            <button onClick={togglePlay} className="btn-brand" disabled={!project.scenes.length}>
               {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
             </button>
             <span className="text-sm tabular-nums text-muted">{fmt(playhead)} / {fmt(dur)}</span>
@@ -332,31 +377,40 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               onChange={(e) => seek(Number(e.target.value))} className="flex-1"
             />
           </div>
-          {/* timeline de slides */}
-          {project.slides.length > 0 && (
-            <div className="relative mt-2 h-12 w-full overflow-hidden rounded-lg bg-surface-2">
-              <div className="flex h-full w-full gap-0.5">
-                {project.slides.map((s, i) => {
-                  const pct = dur ? (slideDur(s) / dur) * 100 : 0;
+
+          {/* Línea de tiempo: escenas agrupadas, tomas dentro */}
+          {flat.length > 0 && (
+            <div className="relative mt-2 w-full overflow-hidden rounded-lg bg-surface-2 p-1">
+              <div className="flex h-12 w-full gap-1">
+                {project.scenes.map((sc, si) => {
+                  const scDur = sc.shots.reduce((a, s) => a + shotDur(s), 0);
                   return (
-                    <button key={s.id} onClick={() => focusSlide(s.id)}
-                      className={`relative h-full min-w-[26px] overflow-hidden rounded ${active === s.id ? "ring-2 ring-accent" : ""}`}
-                      style={{ width: `${pct}%` }} title={`Imagen ${i + 1} · ${fmt(slideDur(s))}`}>
-                      <Thumb id={s.imageId} />
-                      <span className="absolute left-1 top-0.5 rounded bg-black/50 px-1 text-[10px] text-white">{i + 1}</span>
-                    </button>
+                    <div key={sc.id} className="flex h-full gap-px overflow-hidden rounded"
+                      style={{ width: `${dur ? (scDur / dur) * 100 : 0}%` }}>
+                      {sc.shots.map((sh, hi) => (
+                        <button key={sh.id} onClick={() => focusShot(sh.id)}
+                          className={`relative h-full min-w-[14px] flex-1 overflow-hidden ${selShot === sh.id ? "ring-2 ring-accent" : ""}`}
+                          title={`Escena ${si + 1} · toma ${hi + 1} · ${shotDur(sh).toFixed(1)}s`}>
+                          <Thumb id={sc.imageId} />
+                          <span className="absolute inset-x-0 bottom-0 bg-black/50 text-center text-[9px] text-white">
+                            {si + 1}.{hi + 1}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   );
                 })}
               </div>
-              <div className="pointer-events-none absolute top-0 h-full w-0.5 bg-accent" style={{ left: `${dur ? (playhead / dur) * 100 : 0}%` }} />
+              <div className="pointer-events-none absolute top-0 h-full w-0.5 bg-accent"
+                style={{ left: `${dur ? (playhead / dur) * 100 : 0}%` }} />
             </div>
           )}
         </div>
 
-        {/* Slides */}
+        {/* Escenas */}
         <div className="card p-3">
           <div className="flex items-center gap-2">
-            <span className="label">Imágenes / escenas</span>
+            <span className="label">Escenas</span>
             <label className="btn-brand ml-auto cursor-pointer">
               <Plus className="h-4 w-4" /> Añadir imágenes
               <input type="file" accept="image/*" multiple className="hidden" onChange={addImages} />
@@ -364,99 +418,92 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           </div>
 
           <div className="mt-3 space-y-3">
-            {project.slides.map((s, i) => (
-              <div key={s.id}
-                className={`rounded-xl border p-3 ${active === s.id ? "border-brand bg-brand/5" : "border-border"}`}
-                onClick={() => setSelSlide(s.id)}>
-                <div className="flex gap-3">
-                  <button onClick={(e) => { e.stopPropagation(); focusSlide(s.id); }}
-                    className="relative h-16 w-28 shrink-0 overflow-hidden rounded-lg border border-border bg-black">
-                    <Thumb id={s.imageId} />
-                    <span className="absolute left-1 top-0.5 rounded bg-black/50 px-1 text-[10px] text-white">{i + 1}</span>
+            {project.scenes.map((sc, si) => (
+              <div
+                key={sc.id}
+                draggable
+                onDragStart={() => setDragScene(sc.id)}
+                onDragEnd={() => setDragScene(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragScene && dragScene !== sc.id) mut((p) => reorderScene(p, dragScene, si));
+                  setDragScene(null);
+                }}
+                className={`rounded-xl border p-3 ${openScene === sc.id ? "border-brand bg-brand/5" : "border-border"} ${dragScene === sc.id ? "opacity-50" : ""}`}
+              >
+                <div className="flex items-center gap-3">
+                  <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted" />
+                  <button
+                    onClick={() => { setOpenScene(openScene === sc.id ? null : sc.id); focusShot(sc.shots[0].id); }}
+                    className="relative h-14 w-24 shrink-0 overflow-hidden rounded-lg border border-border bg-black"
+                  >
+                    <Thumb id={sc.imageId} />
+                    <span className="absolute left-1 top-0.5 rounded bg-black/60 px-1 text-[10px] text-white">{si + 1}</span>
                   </button>
                   <div className="min-w-0 flex-1">
-                    <textarea
-                      className="input min-h-[52px] text-sm" rows={2}
-                      placeholder="Texto que se narrará (no se ve en el video)…"
-                      value={s.narration}
-                      onChange={(e) => mutSlide(s.id, { narration: e.target.value })}
-                    />
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <button onClick={(e) => { e.stopPropagation(); genVoice(s); }} disabled={busy === s.id}
-                        className="btn-ghost text-xs">
-                        <Wand2 className="h-3.5 w-3.5 text-accent" />
-                        {busy === s.id ? "Generando…" : s.audioId ? "Regenerar voz" : "Generar voz"}
-                      </button>
-                      {s.audioId && <span className="text-[11px] text-muted">🔊 {s.narrationDur.toFixed(1)}s</span>}
-                    </div>
+                    <p className="text-sm font-medium">Escena {si + 1}</p>
+                    <p className="text-xs text-muted">
+                      {sc.shots.length} {sc.shots.length === 1 ? "toma" : "tomas"} ·{" "}
+                      {sc.shots.reduce((a, s) => a + shotDur(s), 0).toFixed(1)}s
+                    </p>
                   </div>
-                  <div className="flex flex-col items-center gap-1">
-                    <button onClick={(e) => { e.stopPropagation(); mvSlide(s.id, -1); }} className="text-muted hover:text-fg"><ChevronUp className="h-4 w-4" /></button>
-                    <button onClick={(e) => { e.stopPropagation(); mvSlide(s.id, 1); }} className="text-muted hover:text-fg"><ChevronDown className="h-4 w-4" /></button>
-                    <button onClick={(e) => { e.stopPropagation(); delSlide(s.id); }} className="text-muted hover:text-danger"><Trash2 className="h-4 w-4" /></button>
+                  <button onClick={() => addShot(sc)} className="btn-ghost text-xs" title="Añadir sub-escena">
+                    <Plus className="h-3.5 w-3.5 text-accent" /> Toma
+                  </button>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <button onClick={() => mut((p) => moveScene(p, sc.id, -1))} title="Subir escena" className="text-muted hover:text-fg"><ChevronUp className="h-4 w-4" /></button>
+                    <button onClick={() => mut((p) => moveScene(p, sc.id, 1))} title="Bajar escena" className="text-muted hover:text-fg"><ChevronDown className="h-4 w-4" /></button>
                   </div>
+                  <button onClick={() => delScene(sc, si)} title="Borrar escena" className="text-muted hover:text-danger"><Trash2 className="h-4 w-4" /></button>
+                  <button
+                    onClick={() => setOpenScene(openScene === sc.id ? null : sc.id)}
+                    className="btn-ghost text-xs"
+                  >
+                    <Layers className="h-3.5 w-3.5" /> {openScene === sc.id ? "Cerrar" : "Editar"}
+                  </button>
                 </div>
 
-                {/* controles de movimiento/transición */}
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  <label className="space-y-0.5 text-xs">
-                    <span className="text-muted">Movimiento</span>
-                    <select className="input" value={s.pan} onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => mutSlide(s.id, { pan: e.target.value as PanDir })}>
-                      <option value="none">Fijo</option>
-                      <option value="up">Subir</option>
-                      <option value="down">Bajar</option>
-                      <option value="left">Izquierda</option>
-                      <option value="right">Derecha</option>
-                    </select>
-                  </label>
-                  <label className="space-y-0.5 text-xs">
-                    <span className="text-muted">Zoom</span>
-                    <select className="input" value={s.zoom} onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => mutSlide(s.id, { zoom: e.target.value as ZoomKind })}>
-                      <option value="none">Sin zoom</option>
-                      <option value="in">Acercar</option>
-                      <option value="out">Alejar</option>
-                    </select>
-                  </label>
-                  <label className="space-y-0.5 text-xs">
-                    <span className="text-muted">Transición</span>
-                    <select className="input" value={s.transition} onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => mutSlide(s.id, { transition: e.target.value as TransitionKind })}>
-                      <option value="cut">Corte</option>
-                      <option value="fade">Fundido</option>
-                      <option value="slide">Deslizar</option>
-                    </select>
-                  </label>
-                </div>
-
-                {/* stickers */}
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <label className="btn-ghost cursor-pointer text-xs" onClick={(e) => e.stopPropagation()}>
-                    <Sticker className="h-3.5 w-3.5 text-accent" /> Añadir PNG
-                    <input type="file" accept="image/png,image/*" className="hidden" onChange={(e) => addSticker(s.id, e)} />
-                  </label>
-                  {s.overlays.map((o) => (
-                    <span key={o.id}
-                      className={`flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs ${selOverlay === o.id ? "border-accent bg-accent/10" : "border-border"}`}
-                      onClick={(e) => { e.stopPropagation(); setSelSlide(s.id); setSelOverlay(o.id); focusSlide(s.id); }}>
-                      <ImageIcon className="h-3 w-3" /> PNG
-                      <button onClick={(e) => { e.stopPropagation(); delOverlay(s.id, o.id); }} className="text-muted hover:text-danger"><X className="h-3 w-3" /></button>
-                    </span>
-                  ))}
-                </div>
+                {openScene === sc.id && (
+                  <div className="mt-3 space-y-3">
+                    {sc.shots.map((sh, hi) => (
+                      <ShotEditor
+                        key={sh.id}
+                        shot={sh}
+                        index={hi}
+                        imageId={sc.imageId}
+                        imgW={sc.imgW}
+                        imgH={sc.imgH}
+                        canMove={sc.shots.length > 1}
+                        expanded={selShot === sh.id}
+                        busyDialogue={busyDialogue}
+                        selectedOverlay={selShot === sh.id ? selOverlay : null}
+                        onChange={(next) => updShot(sc.id, sh.id, next)}
+                        onDelete={() => delShot(sc, sh.id, hi)}
+                        onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
+                        onToggle={() => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id))}
+                        onGenVoice={(d) => genVoice(sc.id, sh, d)}
+                        onAddSfx={(e) => addSfx(sc.id, sh, e)}
+                        onAddSticker={(e) => addSticker(sc.id, sh, e)}
+                        onSelectOverlay={(id) => { setSelShot(sh.id); setSelOverlay(id); if (id) engineRef.current?.seekToShot(sh.id); }}
+                      />
+                    ))}
+                    <button onClick={() => addShot(sc)} className="btn-ghost w-full text-sm">
+                      <Plus className="h-4 w-4 text-accent" /> Añadir otra toma a esta imagen
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
-            {!project.slides.length && (
+            {!project.scenes.length && (
               <p className="py-6 text-center text-sm text-muted">Aún no hay imágenes. Sube las primeras para empezar.</p>
             )}
           </div>
         </div>
       </div>
 
-      {/* Columna derecha: proyecto, voz, audio, export */}
+      {/* Panel derecho */}
       <aside className="space-y-4">
-        {/* Proyecto */}
         <div className="card p-3">
           <span className="label">Proyecto</span>
           <input className="input mt-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del proyecto" />
@@ -483,7 +530,6 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           </p>
         </div>
 
-        {/* Voz */}
         <div className="card p-3">
           <span className="label">Voz (narración)</span>
           <label className="mt-2 block space-y-1 text-sm">
@@ -493,7 +539,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             </select>
           </label>
           <button onClick={genAllVoices} className="btn-ghost mt-2 w-full text-sm">
-            <Mic className="h-4 w-4 text-accent" /> Generar voz de las que falten
+            <Mic className="h-4 w-4 text-accent" /> Generar la voz de los diálogos que falten
           </button>
           <label className="mt-3 block space-y-1 text-sm">
             <span className="flex items-center gap-1 text-xs text-muted"><Volume2 className="h-3.5 w-3.5" /> Volumen narración</span>
@@ -506,9 +552,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           </p>
         </div>
 
-        {/* Audio (música / SFX) */}
         <div className="card p-3">
-          <span className="label">Audio (capas)</span>
+          <span className="label">Música y sonido global</span>
           <div className="mt-2 flex gap-2">
             <label className="btn-ghost flex-1 cursor-pointer text-xs"><Music className="h-4 w-4 text-accent" /> Música
               <input type="file" accept="audio/*" className="hidden" onChange={(e) => addAudioLayer("music", e)} />
@@ -523,7 +568,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                 <div className="flex items-center gap-2">
                   {l.kind === "music" ? <Music className="h-3.5 w-3.5 text-accent" /> : <Volume2 className="h-3.5 w-3.5 text-accent" />}
                   <span className="flex-1 truncate text-xs">{l.name}</span>
-                  <button onClick={() => delLayer(l.id)} className="text-muted hover:text-danger"><Trash2 className="h-3.5 w-3.5" /></button>
+                  <button
+                    onClick={() => mut((p) => ({ ...p, audioLayers: p.audioLayers.filter((x) => x.id !== l.id) }))}
+                    className="text-muted hover:text-danger"
+                  ><Trash2 className="h-3.5 w-3.5" /></button>
                 </div>
                 <div className="mt-1 grid grid-cols-2 gap-2">
                   <label className="space-y-0.5 text-[11px] text-muted">Volumen
@@ -537,15 +585,16 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                 </div>
                 <label className="mt-1 flex items-center gap-2 text-[11px] text-muted">
                   <input type="checkbox" checked={l.loop} onChange={(e) => updLayer(l.id, { loop: e.target.checked })} />
-                  Repetir (loop)
+                  Repetir en bucle todo el video
                 </label>
               </div>
             ))}
-            {!project.audioLayers.length && <p className="text-[11px] text-muted">Añade música de fondo o efectos, cada uno en su capa.</p>}
+            {!project.audioLayers.length && (
+              <p className="text-[11px] text-muted">Música de fondo para todo el video. Los sonidos puntuales van dentro de cada toma.</p>
+            )}
           </div>
         </div>
 
-        {/* Export */}
         <div className="card p-3">
           <span className="label">Exportar</span>
           <div className="mt-2 flex gap-2">
@@ -555,7 +604,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <option value="gif">GIF</option>
               <option value="mp3">MP3 (audio)</option>
             </select>
-            <button className="btn-brand" onClick={doExport} disabled={exporting || !project.slides.length}>
+            <button className="btn-brand" onClick={doExport} disabled={exporting || !project.scenes.length}>
               <Download className="h-4 w-4" /> {exporting ? `${Math.round(progress * 100)}%` : "Exportar"}
             </button>
           </div>
@@ -568,7 +617,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   );
 }
 
-// Miniatura de un asset guardado en IndexedDB (resuelve la object URL de forma perezosa).
+// Miniatura de un asset guardado en IndexedDB.
 function Thumb({ id }: { id: string }) {
   const [url, setUrl] = useState<string | null>(() => cachedUrl(id));
   useEffect(() => {
