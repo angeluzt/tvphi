@@ -1,6 +1,7 @@
 import {
   flatten, locate, lerpFrame, framePx, resolveFrames, moveProgress, overlayBox,
   dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE, ASPECTS, aspectInfo, setProjectAspect,
+  overlayWindow,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
   type ClipVideo,
 } from "./model";
@@ -39,6 +40,9 @@ export class StoryEngine {
   // Tramo acotado: al reproducir una escena o una toma sueltas, solo suena eso.
   private rangeStart = 0;
   private rangeEnd = Infinity;
+  // Repetir el tramo sin parar: sirve de vista previa mientras se colocan los
+  // stickers, para ver el efecto sin tener que dar al play cada vez.
+  private looping = false;
   playhead = 0;
   onTime: ((t: number) => void) | null = null;
   onEnded: (() => void) | null = null;
@@ -181,9 +185,10 @@ export class StoryEngine {
     } catch {}
   }
 
-  // Fotograma que toca según el tiempo del video (el GIF se repite en bucle).
-  private animFrame(a: { frames: ImageBitmap[]; ends: number[]; total: number }) {
-    const t = a.total > 0 ? this.playhead % a.total : 0;
+  // Fotograma que toca contando desde que el sticker apareció, para que una
+  // explosión empiece siempre por su primer fotograma. Luego se repite en bucle.
+  private animFrame(a: { frames: ImageBitmap[]; ends: number[]; total: number }, desde: number) {
+    const t = a.total > 0 ? Math.max(0, desde) % a.total : 0;
     for (let i = 0; i < a.ends.length; i++) if (t < a.ends[i]) return a.frames[i];
     return a.frames[a.frames.length - 1];
   }
@@ -409,6 +414,16 @@ export class StoryEngine {
         this.playhead = this.audioStartHead + (this.audioCtx.currentTime - this.audioStartCtx);
         const limit = Math.min(this.duration(), this.rangeEnd);
         if (this.playhead >= limit) {
+          if (this.looping) {
+            // Vuelta a empezar sin cortar: se reprograma el sonido desde el inicio.
+            this.playhead = this.rangeStart;
+            this.stopSources();
+            this.scheduleAudio(this.playhead);
+            this.onTime?.(this.playhead);
+            this.render();
+            this.raf = requestAnimationFrame(loop);
+            return;
+          }
           this.playhead = limit;
           this.pause(); // avisa por onPlaying
           this.onTime?.(this.playhead);
@@ -438,13 +453,18 @@ export class StoryEngine {
 
   // Acota la reproducción a un tramo (una escena o una toma). Sin argumentos,
   // vuelve al video completo.
-  setRange(start: number, end: number) {
+  setRange(start: number, end: number, loop = false) {
     this.rangeStart = Math.max(0, start);
     this.rangeEnd = Math.max(this.rangeStart + 0.05, end);
+    this.looping = loop;
   }
   clearRange() {
     this.rangeStart = 0;
     this.rangeEnd = Infinity;
+    this.looping = false;
+  }
+  setLooping(v: boolean) {
+    this.looping = v;
   }
 
   async play() {
@@ -542,18 +562,29 @@ export class StoryEngine {
     for (const o of f.shot.overlays) {
       const oi = this.images.get(o.imageId);
       if (!oi || !oi.complete || !oi.naturalWidth) continue;
+      // Fuera de su rato, el sticker no existe.
+      const v = overlayWindow(o, f.dur);
+      if (lt < v.start || lt > v.end) continue;
+      const desde = lt - v.start; // tiempo desde que apareció ESTE sticker
+
       let oa = alpha;
       let ox = offsetX;
       if (o.transition !== "inherit") {
         const td = Math.max(0.01, f.shot.transitionDur);
-        const a = Math.max(0, Math.min(1, lt / td));
+        const a = Math.max(0, Math.min(1, desde / td));
         oa = o.transition === "fade" ? a : 1;
         ox = o.transition === "slide" ? (1 - a) * this.w : 0;
       }
+      // Los que salen solo un rato se van con un fundido corto, para que no
+      // desaparezcan de golpe.
+      if (o.timing === "range") {
+        const cola = Math.min(0.25, (v.end - v.start) / 4);
+        if (cola > 0 && v.end - lt < cola) oa *= (v.end - lt) / cola;
+      }
       ctx.save();
-      ctx.globalAlpha = oa;
+      ctx.globalAlpha = Math.max(0, Math.min(1, oa));
       if (ox) ctx.translate(ox, 0);
-      this.drawOverlay(o, oi, p, frames, iw, ih);
+      this.drawOverlay(o, oi, p, frames, iw, ih, desde);
       ctx.restore();
     }
   }
@@ -565,13 +596,14 @@ export class StoryEngine {
     frames: { from: Frame; to: Frame },
     iw: number,
     ih: number,
+    desde: number, // segundos desde que este sticker apareció
   ) {
     const b = overlayBox(o, p, frames, iw, ih);
     const x = b.x * this.w, y = b.y * this.h, w = b.w * this.w, h = b.h * this.h;
     if (w <= 0 || h <= 0) return;
     // Si es un GIF animado se dibuja el fotograma que toca; si no, la imagen.
     const anim = this.anims.get(o.imageId);
-    const src: CanvasImageSource = anim ? this.animFrame(anim) : img;
+    const src: CanvasImageSource = anim ? this.animFrame(anim, desde) : img;
     const sw = anim ? (src as ImageBitmap).width : img.naturalWidth;
     const sh = anim ? (src as ImageBitmap).height : img.naturalHeight;
     if (!sw || !sh) return;

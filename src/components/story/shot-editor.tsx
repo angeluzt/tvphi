@@ -38,6 +38,7 @@ export function ShotEditor({
   onMove,
   onToggle,
   onPlay,
+  onPreview,
   onGenVoice,
   onAddSfx,
   onAddSticker,
@@ -62,6 +63,7 @@ export function ShotEditor({
   onMove: (dir: -1 | 1) => void;
   onToggle: () => void;
   onPlay: () => void;
+  onPreview: () => void;
   onGenVoice: (d: Dialogue) => void;
   onAddSfx: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddSticker: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -427,7 +429,10 @@ export function ShotEditor({
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Imágenes encima (PNG / GIF)</span>
-          <label className="btn-ghost ml-auto cursor-pointer text-xs">
+          <button onClick={onPreview} className="btn-ghost ml-auto text-xs" title="Ver esta toma repitiéndose mientras ajustas">
+            <Repeat className="h-3.5 w-3.5 text-accent" /> Vista previa
+          </button>
+          <label className="btn-ghost cursor-pointer text-xs">
             <Sticker className="h-3.5 w-3.5 text-accent" /> Añadir PNG o GIF
             <input type="file" accept="image/*" className="hidden" onChange={onAddSticker} />
           </label>
@@ -479,6 +484,49 @@ export function ShotEditor({
                         <option value="slide">Deslizar</option>
                       </select>
                     </label>
+                  </div>
+
+                  {/* Cuándo se ve: toda la toma o solo un rato. Así caben varias
+                      explosiones seguidas en la misma toma. */}
+                  <div className="rounded-lg border border-border/60 p-2">
+                    <label className="block space-y-0.5 text-[11px]">
+                      <span className="text-muted">Cuándo se ve</span>
+                      <select
+                        className="input py-0.5 text-xs"
+                        value={o.timing}
+                        onChange={(e) => {
+                          const t = e.target.value as "all" | "range";
+                          updOverlay(o.id, t === "range"
+                            ? { timing: t, startSec: o.startSec || 0, endSec: Math.min(dur, (o.startSec || 0) + 1) }
+                            : { timing: t });
+                        }}
+                      >
+                        <option value="all">Toda la toma</option>
+                        <option value="range">Solo un rato</option>
+                      </select>
+                    </label>
+                    {o.timing === "range" && (
+                      <div className="mt-1.5 grid grid-cols-2 gap-2">
+                        <NumberInput
+                          label="Aparece a los"
+                          value={o.startSec}
+                          onChange={(v) => updOverlay(o.id, { startSec: v, endSec: Math.max(v + 0.1, o.endSec) })}
+                          min={0} max={Math.max(0.1, dur - 0.1)} step={0.2}
+                        />
+                        <NumberInput
+                          label="Se va a los"
+                          value={Math.min(o.endSec, dur)}
+                          onChange={(v) => updOverlay(o.id, { endSec: v })}
+                          min={0.1} max={dur} step={0.2}
+                        />
+                      </div>
+                    )}
+                    <p className="mt-1 text-[10px] text-muted/80">
+                      {o.timing === "range"
+                        ? `Se ve ${Math.max(0, Math.min(dur, o.endSec) - o.startSec).toFixed(1)}s de los ${dur.toFixed(1)}s de la toma` +
+                          (shot.overlays.length > 1 ? " · puedes poner varios a distintas horas" : "")
+                        : `Toda la toma (${dur.toFixed(1)}s)`}
+                    </p>
                   </div>
 
                   <div className="rounded-lg border border-border/60 p-2">

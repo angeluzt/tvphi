@@ -108,6 +108,12 @@ export interface PngOverlay {
   motion: OverlayMotion;
   toX: number; toY: number; toW: number; toH: number; // posición final si motion = "free"
   transition: OverlayTransition; // cómo aparece
+  // Cuándo se ve, dentro de la toma. Con "all" sale toda la toma; con "range",
+  // solo entre esos dos segundos. Así caben varias explosiones seguidas en la
+  // misma toma, cada una a su hora.
+  timing: "all" | "range";
+  startSec: number;
+  endSec: number;
 }
 
 export interface Shot {
@@ -576,7 +582,16 @@ export function newOverlay(imageId: string): PngOverlay {
     motion: "follow",
     toX: 0.35, toY: 0.35, toW: 0.3, toH: 0.3,
     transition: "inherit",
+    timing: "all", startSec: 0, endSec: 1,
   };
+}
+
+// Momento en que aparece y desaparece un sticker dentro de su toma.
+export function overlayWindow(o: PngOverlay, shotDuration: number) {
+  if (o.timing !== "range") return { start: 0, end: shotDuration };
+  const start = Math.max(0, Math.min(shotDuration, o.startSec));
+  const end = Math.max(start + 0.05, Math.min(shotDuration, o.endSec));
+  return { start, end };
 }
 
 // Cambia el formato del video conservando el encuadre de cada formato: el que
@@ -685,6 +700,9 @@ function normalizeOverlay(o: any): PngOverlay {
     toX: o.toX ?? o.x ?? 0.35, toY: o.toY ?? o.y ?? 0.35,
     toW: o.toW ?? o.w ?? 0.3, toH: o.toH ?? o.h ?? 0.3,
     transition: o.transition ?? "inherit",
+    timing: o.timing === "range" ? "range" : "all",
+    startSec: Number(o.startSec) || 0,
+    endSec: Number(o.endSec) || 1,
   };
 }
 
