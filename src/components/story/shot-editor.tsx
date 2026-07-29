@@ -238,7 +238,12 @@ export function ShotEditor({
                   className="input min-h-[46px] flex-1 text-sm" rows={2}
                   placeholder="Texto que narra la voz (no se ve en el video)…"
                   value={d.text}
-                  onChange={(e) => updDialogue(d.id, { text: e.target.value })}
+                  // Si ya tenía voz, cambiar el texto la deja desfasada: se marca
+                  // para poder regenerar después solo las que hagan falta.
+                  onChange={(e) => updDialogue(d.id, {
+                    text: e.target.value,
+                    ...(d.audioId && e.target.value !== d.text ? { stale: true } : {}),
+                  })}
                 />
                 <button
                   onClick={() => onChange({ ...shot, dialogues: shot.dialogues.filter((x) => x.id !== d.id) })}
@@ -275,6 +280,11 @@ export function ShotEditor({
                   </span>
                 ) : (
                   <span className="text-[11px] text-muted">sin voz aún</span>
+                )}
+                {d.stale && d.audioId && (
+                  <span className="chip bg-gold/15 text-gold" title="El texto cambió después de generar la voz">
+                    texto cambiado · regenera la voz
+                  </span>
                 )}
               </div>
               {voiceJobs[d.id]?.stage === "loading" && (

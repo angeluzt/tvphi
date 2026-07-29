@@ -4,22 +4,23 @@ import { useEffect, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
-  Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical,
+  Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson,
 } from "lucide-react";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
-import { putAsset, assetUrl, cachedUrl } from "@/lib/story/store";
+import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
 import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
-  flatten, shotDur, totalDuration, sceneRange, inheritedLoops,
+  flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
 import { convert, remux } from "@/lib/editor/ffmpeg";
+import { exportDialogues, applyDialogues } from "@/lib/story/dialogues";
 
 interface ProjMeta { id: string; name: string; updatedAt: string }
 
@@ -131,6 +132,9 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   }, [dirty, project.scenes.length, voiceJobs]);
 
   const pendientes = Object.keys(voiceJobs).length;
+  // Diálogos cuyo texto cambió después de generar la voz.
+  const marcados = project.scenes.reduce(
+    (a, sc) => a + sc.shots.reduce((b, sh) => b + sh.dialogues.filter((d) => d.stale && d.text.trim()).length, 0), 0);
   const dur = totalDuration(project);
   // Lo que durará el archivo final, contando los videos que se le unen.
   const durFinal = dur + (project.intro?.dur ?? 0) + (project.outro?.dur ?? 0);
@@ -289,7 +293,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         const audioId = nanoid(10);
         await putAsset(audioId, blob);
         const secs = await audioDuration(blob);
-        patchDialogue(sceneId, shotId, d.id, { audioId, dur: secs });
+        patchDialogue(sceneId, shotId, d.id, { audioId, dur: secs, stale: false });
+        // Al regenerar, la voz anterior ya no la usa nadie: se quita para no ir
+        // llenando el navegador de audios sueltos.
+        if (d.audioId && d.audioId !== audioId) await deleteAsset(d.audioId).catch(() => {});
         setStatus("Voz generada ✓");
       })
       .catch((err: any) => {
@@ -309,6 +316,45 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           if (d.text.trim() && !d.audioId) genVoice(sc.id, sh.id, d);
         }
       }
+    }
+  }
+  // Solo los que quedaron marcados porque les cambió el texto.
+  function genStaleVoices() {
+    for (const sc of projRef.current.scenes) {
+      for (const sh of sc.shots) {
+        for (const d of sh.dialogues) {
+          if (d.stale && d.text.trim()) genVoice(sc.id, sh.id, d);
+        }
+      }
+    }
+  }
+
+  // ---------- textos de la narración (exportar / importar) ----------
+  function exportTexts() {
+    const datos = exportDialogues(projRef.current, name || "historia");
+    if (!datos.dialogos.length) { setStatus("Todavía no hay diálogos que exportar."); return; }
+    const blob = new Blob([JSON.stringify(datos, null, 2)], { type: "application/json" });
+    download(blob, `${(name || "historia").replace(/[^\w\-]+/g, "-")}-textos.json`);
+    setStatus(`${datos.dialogos.length} diálogos exportados ✓`);
+  }
+  async function importTexts(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    try {
+      const r = applyDialogues(projRef.current, JSON.parse(await f.text()));
+      if (r.error) { setStatus(r.error); return; }
+      if (!r.cambiados) {
+        setStatus(r.desconocidos ? `Nada que cambiar (${r.desconocidos} id no est${r.desconocidos === 1 ? "á" : "án"} en este proyecto).` : "Los textos ya eran los mismos.");
+        return;
+      }
+      mut(() => r.project);
+      const partes = [`${r.cambiados} diálogo${r.cambiados === 1 ? "" : "s"} actualizado${r.cambiados === 1 ? "" : "s"}`];
+      if (r.marcados) partes.push(`${r.marcados} pendiente${r.marcados === 1 ? "" : "s"} de regenerar la voz`);
+      if (r.desconocidos) partes.push(`${r.desconocidos} id del archivo no est${r.desconocidos === 1 ? "á" : "án"} en este proyecto`);
+      setStatus(partes.join(" · ") + " ✓");
+    } catch (err: any) {
+      setStatus("No se pudo leer el archivo: " + (err?.message ?? ""));
     }
   }
 
@@ -464,6 +510,43 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     }
     setBusy(null);
   }
+  // Borra el proyecto y, de paso, sus imágenes/audios/videos de este navegador:
+  // son los archivos pesados y no sirven para nada sin el proyecto.
+  async function deleteProject(p: ProjMeta) {
+    if (!confirm(`¿Borrar "${p.name}"? También se borrarán del navegador sus imágenes y audios. No se puede deshacer.`)) return;
+    setBusy("delete");
+    setStatus(null);
+    try {
+      // Se piden los datos ANTES de borrarlo para saber qué archivos quitar.
+      let assets: string[] = [];
+      try {
+        const r = await fetch(`/api/story?id=${p.id}`);
+        if (r.ok) assets = projectAssets(migrateProject((await r.json()).project.data));
+      } catch {}
+
+      const res = await fetch(`/api/story?id=${p.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Error");
+      await Promise.all(assets.map((id) => deleteAsset(id).catch(() => {})));
+
+      setProjects((prev) => prev.filter((x) => x.id !== p.id));
+      if (projectId === p.id) {
+        setProject(emptyProject());
+        setProjectId(null);
+        setName("Mi historia");
+        setOpenScene(null);
+        setSelShot(null);
+        setSelOverlay(null);
+        setSection(null);
+        setDirty(false);
+        seek(0);
+      }
+      setStatus(`"${p.name}" borrado ✓`);
+    } catch (err: any) {
+      setStatus("No se pudo borrar: " + (err?.message ?? ""));
+    }
+    setBusy(null);
+  }
+
   function newProject() {
     if (dirty && !confirm("Tienes cambios sin guardar. ¿Empezar un proyecto nuevo?")) return;
     setProject(emptyProject());
@@ -765,11 +848,19 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <span className="text-xs text-muted">Tus proyectos</span>
               <div className="mt-1 space-y-1">
                 {projects.map((p) => (
-                  <button key={p.id} onClick={() => load(p.id)}
-                    className={`flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-sm ${projectId === p.id ? "border-brand bg-brand/10" : "border-border hover:bg-surface-2"}`}>
-                    <FolderOpen className="h-3.5 w-3.5 text-muted" />
-                    <span className="flex-1 truncate">{p.name}</span>
-                  </button>
+                  <div key={p.id}
+                    className={`flex w-full items-center gap-1 rounded-lg border px-2 py-1 text-sm ${projectId === p.id ? "border-brand bg-brand/10" : "border-border hover:bg-surface-2"}`}>
+                    <button onClick={() => load(p.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                      <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted" />
+                      <span className="truncate">{p.name}</span>
+                    </button>
+                    <button
+                      onClick={() => deleteProject(p)}
+                      disabled={busy === "delete"}
+                      className="shrink-0 text-muted hover:text-danger disabled:opacity-40"
+                      title={`Borrar "${p.name}"`}
+                    ><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
                 ))}
               </div>
             </div>
@@ -790,6 +881,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           <button onClick={genAllVoices} className="btn-ghost mt-2 w-full text-sm">
             <Mic className="h-4 w-4 text-accent" /> Generar la voz de los diálogos que falten
           </button>
+          {marcados > 0 && (
+            <button onClick={genStaleVoices} className="btn-ghost mt-2 w-full text-sm">
+              <Mic className="h-4 w-4 text-gold" /> Regenerar {marcados === 1 ? "la voz que cambió" : `las ${marcados} voces que cambiaron`}
+            </button>
+          )}
           {pendientes > 0 && (
             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-accent">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -850,6 +946,25 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <p className="text-[11px] text-muted">Música de fondo para todo el video. Los sonidos puntuales van dentro de cada toma.</p>
             )}
           </div>
+        </div>
+
+        {/* Sacar los textos para corregirlos fuera (por ejemplo con una IA) y
+            volver a meterlos. Solo viajan los textos: nada más se toca. */}
+        <div className="card p-3">
+          <span className="label">Textos de la narración</span>
+          <div className="mt-2 flex gap-2">
+            <button onClick={exportTexts} className="btn-ghost flex-1 text-xs">
+              <Download className="h-4 w-4 text-accent" /> Exportar
+            </button>
+            <label className="btn-ghost flex-1 cursor-pointer justify-center text-xs">
+              <FileJson className="h-4 w-4 text-accent" /> Importar
+              <input type="file" accept="application/json,.json" className="hidden" onChange={importTexts} />
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] text-muted">
+            Saca todos los diálogos en un JSON para corregirlos fuera (por ejemplo con una IA) y
+            vuelve a meterlos. Los que cambien se marcan y luego se regenera solo su voz.
+          </p>
         </div>
 
         {/* Unir con otros videos: la careta va en su propio proyecto, se exporta

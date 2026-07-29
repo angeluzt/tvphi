@@ -26,6 +26,8 @@ const dialogueSchema = z.object({
   dur: z.number(),
   gapSec: z.number(),
   effect: z.enum(["none", "deep", "demon", "whisper", "robot", "cave", "radio", "high"]),
+  // El texto cambió y la voz aún es la antigua.
+  stale: z.boolean().optional(),
 });
 const shotSfxSchema = z.object({
   id: z.string(),
