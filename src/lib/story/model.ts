@@ -142,7 +142,10 @@ export interface Shot {
   id: string;
   durationSec: number; // duración explícita
   autoDuration: boolean; // si true, se calcula a partir de los diálogos
-  holdSec: number; // pausa al final: la imagen se queda quieta en el punto 2
+  // Pausa al final, en segundos enteros: acabado el recorrido la imagen se queda
+  // quieta en el punto 2 ese rato antes de pasar a la toma siguiente. Es tiempo
+  // AÑADIDO a la duración, no un trozo que se le quite al movimiento.
+  holdSec: number;
   motionMode: MotionMode;
   preset: PresetMotion; // se usa si motionMode = "preset"
   from: Frame; // punto 1, se usa si motionMode = "free"
@@ -419,22 +422,27 @@ export function sfxStarts(s: Shot): number[] {
   return out;
 }
 
-export function shotDur(s: Shot) {
+// Lo que tarda el movimiento en ir del punto 1 al 2, sin contar la pausa final.
+export function moveDur(s: Shot) {
   if (!s.autoDuration) return Math.max(0.3, s.durationSec);
   const starts = dialogueStarts(s);
   let end = 0;
   s.dialogues.forEach((d, i) => { end = Math.max(end, starts[i] + dialogueDur(d)); });
-  return Math.max(MIN_SHOT, end + (end > 0 ? TAIL : 0)) + Math.max(0, s.holdSec);
+  return Math.max(MIN_SHOT, end + (end > 0 ? TAIL : 0));
 }
 
-// Progreso del movimiento (0..1). La velocidad la marca la duración de la toma:
-// el recorrido ocupa todo menos la pausa final, y en esa pausa la imagen se queda
-// quieta en el punto 2 para poder ver bien lo que se quería enfocar.
+// La toma dura el movimiento MÁS la pausa. La pausa es tiempo añadido, no un
+// trozo que se le quite al movimiento: acabado el recorrido, la imagen se queda
+// quieta esos segundos y hasta que no pasan no empieza la toma siguiente.
+export function shotDur(s: Shot) {
+  return moveDur(s) + Math.max(0, s.holdSec || 0);
+}
+
+// Progreso del movimiento (0..1): llega a 1 cuando acaba el recorrido, y de ahí
+// al final de la toma se queda clavado en el punto 2, que es lo que se quería
+// dejar ver.
 export function moveProgress(shot: Shot, localTime: number) {
-  const d = shotDur(shot);
-  const hold = Math.max(0, Math.min(d - 0.1, shot.holdSec || 0));
-  const move = Math.max(0.05, d - hold);
-  return Math.max(0, Math.min(1, localTime / move));
+  return Math.max(0, Math.min(1, localTime / Math.max(0.05, moveDur(shot))));
 }
 
 export interface FlatShot {

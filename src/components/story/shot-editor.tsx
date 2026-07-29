@@ -12,7 +12,7 @@ import { GapInput } from "./gap-input";
 import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
 import {
-  newDialogue, shotDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
+  newDialogue, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
   overlaySoundStart,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop, type Frame,
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect,
@@ -76,6 +76,8 @@ export function ShotEditor({
   onSelectOverlay: (id: string | null) => void;
 }) {
   const dur = shotDur(shot);
+  const movim = moveDur(shot); // lo que tarda el recorrido, sin la pausa
+  const hold = Math.max(0, shot.holdSec || 0);
   const dStarts = dialogueStarts(shot);
   const sStarts = sfxStarts(shot);
   const ventanas = overlayWindows(shot.overlays, dur);
@@ -136,7 +138,7 @@ export function ShotEditor({
               · {shot.motionMode === "preset"
                 ? MOTION_LABEL[shot.preset.kind]
                 : shot.motionMode === "continue" ? "Sigue a la anterior" : "Libre 1→2"}
-              {shot.holdSec > 0 ? ` · pausa ${shot.holdSec.toFixed(1)}s` : ""}
+              {hold > 0 ? ` · pausa ${Math.round(hold)}s` : ""}
               {shot.dialogues.length ? ` · ${shot.dialogues.length} diálogo${shot.dialogues.length > 1 ? "s" : ""}` : ""}
               {shot.sfx.length ? ` · ${shot.sfx.length} sonido${shot.sfx.length > 1 ? "s" : ""}` : ""}
               {shot.overlays.length ? ` · ${shot.overlays.length} sticker${shot.overlays.length > 1 ? "s" : ""}` : ""}
@@ -195,29 +197,41 @@ export function ShotEditor({
             <select
               className="input"
               value={shot.autoDuration ? "auto" : "fija"}
-              onChange={(e) => onChange({ ...shot, autoDuration: e.target.value === "auto", durationSec: dur })}
+              // Al pasar a "fija" se hereda lo que tardaba el recorrido; la
+              // pausa va aparte y no se toca.
+              onChange={(e) => onChange({ ...shot, autoDuration: e.target.value === "auto", durationSec: movim })}
             >
               <option value="auto">Según los diálogos</option>
               <option value="fija">Fija</option>
             </select>
           </label>
           <NumberInput
-            label="Segundos"
-            value={shot.autoDuration ? dur : shot.durationSec}
+            label="Segundos de movimiento"
+            value={movim}
             onChange={(v) => onChange({ ...shot, durationSec: v })}
             min={0.3} max={600} step={0.5}
             disabled={shot.autoDuration}
             disabledHint="Lo marcan los diálogos. Pon «Fija» para escribirlo."
           />
         </div>
-        <div className="mt-2">
-          <Slider
-            label="Pausa al final (imagen quieta en el punto 2)"
-            value={shot.holdSec} min={0} max={Math.max(1, dur)} step={0.1}
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {/* La pausa es tiempo AÑADIDO, no un trozo de la duración: acabado el
+              recorrido la imagen se queda quieta y hasta que no pasa no empieza
+              la toma siguiente. Por eso su tope no depende de la duración. */}
+          <NumberInput
+            label="Pausa al final"
+            value={hold}
             onChange={(v) => onChange({ ...shot, holdSec: v })}
-            format={(v) => `${v.toFixed(1)}s`}
-            hint={`El movimiento dura ${Math.max(0.1, dur - shot.holdSec).toFixed(1)}s y luego se queda quieto`}
+            min={0} max={60} step={1} decimals={0}
+            hint="Quieta en el punto 2 antes de pasar a la siguiente"
           />
+          <div className="flex flex-col justify-center rounded-lg border border-border/60 px-2 py-1 text-[11px] text-muted">
+            <span>
+              Se mueve <span className="text-fg tabular-nums">{movim.toFixed(1)}s</span>
+              {hold > 0 && <> y se queda quieta <span className="text-fg tabular-nums">{hold}s</span></>}
+            </span>
+            <span>La toma dura <span className="text-fg tabular-nums">{dur.toFixed(1)}s</span></span>
+          </div>
         </div>
       </div>
 
