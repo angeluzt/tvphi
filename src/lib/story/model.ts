@@ -581,12 +581,6 @@ export function switchAspect(p: StoryProject, next: Aspect): StoryProject {
   return { ...p, aspect: next, scenes };
 }
 
-// Cuántas tomas tienen ya un encuadre propio guardado para un formato.
-export function framedFor(p: StoryProject, a: Aspect) {
-  if (a === p.aspect) return p.scenes.reduce((n, sc) => n + sc.shots.length, 0);
-  return p.scenes.reduce((n, sc) => n + sc.shots.filter((sh) => sh.altFrames?.[a]).length, 0);
-}
-
 // Todos los archivos (imágenes, audios, videos) que usa un proyecto. Sirve para
 // poder limpiarlos del navegador cuando se borra el proyecto.
 export function projectAssets(p: StoryProject): string[] {
