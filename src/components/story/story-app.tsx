@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
-  Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson,
+  Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
 } from "lucide-react";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
@@ -17,7 +17,7 @@ import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
-  ASPECTS, aspectInfo, setProjectAspect, switchAspect, type Aspect,
+  ASPECTS, aspectInfo, setProjectAspect, switchAspect, overlayWindow, type Aspect,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
@@ -78,6 +78,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [movingScene, setMovingScene] = useState<{ id: string; value: string } | null>(null);
   // Al crear un proyecto se elige primero la forma del video.
   const [creando, setCreando] = useState(false);
+  // El tramo que se está viendo se repite sin parar (vista previa).
+  const [loopSection, setLoopSection] = useState(false);
 
   // Escenas y tomas bloqueadas para no cambiarlas por accidente. Viven en el
   // navegador, así que se recuerdan aunque no se guarde el proyecto.
@@ -195,9 +197,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   // Ver solo un tramo (una escena o una toma) en la miniatura flotante, sin
   // tener que subir hasta el reproductor de arriba.
-  async function playSection(start: number, end: number, label: string, ids: { shotId?: string; sceneId?: string }) {
+  async function playSection(
+    start: number, end: number, label: string,
+    ids: { shotId?: string; sceneId?: string },
+    repetir = false,
+  ) {
     const eng = engineRef.current!;
-    if (section && section.start === start && section.end === end && playing) {
+    if (!repetir && section && section.start === start && section.end === end && playing) {
       eng.pause();
       return;
     }
@@ -205,9 +211,37 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     // si no se solapaban las dos mezclas y la voz salía deformada.
     eng.pause();
     setSection({ start, end, label, ...ids });
-    eng.setRange(start, end);
+    setLoopSection(repetir);
+    eng.setRange(start, end, repetir);
     eng.seek(start);
     await eng.play();
+  }
+
+  // Vista previa: la toma se repite sin parar mientras se ajustan los stickers,
+  // así se ve el efecto al momento en vez de tener que dar al play cada vez.
+  function previewShot(shotId: string) {
+    const f = flat.find((x) => x.shot.id === shotId);
+    if (!f) return;
+    setSelShot(shotId);
+    const sc = project.scenes.find((x) => x.shots.some((h) => h.id === shotId));
+    const si = sc ? project.scenes.indexOf(sc) : 0;
+    const hi = sc ? sc.shots.findIndex((h) => h.id === shotId) : 0;
+    void playSection(f.start, f.start + f.dur, `Escena ${si + 1} · toma ${hi + 1}`, { shotId }, true);
+  }
+  // Coloca el reproductor donde ese sticker se ve, para poder situarlo aunque
+  // solo salga un rato de la toma.
+  function irAlSticker(sh: Shot, overlayId: string) {
+    const f = flat.find((x) => x.shot.id === sh.id);
+    const o = sh.overlays.find((x) => x.id === overlayId);
+    if (!f) return;
+    if (!o || o.timing !== "range") { engineRef.current?.seekToShot(sh.id); return; }
+    const v = overlayWindow(o, f.dur);
+    engineRef.current?.seek(f.start + (v.start + v.end) / 2);
+  }
+  function toggleLoop() {
+    const v = !loopSection;
+    setLoopSection(v);
+    engineRef.current?.setLooping(v);
   }
   function playScene(sc: StoryScene, i: number) {
     const r = sceneRange(flat, sc.id);
@@ -222,6 +256,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     eng.pause();
     eng.clearRange();
     setSection(null);
+    setLoopSection(false);
   }
 
   // Coloca una escena en la posición que se escriba, sin subirla clic a clic.
@@ -925,10 +960,15 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
                         onToggle={() => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id))}
                         onPlay={() => playShot(sc, sh.id, si, hi)}
+                        onPreview={() => previewShot(sh.id)}
                         onGenVoice={(d) => genVoice(sc.id, sh.id, d)}
                         onAddSfx={(e) => addSfx(sc.id, sh, e)}
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
-                        onSelectOverlay={(id) => { setSelShot(sh.id); setSelOverlay(id); if (id) engineRef.current?.seekToShot(sh.id); }}
+                        onSelectOverlay={(id) => {
+                          setSelShot(sh.id);
+                          setSelOverlay(id);
+                          if (id) irAlSticker(sh, id);
+                        }}
                       />
                     ))}
                     <button onClick={() => addShot(sc)} className="btn-ghost w-full text-sm">
@@ -1239,6 +1279,15 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           <div className="mt-2 flex items-center gap-2 px-1">
             <button onClick={togglePlay} className="btn-brand py-1">
               {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            </button>
+            <button
+              onClick={toggleLoop}
+              title={loopSection ? "Repitiendo sin parar: pulsa para que se pare al final" : "Repetir sin parar (vista previa)"}
+              className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg border ${
+                loopSection ? "border-brand bg-brand/15 text-brand" : "border-border text-muted hover:bg-surface-2"
+              }`}
+            >
+              <Repeat className="h-3.5 w-3.5" />
             </button>
             {/* El recorrido va solo de esta escena/toma, no de todo el video */}
             <input
