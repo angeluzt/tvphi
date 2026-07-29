@@ -108,12 +108,16 @@ export interface PngOverlay {
   motion: OverlayMotion;
   toX: number; toY: number; toW: number; toH: number; // posición final si motion = "free"
   transition: OverlayTransition; // cómo aparece
-  // Cuándo se ve, dentro de la toma. Con "all" sale toda la toma; con "range",
-  // solo entre esos dos segundos. Así caben varias explosiones seguidas en la
-  // misma toma, cada una a su hora.
-  timing: "all" | "range";
+  // Cuándo se ve, dentro de la toma:
+  //   · "all"   → toda la toma
+  //   · "range" → entre startSec y endSec
+  //   · "after" → arranca cuando acaba el sticker anterior (más startSec de
+  //     pausa) y dura durSec. Así se encadenan explosiones sin recalcular los
+  //     tiempos a mano cada vez que se mueve una.
+  timing: "all" | "range" | "after";
   startSec: number;
   endSec: number;
+  durSec: number; // solo para "after"
 }
 
 export interface Shot {
@@ -582,16 +586,37 @@ export function newOverlay(imageId: string): PngOverlay {
     motion: "follow",
     toX: 0.35, toY: 0.35, toW: 0.3, toH: 0.3,
     transition: "inherit",
-    timing: "all", startSec: 0, endSec: 1,
+    timing: "all", startSec: 0, endSec: 1, durSec: 1,
   };
 }
 
-// Momento en que aparece y desaparece un sticker dentro de su toma.
-export function overlayWindow(o: PngOverlay, shotDuration: number) {
-  if (o.timing !== "range") return { start: 0, end: shotDuration };
-  const start = Math.max(0, Math.min(shotDuration, o.startSec));
-  const end = Math.max(start + 0.05, Math.min(shotDuration, o.endSec));
-  return { start, end };
+// Cuándo aparece y desaparece cada sticker de una toma. Los encadenados ("after")
+// dependen del que tienen delante, así que se calculan todos de una pasada.
+export function overlayWindows(overlays: PngOverlay[], shotDuration: number) {
+  let finAnterior = 0;
+  return overlays.map((o) => {
+    let start: number;
+    let end: number;
+    if (o.timing === "range") {
+      start = Math.max(0, Math.min(shotDuration, o.startSec));
+      end = Math.max(start + 0.05, Math.min(shotDuration, o.endSec));
+    } else if (o.timing === "after") {
+      start = Math.max(0, Math.min(shotDuration, finAnterior + Math.max(0, o.startSec)));
+      end = Math.min(shotDuration, start + Math.max(0.05, o.durSec));
+    } else {
+      start = 0;
+      end = shotDuration;
+    }
+    finAnterior = end;
+    return { start, end };
+  });
+}
+
+// El rato de un sticker suelto (hace falta su toma para los encadenados).
+export function overlayWindow(o: PngOverlay, overlays: PngOverlay[], shotDuration: number) {
+  const i = overlays.findIndex((x) => x.id === o.id);
+  const todos = overlayWindows(overlays, shotDuration);
+  return todos[i] ?? { start: 0, end: shotDuration };
 }
 
 // Cambia el formato del video conservando el encuadre de cada formato: el que
@@ -700,9 +725,10 @@ function normalizeOverlay(o: any): PngOverlay {
     toX: o.toX ?? o.x ?? 0.35, toY: o.toY ?? o.y ?? 0.35,
     toW: o.toW ?? o.w ?? 0.3, toH: o.toH ?? o.h ?? 0.3,
     transition: o.transition ?? "inherit",
-    timing: o.timing === "range" ? "range" : "all",
+    timing: o.timing === "range" || o.timing === "after" ? o.timing : "all",
     startSec: Number(o.startSec) || 0,
     endSec: Number(o.endSec) || 1,
+    durSec: Number(o.durSec) || 1,
   };
 }
 

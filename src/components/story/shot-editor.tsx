@@ -2,8 +2,9 @@
 
 import {
   Plus, Trash2, Wand2, Volume2, Sticker, Image as ImageIcon, ChevronUp, ChevronDown, Clock,
-  Loader2, Repeat, Play, Pause,
+  Loader2, Repeat, Play, Pause, Copy,
 } from "lucide-react";
+import { nanoid } from "nanoid";
 import type { VoiceStatus } from "@/lib/story/tts";
 import { MotionEditor } from "./motion-editor";
 import { Slider } from "./slider";
@@ -11,7 +12,7 @@ import { GapInput } from "./gap-input";
 import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
 import {
-  newDialogue, shotDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS,
+  newDialogue, shotDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop,
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect,
 } from "@/lib/story/model";
@@ -72,6 +73,7 @@ export function ShotEditor({
   const dur = shotDur(shot);
   const dStarts = dialogueStarts(shot);
   const sStarts = sfxStarts(shot);
+  const ventanas = overlayWindows(shot.overlays, dur);
   const sueltos = shot.sfx.map((s, i) => ({ s, i })).filter(({ s }) => !s.loop);
   const bucles = shot.sfx.map((s, i) => ({ s, i })).filter(({ s }) => s.loop);
 
@@ -95,6 +97,23 @@ export function ShotEditor({
     onChange({ ...shot, sfx: shot.sfx.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
   const updOverlay = (id: string, patch: Partial<PngOverlay>) =>
     onChange({ ...shot, overlays: shot.overlays.map((o) => (o.id === id ? { ...o, ...patch } : o)) });
+
+  // Duplicar: la copia va justo detrás y, si el original tenía su propio rato,
+  // se encadena a él — que es para lo que se suele duplicar (una explosión
+  // detrás de otra). Comparte el archivo, no se sube nada dos veces.
+  function duplicarOverlay(o: PngOverlay, i: number) {
+    const copia: PngOverlay = {
+      ...o,
+      id: nanoid(6),
+      timing: o.timing === "all" ? "all" : "after",
+      startSec: o.timing === "all" ? o.startSec : 0,
+      durSec: o.timing === "range" ? Math.max(0.1, o.endSec - o.startSec) : o.durSec,
+    };
+    const overlays = [...shot.overlays];
+    overlays.splice(i + 1, 0, copia);
+    onChange({ ...shot, overlays });
+    onSelectOverlay(copia.id);
+  }
 
   return (
     <div className={`rounded-xl border bg-surface-2/40 p-3 ${expanded ? "border-brand/60" : "border-border"}`}>
@@ -451,8 +470,14 @@ export function ShotEditor({
                 <span className="flex-1">Sticker {oi + 1}</span>
                 <span className="text-[11px] text-muted">{OVERLAY_MOTION_LABEL[o.motion]}</span>
                 <button
+                  onClick={(e) => { e.stopPropagation(); duplicarOverlay(o, oi); }}
+                  className="text-muted hover:text-fg"
+                  title="Duplicar este sticker"
+                ><Copy className="h-3.5 w-3.5" /></button>
+                <button
                   onClick={(e) => { e.stopPropagation(); onChange({ ...shot, overlays: shot.overlays.filter((x) => x.id !== o.id) }); onSelectOverlay(null); }}
                   className="text-muted hover:text-danger"
+                  title="Borrar este sticker"
                 ><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
 
@@ -495,14 +520,19 @@ export function ShotEditor({
                         className="input py-0.5 text-xs"
                         value={o.timing}
                         onChange={(e) => {
-                          const t = e.target.value as "all" | "range";
+                          const t = e.target.value as PngOverlay["timing"];
                           updOverlay(o.id, t === "range"
                             ? { timing: t, startSec: o.startSec || 0, endSec: Math.min(dur, (o.startSec || 0) + 1) }
-                            : { timing: t });
+                            : t === "after"
+                              ? { timing: t, startSec: 0, durSec: o.durSec || 1 }
+                              : { timing: t });
                         }}
                       >
                         <option value="all">Toda la toma</option>
                         <option value="range">Solo un rato</option>
+                        <option value="after" disabled={oi === 0}>
+                          {oi === 0 ? "Después del anterior (no hay ninguno antes)" : "Después del anterior"}
+                        </option>
                       </select>
                     </label>
                     {o.timing === "range" && (
@@ -521,11 +551,28 @@ export function ShotEditor({
                         />
                       </div>
                     )}
+                    {o.timing === "after" && (
+                      <div className="mt-1.5 grid grid-cols-2 gap-2">
+                        <NumberInput
+                          label="Espera antes"
+                          value={o.startSec}
+                          onChange={(v) => updOverlay(o.id, { startSec: v })}
+                          min={0} max={dur} step={0.2}
+                        />
+                        <NumberInput
+                          label="Cuánto dura"
+                          value={o.durSec}
+                          onChange={(v) => updOverlay(o.id, { durSec: v })}
+                          min={0.1} max={dur} step={0.2}
+                        />
+                      </div>
+                    )}
                     <p className="mt-1 text-[10px] text-muted/80">
-                      {o.timing === "range"
-                        ? `Se ve ${Math.max(0, Math.min(dur, o.endSec) - o.startSec).toFixed(1)}s de los ${dur.toFixed(1)}s de la toma` +
-                          (shot.overlays.length > 1 ? " · puedes poner varios a distintas horas" : "")
-                        : `Toda la toma (${dur.toFixed(1)}s)`}
+                      {o.timing === "all"
+                        ? `Toda la toma (${dur.toFixed(1)}s)`
+                        : `Se ve de ${ventanas[oi].start.toFixed(1)}s a ${ventanas[oi].end.toFixed(1)}s` +
+                          ` (${(ventanas[oi].end - ventanas[oi].start).toFixed(1)}s de los ${dur.toFixed(1)}s de la toma)` +
+                          (o.timing === "after" ? " · va detrás del sticker anterior" : "")}
                     </p>
                   </div>
 
@@ -533,12 +580,15 @@ export function ShotEditor({
                     <span className="text-[11px] text-muted">
                       {o.motion === "free" ? "Posición A (inicio)" : "Posición y tamaño"}
                     </span>
-                    <Slider label="X" value={o.x} min={0} max={1} step={0.005}
+                    <Slider label="X" value={o.x} min={-1} max={1} step={0.005}
                       onChange={(v) => updOverlay(o.id, { x: v })} format={pct} />
-                    <Slider label="Y" value={o.y} min={0} max={1} step={0.005}
+                    <Slider label="Y" value={o.y} min={-1} max={1} step={0.005}
                       onChange={(v) => updOverlay(o.id, { y: v })} format={pct} />
-                    <Slider label="Tamaño" value={o.w} min={0.03} max={1} step={0.005}
-                      onChange={(v) => updOverlay(o.id, { w: v, h: v })} format={pct} />
+                    {/* Hasta el 200 %: hay PNG pequeños que hay que agrandar
+                        para que cubran de verdad. */}
+                    <Slider label="Tamaño" value={o.w} min={0.03} max={2} step={0.005}
+                      onChange={(v) => updOverlay(o.id, { w: v, h: v })} format={pct}
+                      hint={o.w > 1 ? "Más del 100 %: se sale del cuadro por los lados" : undefined} />
                   </div>
 
                   {o.motion === "free" && (
@@ -557,11 +607,11 @@ export function ShotEditor({
                           ))}
                         </div>
                       </div>
-                      <Slider label="X" value={o.toX} min={0} max={1} step={0.005}
+                      <Slider label="X" value={o.toX} min={-1} max={1} step={0.005}
                         onChange={(v) => updOverlay(o.id, { toX: v })} format={pct} />
-                      <Slider label="Y" value={o.toY} min={0} max={1} step={0.005}
+                      <Slider label="Y" value={o.toY} min={-1} max={1} step={0.005}
                         onChange={(v) => updOverlay(o.id, { toY: v })} format={pct} />
-                      <Slider label="Tamaño" value={o.toW} min={0.03} max={1} step={0.005}
+                      <Slider label="Tamaño" value={o.toW} min={0.03} max={2} step={0.005}
                         onChange={(v) => updOverlay(o.id, { toW: v, toH: v })} format={pct} />
                     </div>
                   )}

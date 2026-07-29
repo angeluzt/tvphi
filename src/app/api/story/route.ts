@@ -19,9 +19,10 @@ const overlaySchema = z.object({
   toX: z.number(), toY: z.number(), toW: z.number(), toH: z.number(),
   transition: z.enum(["inherit", "cut", "fade", "slide"]),
   // Cuándo se ve dentro de la toma.
-  timing: z.enum(["all", "range"]).optional(),
+  timing: z.enum(["all", "range", "after"]).optional(),
   startSec: z.number().optional(),
   endSec: z.number().optional(),
+  durSec: z.number().optional(),
 });
 const dialogueSchema = z.object({
   id: z.string(),

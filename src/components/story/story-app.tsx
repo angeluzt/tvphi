@@ -235,7 +235,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const o = sh.overlays.find((x) => x.id === overlayId);
     if (!f) return;
     if (!o || o.timing !== "range") { engineRef.current?.seekToShot(sh.id); return; }
-    const v = overlayWindow(o, f.dur);
+    const v = overlayWindow(o, sh.overlays, f.dur);
     engineRef.current?.seek(f.start + (v.start + v.end) / 2);
   }
   function toggleLoop() {
@@ -1352,10 +1352,12 @@ function StickerBox({
     const d = drag.current; if (!d) return;
     const dx = (e.clientX - d.sx) / d.rw, dy = (e.clientY - d.sy) / d.rh;
     const cl = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-    if (d.mode === "move") emit(cl(d.ox + dx, 0, 1 - d.ow), cl(d.oy + dy, 0, 1 - d.oh), d.ow, d.oh);
+    // Se deja salir del cuadro: un sticker más grande que el video tiene que
+    // poder colocarse (para centrarlo hay que irse a negativo).
+    if (d.mode === "move") emit(cl(d.ox + dx, -1, 1), cl(d.oy + dy, -1, 1), d.ow, d.oh);
     else {
-      const w = cl(d.ow + dx, 0.03, 1 - d.ox);
-      emit(d.ox, d.oy, w, cl(d.oh + dy, 0.03, 1 - d.oy));
+      const w = cl(d.ow + dx, 0.03, 2);
+      emit(d.ox, d.oy, w, cl(d.oh + dy, 0.03, 2));
     }
   }
   function end(e: React.PointerEvent) { drag.current = null; try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {} }
