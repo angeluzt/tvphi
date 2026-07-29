@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@ffmpeg/core':
+        specifier: 0.12.10
+        version: 0.12.10
       '@ffmpeg/ffmpeg':
         specifier: ^0.12.15
         version: 0.12.15
@@ -51,9 +54,6 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
-      '@ffmpeg/core':
-        specifier: 0.12.10
-        version: 0.12.10
       '@types/bcryptjs':
         specifier: ^2.4.6
         version: 2.4.6
