@@ -16,6 +16,7 @@ import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
+  ASPECTS, aspectInfo, setProjectAspect, presetMaxW, clampFrame, type Aspect,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
@@ -130,6 +131,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     window.addEventListener("beforeunload", h);
     return () => window.removeEventListener("beforeunload", h);
   }, [dirty, project.scenes.length, voiceJobs]);
+
+  // El formato manda sobre todos los encuadres; se pone al día en cada render
+  // para que el editor y el motor dibujen siempre con la misma forma.
+  const forma = aspectInfo(project.aspect);
+  setProjectAspect(project.aspect);
 
   const pendientes = Object.keys(voiceJobs).length;
   // Diálogos cuyo texto cambió después de generar la voz.
@@ -559,6 +565,34 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     seek(0);
   }
 
+  // ---------- formato del video ----------
+
+  // Al pasar de horizontal a vertical (o al revés) la ventana que recorre cada
+  // imagen cambia de forma, así que los encuadres guardados se reajustan para
+  // que sigan cabiendo. Se conserva el centro de cada uno.
+  function cambiarFormato(a: Aspect) {
+    if (a === project.aspect) return;
+    if (project.scenes.length &&
+        !confirm(`¿Cambiar a ${aspectInfo(a).label}? Se reajustan los encuadres de todas las tomas para que quepan.`)) {
+      return;
+    }
+    setProjectAspect(a); // los cálculos de abajo dependen del formato nuevo
+    mut((p) => ({
+      ...p,
+      aspect: a,
+      scenes: p.scenes.map((sc) => ({
+        ...sc,
+        shots: sc.shots.map((sh) => ({
+          ...sh,
+          preset: { ...sh.preset, w: Math.min(sh.preset.w, presetMaxW(sh.preset.kind, sh.preset.distance, sc.imgW, sc.imgH)) },
+          from: clampFrame(sh.from, sc.imgW, sc.imgH),
+          to: clampFrame(sh.to, sc.imgW, sc.imgH),
+        })),
+      })),
+    }));
+    setStatus(`Formato ${aspectInfo(a).label} · el video saldrá a ${aspectInfo(a).w}×${aspectInfo(a).h}`);
+  }
+
   // ---------- exportar ----------
   async function doExport() {
     if (!project.scenes.length && !project.intro && !project.outro) {
@@ -612,7 +646,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             stickers y ver el encuadre mientras se edita una toma larga. */}
         <div className="card p-3 lg:sticky lg:top-16 lg:z-20">
           {/* Se limita la altura para que, al quedarse fija, deje sitio al editor. */}
-          <div className="relative mx-auto aspect-video w-full max-w-[calc(42vh*16/9)] overflow-hidden rounded-2xl border border-border bg-black">
+          <div
+            className="relative mx-auto w-full overflow-hidden rounded-2xl border border-border bg-black"
+            style={{ aspectRatio: `${forma.w} / ${forma.h}`, maxWidth: `calc(42vh * ${forma.ratio})` }}
+          >
             <div ref={previewRef} className="absolute inset-0" />
             {curOverlay && overlayVisible && (
               <>
@@ -1007,6 +1044,19 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
         <div className="card p-3">
           <span className="label">Exportar</span>
+          <label className="mt-2 block space-y-1 text-sm">
+            <span className="text-xs text-muted">Formato del video</span>
+            <select
+              className="input"
+              value={project.aspect}
+              disabled={exporting}
+              onChange={(e) => cambiarFormato(e.target.value as Aspect)}
+            >
+              {ASPECTS.map((a) => (
+                <option key={a.id} value={a.id}>{a.label} · {a.corto} · {a.w}×{a.h}</option>
+              ))}
+            </select>
+          </label>
           <div className="mt-2 flex gap-2">
             <select value={format} onChange={(e) => setFormat(e.target.value as any)} disabled={exporting} className="input">
               <option value="webm">WebM</option>
@@ -1055,7 +1105,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div ref={floatRef} className="relative aspect-video overflow-hidden rounded-xl bg-black" />
+          <div
+            ref={floatRef}
+            className="relative mx-auto w-full overflow-hidden rounded-xl bg-black"
+            style={{ aspectRatio: `${forma.w} / ${forma.h}`, maxWidth: `calc(46vh * ${forma.ratio})` }}
+          />
           <div className="mt-2 flex items-center gap-2 px-1">
             <button onClick={togglePlay} className="btn-brand py-1">
               {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}

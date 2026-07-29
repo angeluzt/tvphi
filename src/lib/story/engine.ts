@@ -1,14 +1,12 @@
 import {
   flatten, locate, lerpFrame, framePx, resolveFrames, moveProgress, overlayBox,
-  dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE,
+  dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE, ASPECTS, aspectInfo, setProjectAspect,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
   type ClipVideo,
 } from "./model";
 import { getAsset, assetUrl } from "./store";
 import { Recorder } from "@/lib/studio/recorder";
 
-const W = 1280;
-const H = 720;
 
 // Motor de "Historias narradas": anima el encuadre de cada toma sobre su imagen,
 // encadena transiciones, dibuja los stickers, mezcla el audio (diálogos + efectos
@@ -45,10 +43,15 @@ export class StoryEngine {
   onPlaying: ((v: boolean) => void) | null = null;
   private starting = false; // evita programar el audio dos veces a la vez
 
+  // Tamaño del lienzo: lo marca el formato del proyecto (horizontal, vertical
+  // o cuadrado). Todo lo que se dibuja se mide sobre estos dos números.
+  private w = ASPECTS[0].w;
+  private h = ASPECTS[0].h;
+
   constructor() {
     this.canvas = document.createElement("canvas");
-    this.canvas.width = W;
-    this.canvas.height = H;
+    this.canvas.width = this.w;
+    this.canvas.height = this.h;
     this.ctx = this.canvas.getContext("2d", { alpha: false })!;
   }
 
@@ -71,13 +74,28 @@ export class StoryEngine {
     } catch {}
   }
 
+  // Cambia el tamaño del lienzo si el formato del proyecto es otro. Se hace
+  // antes de calcular nada: los encuadres dependen de la forma del video.
+  private applyAspect(p: StoryProject) {
+    setProjectAspect(p.aspect);
+    const a = aspectInfo(p.aspect);
+    if (this.w === a.w && this.h === a.h) return false;
+    this.w = a.w;
+    this.h = a.h;
+    this.canvas.width = a.w;
+    this.canvas.height = a.h;
+    return true;
+  }
+
   async setProject(p: StoryProject) {
+    this.applyAspect(p);
     this.project = p;
     this.flat = flatten(p);
     await this.ensureAssets(p);
     this.render();
   }
   update(p: StoryProject) {
+    this.applyAspect(p);
     this.project = p;
     this.flat = flatten(p);
     void this.ensureAssets(p);
@@ -428,7 +446,7 @@ export class StoryEngine {
   private render() {
     const ctx = this.ctx;
     ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, this.w, this.h);
     if (!this.project || !this.flat.length) return;
 
     const i = locate(this.flat, this.playhead);
@@ -443,7 +461,7 @@ export class StoryEngine {
       this.drawShot(prev, prev.dur, 1, 0); // la anterior, en su estado final
       const a = lt / tDur;
       if (cur.shot.transition === "fade") this.drawShot(cur, lt, a, 0);
-      else this.drawShot(cur, lt, 1, (1 - a) * W);
+      else this.drawShot(cur, lt, 1, (1 - a) * this.w);
     } else {
       this.drawShot(cur, lt, 1, 0);
     }
@@ -465,7 +483,7 @@ export class StoryEngine {
     if (img && img.complete && img.naturalWidth) {
       const fr = lerpFrame(frames.from, frames.to, p);
       const { sx, sy, sw, sh } = framePx(fr, iw, ih);
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, this.w, this.h);
     }
     ctx.restore();
 
@@ -480,7 +498,7 @@ export class StoryEngine {
         const td = Math.max(0.01, f.shot.transitionDur);
         const a = Math.max(0, Math.min(1, lt / td));
         oa = o.transition === "fade" ? a : 1;
-        ox = o.transition === "slide" ? (1 - a) * W : 0;
+        ox = o.transition === "slide" ? (1 - a) * this.w : 0;
       }
       ctx.save();
       ctx.globalAlpha = oa;
@@ -499,7 +517,7 @@ export class StoryEngine {
     ih: number,
   ) {
     const b = overlayBox(o, p, frames, iw, ih);
-    const x = b.x * W, y = b.y * H, w = b.w * W, h = b.h * H;
+    const x = b.x * this.w, y = b.y * this.h, w = b.w * this.w, h = b.h * this.h;
     if (w <= 0 || h <= 0) return;
     const sc = Math.min(w / img.naturalWidth, h / img.naturalHeight);
     const dw = img.naturalWidth * sc, dh = img.naturalHeight * sc;
@@ -513,12 +531,12 @@ export class StoryEngine {
   private drawVideoFrame(v: HTMLVideoElement) {
     const c = this.ctx;
     c.fillStyle = "#000";
-    c.fillRect(0, 0, W, H);
+    c.fillRect(0, 0, this.w, this.h);
     const vw = v.videoWidth, vh = v.videoHeight;
     if (!vw || !vh) return;
-    const sc = Math.min(W / vw, H / vh);
+    const sc = Math.min(this.w / vw, this.h / vh);
     const dw = vw * sc, dh = vh * sc;
-    c.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    c.drawImage(v, (this.w - dw) / 2, (this.h - dh) / 2, dw, dh);
   }
 
   // Reproduce de principio a fin un video que se une a la historia, pintándolo

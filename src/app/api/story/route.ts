@@ -83,6 +83,7 @@ const clipSchema = z.object({
   dur: z.number(),
 }).nullable();
 const dataSchema = z.object({
+  aspect: z.enum(["16:9", "9:16", "1:1"]).optional(),
   scenes: z.array(sceneSchema).max(200),
   audioLayers: z.array(audioLayerSchema).max(30),
   narrationVolume: z.number(),

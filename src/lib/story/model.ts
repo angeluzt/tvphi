@@ -153,6 +153,7 @@ export interface ClipVideo {
 }
 
 export interface StoryProject {
+  aspect: Aspect; // forma del video: horizontal, vertical o cuadrado
   scenes: StoryScene[];
   audioLayers: AudioLayer[]; // música/efectos globales de todo el video
   narrationVolume: number; // 0..1
@@ -163,22 +164,50 @@ export interface StoryProject {
 export const MIN_SHOT = 2; // duración mínima de una toma sin diálogos
 export const TAIL = 0.4; // margen tras el último diálogo
 export const DEFAULT_TRANS_DUR = 0.6;
-export const TARGET_ASPECT = 16 / 9;
+
+// --------------------------------------------------------------------------
+// Formato del video
+// --------------------------------------------------------------------------
+
+export type Aspect = "16:9" | "9:16" | "1:1";
+
+export const ASPECTS: { id: Aspect; label: string; corto: string; ratio: number; w: number; h: number }[] = [
+  { id: "16:9", label: "Horizontal 16:9", corto: "YouTube, TV", ratio: 16 / 9, w: 1280, h: 720 },
+  { id: "9:16", label: "Vertical 9:16", corto: "Shorts, TikTok, Reels", ratio: 9 / 16, w: 720, h: 1280 },
+  { id: "1:1", label: "Cuadrado 1:1", corto: "Feed de Instagram", ratio: 1, w: 720, h: 720 },
+];
+
+export function aspectInfo(a: Aspect) {
+  return ASPECTS.find((x) => x.id === a) ?? ASPECTS[0];
+}
+
+// El formato afecta a TODOS los encuadres (el alto de la ventana se deduce del
+// ancho para que cuadre con el video). Como solo se edita un proyecto a la vez,
+// se guarda aquí en vez de arrastrarlo por cada llamada; quien carga o cambia el
+// proyecto lo pone al día con setProjectAspect.
+let aspectoActual = 16 / 9;
+export function setProjectAspect(a: Aspect) {
+  aspectoActual = aspectInfo(a).ratio;
+}
+function targetAspect() {
+  return aspectoActual;
+}
 
 // --------------------------------------------------------------------------
 // Encuadres
 // --------------------------------------------------------------------------
 
-// Alto (0..1 sobre la imagen) que corresponde a un ancho dado para quedar en 16:9.
+// Alto (0..1 sobre la imagen) que corresponde a un ancho dado para que la
+// ventana tenga la forma del video (16:9, 9:16 o cuadrado).
 export function frameH(w: number, imgW: number, imgH: number) {
   if (!imgW || !imgH) return w;
-  return (w * imgW) / (TARGET_ASPECT * imgH);
+  return (w * imgW) / (targetAspect() * imgH);
 }
 
-// Ancho máximo que cabe en la imagen manteniendo 16:9.
+// Ancho máximo que cabe en la imagen manteniendo la forma del video.
 export function maxFrameW(imgW: number, imgH: number) {
   if (!imgW || !imgH) return 1;
-  return Math.min(1, (imgH * TARGET_ASPECT) / imgW);
+  return Math.min(1, (imgH * targetAspect()) / imgW);
 }
 
 // Encuadre que abarca todo lo posible de la imagen (equivalente a "cover").
@@ -231,7 +260,7 @@ export function presetMaxW(kind: MotionKind, distance: number, imgW: number, img
   if (kind === "up" || kind === "down") {
     // El alto tiene que dejar hueco: h + d <= 1.
     const hMax = Math.max(0.05, 1 - d);
-    const wForH = imgW ? (hMax * TARGET_ASPECT * imgH) / imgW : max;
+    const wForH = imgW ? (hMax * targetAspect() * imgH) / imgW : max;
     return Math.max(0.05, Math.min(max, wForH));
   }
   return max;
@@ -525,7 +554,7 @@ export function projectAssets(p: StoryProject): string[] {
 }
 
 export function emptyProject(): StoryProject {
-  return { scenes: [], audioLayers: [], narrationVolume: 1, intro: null, outro: null };
+  return { aspect: "16:9", scenes: [], audioLayers: [], narrationVolume: 1, intro: null, outro: null };
 }
 
 // --------------------------------------------------------------------------
@@ -625,6 +654,7 @@ export function migrateProject(raw: any): StoryProject {
   // Modelo actual o intermedio: escenas con tomas.
   if (Array.isArray(raw.scenes)) {
     return {
+      aspect: normalizeAspect(raw.aspect),
       scenes: raw.scenes.map((sc: any) => ({
         id: sc.id ?? nanoid(6),
         imageId: sc.imageId,
@@ -661,12 +691,17 @@ export function migrateProject(raw: any): StoryProject {
     return { id: s.id ?? nanoid(6), imageId: s.imageId, imgW, imgH, shots: [shot] };
   });
   return {
+    aspect: normalizeAspect(raw.aspect),
     scenes,
     audioLayers: raw.audioLayers ?? [],
     narrationVolume: typeof raw.narrationVolume === "number" ? raw.narrationVolume : 1,
     intro: normalizeClip(raw.intro),
     outro: normalizeClip(raw.outro),
   };
+}
+
+function normalizeAspect(a: any): Aspect {
+  return ASPECTS.some((x) => x.id === a) ? (a as Aspect) : "16:9";
 }
 
 function normalizeClip(c: any): ClipVideo | null {
