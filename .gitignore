@@ -41,3 +41,4 @@ yarn-error.log*
 
 # tsc incremental
 tsconfig.tsbuildinfo
+public/ffmpeg/

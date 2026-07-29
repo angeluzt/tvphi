@@ -2,6 +2,7 @@ import {
   flatten, locate, lerpFrame, framePx, resolveFrames, moveProgress, overlayBox,
   dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
+  type ClipVideo,
 } from "./model";
 import { getAsset, assetUrl } from "./store";
 import { Recorder } from "@/lib/studio/recorder";
@@ -506,21 +507,84 @@ export class StoryEngine {
   }
 
   // ---------------- export ----------------
-  async export(mimeType: string, onProgress?: (p: number) => void): Promise<Blob> {
-    if (!this.project) throw new Error("Sin proyecto");
-    this.pause();
-    this.clearRange(); // se exporta siempre el video entero
-    this.ensureAudio();
-    await this.audioCtx?.resume().catch(() => {});
-    const dur = this.duration();
-    const stream = (this.canvas as any).captureStream(30) as MediaStream;
-    if (this.dest) for (const t of this.dest.stream.getAudioTracks()) stream.addTrack(t);
-    const mime = mimeType || Recorder.pickMime();
-    const chunks: Blob[] = [];
-    const mr = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: 10_000_000 });
-    mr.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
 
-    return new Promise<Blob>((resolve, reject) => {
+  // Pinta un fotograma de un video sobre el lienzo, entero y centrado (con
+  // franjas negras si no es 16:9), para que no se deforme.
+  private drawVideoFrame(v: HTMLVideoElement) {
+    const c = this.ctx;
+    c.fillStyle = "#000";
+    c.fillRect(0, 0, W, H);
+    const vw = v.videoWidth, vh = v.videoHeight;
+    if (!vw || !vh) return;
+    const sc = Math.min(W / vw, H / vh);
+    const dw = vw * sc, dh = vh * sc;
+    c.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  }
+
+  // Reproduce de principio a fin un video que se une a la historia, pintándolo
+  // en el lienzo y metiendo su sonido en la mezcla: así entra en la grabación
+  // como una parte más y sale un único archivo.
+  private async loadClip(clip: ClipVideo): Promise<HTMLVideoElement | null> {
+    const url = await assetUrl(clip.assetId);
+    if (!url) return null;
+    const v = document.createElement("video");
+    v.src = url;
+    v.playsInline = true;
+    v.preload = "auto";
+    let ok = true;
+    await new Promise<void>((res) => {
+      const listo = () => res();
+      v.onloadeddata = listo;
+      v.onerror = () => { ok = false; res(); };
+      setTimeout(listo, 15000);
+    });
+    return ok ? v : null;
+  }
+
+  private async playClip(v: HTMLVideoElement, onTime?: (t: number) => void): Promise<void> {
+    let fuente: MediaElementAudioSourceNode | null = null;
+    try {
+      fuente = this.audioCtx!.createMediaElementSource(v);
+      fuente.connect(this.dest!);
+      fuente.connect(this.audioCtx!.destination);
+    } catch {}
+    try {
+      await v.play();
+    } catch {
+      // Sin permiso para reproducir no se puede grabar el clip; se deja pasar.
+      fuente?.disconnect();
+      return;
+    }
+    await new Promise<void>((res) => {
+      let fin = false;
+      const acabar = () => { if (!fin) { fin = true; clearInterval(vigía); res(); } };
+      v.onended = acabar;
+      // Red de seguridad por atasco, no por duración: hay videos que no dicen
+      // cuánto duran, así que se corta solo si el tiempo deja de avanzar.
+      let visto = -1;
+      const vigía = setInterval(() => {
+        if (v.currentTime === visto && !v.paused) acabar();
+        visto = v.currentTime;
+      }, 5000);
+      const pintar = () => {
+        if (fin) return;
+        this.drawVideoFrame(v);
+        onTime?.(v.currentTime);
+        if (v.ended) { acabar(); return; }
+        requestAnimationFrame(pintar);
+      };
+      pintar();
+    });
+    try { v.pause(); } catch {}
+    fuente?.disconnect();
+    v.removeAttribute("src");
+    v.load();
+  }
+
+  // Reproduce la historia entera una vez (lo que ya se grababa antes).
+  private playStory(onTime?: (t: number) => void): Promise<void> {
+    const dur = this.duration();
+    return new Promise<void>((resolve, reject) => {
       let done = false;
       const prevEnded = this.onEnded;
       const prevTime = this.onTime;
@@ -531,9 +595,8 @@ export class StoryEngine {
         this.onTime = prevTime;
         clearTimeout(watchdog);
         this.pause();
-        if (mr.state !== "inactive") mr.stop();
+        resolve();
       };
-      mr.onstop = () => resolve(new Blob(chunks, { type: mime || "video/webm" }));
       const watchdog = setTimeout(finish, Math.ceil(dur * 1000) + 5000);
       try {
         this.playhead = 0;
@@ -541,13 +604,54 @@ export class StoryEngine {
         this.playing = true;
         this.onPlaying?.(true);
         this.start();
-        mr.start(1000);
         this.onEnded = () => setTimeout(finish, 200);
-        this.onTime = (t) => { prevTime?.(t); onProgress?.(dur ? t / dur : 0); };
+        this.onTime = (t) => { prevTime?.(t); onTime?.(t); };
       } catch (e) {
         clearTimeout(watchdog);
+        this.onEnded = prevEnded;
+        this.onTime = prevTime;
         reject(e);
       }
     });
+  }
+
+  async export(mimeType: string, onProgress?: (p: number) => void): Promise<Blob> {
+    if (!this.project) throw new Error("Sin proyecto");
+    this.pause();
+    this.clearRange(); // se exporta siempre el video entero
+    this.ensureAudio();
+    await this.audioCtx?.resume().catch(() => {});
+
+    const { intro, outro } = this.project;
+    const dur = this.duration();
+    // Se cargan antes de empezar a grabar: si no, el principio del archivo se
+    // llevaría los segundos de espera con la imagen congelada.
+    const vIntro = intro ? await this.loadClip(intro) : null;
+    const vOutro = outro ? await this.loadClip(outro) : null;
+    const total = (vIntro ? intro!.dur : 0) + dur + (vOutro ? outro!.dur : 0);
+    if (vIntro) this.drawVideoFrame(vIntro); else this.render();
+    const stream = (this.canvas as any).captureStream(30) as MediaStream;
+    if (this.dest) for (const t of this.dest.stream.getAudioTracks()) stream.addTrack(t);
+    const mime = mimeType || Recorder.pickMime();
+    const chunks: Blob[] = [];
+    const mr = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: 10_000_000 });
+    mr.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+    const cerrado = new Promise<Blob>((res) => {
+      mr.onstop = () => res(new Blob(chunks, { type: mime || "video/webm" }));
+    });
+
+    // Se graba de un tirón: careta + historia + cierre, en ese orden.
+    let hecho = 0;
+    const avisar = (t: number) => onProgress?.(total ? Math.min(1, (hecho + t) / total) : 0);
+    mr.start(1000);
+    try {
+      if (vIntro) { await this.playClip(vIntro, avisar); hecho += intro!.dur; avisar(0); }
+      if (dur > 0) { await this.playStory(avisar); hecho += dur; avisar(0); }
+      if (vOutro) { await this.playClip(vOutro, avisar); hecho += outro!.dur; }
+    } finally {
+      this.pause();
+      if (mr.state !== "inactive") mr.stop();
+    }
+    return cerrado;
   }
 }

@@ -141,10 +141,20 @@ export interface AudioLayer {
   loop: boolean;
 }
 
+// Un video ya hecho (por ejemplo la careta) que se pega antes o después de la
+// historia al exportar, para que salga un único archivo.
+export interface ClipVideo {
+  assetId: string; // el archivo vive en el navegador (IndexedDB)
+  name: string;
+  dur: number; // segundos
+}
+
 export interface StoryProject {
   scenes: StoryScene[];
   audioLayers: AudioLayer[]; // música/efectos globales de todo el video
   narrationVolume: number; // 0..1
+  intro: ClipVideo | null; // se pega al principio
+  outro: ClipVideo | null; // se pega al final
 }
 
 export const MIN_SHOT = 2; // duración mínima de una toma sin diálogos
@@ -494,7 +504,7 @@ export function newOverlay(imageId: string): PngOverlay {
 }
 
 export function emptyProject(): StoryProject {
-  return { scenes: [], audioLayers: [], narrationVolume: 1 };
+  return { scenes: [], audioLayers: [], narrationVolume: 1, intro: null, outro: null };
 }
 
 // --------------------------------------------------------------------------
@@ -603,6 +613,8 @@ export function migrateProject(raw: any): StoryProject {
       })),
       audioLayers: raw.audioLayers ?? [],
       narrationVolume: typeof raw.narrationVolume === "number" ? raw.narrationVolume : 1,
+      intro: normalizeClip(raw.intro),
+      outro: normalizeClip(raw.outro),
     };
   }
 
@@ -631,5 +643,12 @@ export function migrateProject(raw: any): StoryProject {
     scenes,
     audioLayers: raw.audioLayers ?? [],
     narrationVolume: typeof raw.narrationVolume === "number" ? raw.narrationVolume : 1,
+    intro: normalizeClip(raw.intro),
+    outro: normalizeClip(raw.outro),
   };
+}
+
+function normalizeClip(c: any): ClipVideo | null {
+  if (!c || typeof c.assetId !== "string") return null;
+  return { assetId: c.assetId, name: String(c.name ?? "video"), dur: Number(c.dur) || 0 };
 }
