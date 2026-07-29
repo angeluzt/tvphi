@@ -18,7 +18,7 @@ import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
   ASPECTS, aspectInfo, setProjectAspect, switchAspect, overlayWindow, type Aspect,
-  type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
+  type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay, type Frame,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
 import { convert, remux } from "@/lib/editor/ffmpeg";
@@ -228,6 +228,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const hi = sc ? sc.shots.findIndex((h) => h.id === shotId) : 0;
     void playSection(f.start, f.start + f.dur, `Escena ${si + 1} · toma ${hi + 1}`, { shotId }, true);
   }
+  // Dónde acabó la toma de antes: es el punto de partida de las que "siguen a
+  // la anterior". La primera de todas no tiene ninguna.
+  function frameAnterior(shotId: string): Frame | null {
+    const i = flat.findIndex((x) => x.shot.id === shotId);
+    return i > 0 ? flat[i - 1].frames.to : null;
+  }
+
   // Coloca el reproductor donde ese sticker se ve, para poder situarlo aunque
   // solo salga un rato de la toma.
   function irAlSticker(sh: Shot, overlayId: string) {
@@ -959,6 +966,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onDelete={() => delShot(sc, sh.id, hi)}
                         onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
                         onToggle={() => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id))}
+                        prevTo={frameAnterior(sh.id)}
                         onPlay={() => playShot(sc, sh.id, si, hi)}
                         onPreview={() => previewShot(sh.id)}
                         onGenVoice={(d) => genVoice(sc.id, sh.id, d)}

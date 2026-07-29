@@ -13,7 +13,7 @@ import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
 import {
   newDialogue, shotDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
-  type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop,
+  type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop, type Frame,
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect,
 } from "@/lib/story/model";
 
@@ -25,6 +25,7 @@ export function ShotEditor({
   imageId,
   imgW,
   imgH,
+  prevTo,
   canMove,
   expanded,
   voiceJobs,
@@ -50,6 +51,7 @@ export function ShotEditor({
   imageId: string;
   imgW: number;
   imgH: number;
+  prevTo: Frame | null; // dónde acabó la toma anterior
   canMove: boolean;
   expanded: boolean;
   voiceJobs: Record<string, VoiceStatus>;
@@ -128,7 +130,9 @@ export function ShotEditor({
           )}
           {!expanded && (
             <span className="truncate text-xs text-muted">
-              · {shot.motionMode === "preset" ? MOTION_LABEL[shot.preset.kind] : "Libre 1→2"}
+              · {shot.motionMode === "preset"
+                ? MOTION_LABEL[shot.preset.kind]
+                : shot.motionMode === "continue" ? "Sigue a la anterior" : "Libre 1→2"}
               {shot.holdSec > 0 ? ` · pausa ${shot.holdSec.toFixed(1)}s` : ""}
               {shot.dialogues.length ? ` · ${shot.dialogues.length} diálogo${shot.dialogues.length > 1 ? "s" : ""}` : ""}
               {shot.sfx.length ? ` · ${shot.sfx.length} sonido${shot.sfx.length > 1 ? "s" : ""}` : ""}
@@ -176,7 +180,7 @@ export function ShotEditor({
       <fieldset disabled={locked} className="contents">
       {/* Movimiento */}
       <div className="mt-3">
-        <MotionEditor shot={shot} imageId={imageId} imgW={imgW} imgH={imgH} onChange={onChange} />
+        <MotionEditor shot={shot} imageId={imageId} imgW={imgW} imgH={imgH} prevTo={prevTo} onChange={onChange} />
       </div>
 
       {/* Tiempo: la duración marca la velocidad del movimiento */}

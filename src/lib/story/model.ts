@@ -28,7 +28,9 @@ export interface Frame {
 }
 
 export type MotionKind = "fixed" | "left" | "right" | "up" | "down" | "in" | "out";
-export type MotionMode = "preset" | "free";
+// "continue": la toma arranca justo donde acabó la anterior y va hasta su punto
+// 2. Sirve para encadenar A→B→C→D sin saltos entre tomas.
+export type MotionMode = "preset" | "free" | "continue";
 
 // Movimiento predefinido: un centro, un tamaño y cuánto recorre entre el punto 1
 // y el 2. El sentido lo marca el tipo (izquierda, abajo, acercar…), así que el
@@ -309,10 +311,18 @@ export function presetFrames(p: PresetMotion, imgW: number, imgH: number): { fro
   }
 }
 
-// Los dos encuadres efectivos de una toma, venga del modo que venga.
-export function resolveFrames(shot: Shot, imgW: number, imgH: number): { from: Frame; to: Frame } {
+// Los dos encuadres efectivos de una toma, venga del modo que venga. Con
+// "continue" el punto 1 es donde acabó la toma anterior; si no hay ninguna
+// antes, se queda con el suyo.
+export function resolveFrames(
+  shot: Shot,
+  imgW: number,
+  imgH: number,
+  prevTo?: Frame | null,
+): { from: Frame; to: Frame } {
   if (shot.motionMode === "preset") return presetFrames(shot.preset, imgW, imgH);
-  return { from: clampFrame(shot.from, imgW, imgH), to: clampFrame(shot.to, imgW, imgH) };
+  const from = shot.motionMode === "continue" && prevTo ? prevTo : shot.from;
+  return { from: clampFrame(from, imgW, imgH), to: clampFrame(shot.to, imgW, imgH) };
 }
 
 // Rango recomendado del deslizador de separación según el tipo de movimiento.
@@ -418,17 +428,24 @@ export interface FlatShot {
   shotIndex: number;
   start: number;
   dur: number;
+  // Los dos encuadres ya resueltos. Se calculan aquí porque una toma que
+  // "continúa" necesita saber dónde acabó la de antes, y eso solo se sabe
+  // recorriendo la línea de tiempo en orden.
+  frames: { from: Frame; to: Frame };
 }
 
 // Aplana escenas+tomas en una línea de tiempo con los tiempos globales.
 export function flatten(p: StoryProject): FlatShot[] {
   const out: FlatShot[] = [];
   let acc = 0;
+  let anterior: Frame | null = null; // dónde acabó la toma de antes
   p.scenes.forEach((scene, sceneIndex) => {
     scene.shots.forEach((shot, shotIndex) => {
       const dur = shotDur(shot);
-      out.push({ scene, shot, sceneIndex, shotIndex, start: acc, dur });
+      const frames = resolveFrames(shot, scene.imgW, scene.imgH, anterior);
+      out.push({ scene, shot, sceneIndex, shotIndex, start: acc, dur, frames });
       acc += dur;
+      anterior = frames.to;
     });
   });
   return out;
@@ -766,7 +783,9 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     autoDuration: s.autoDuration ?? base.autoDuration,
     holdSec: s.holdSec ?? 0,
     // Sin modo guardado: los proyectos antiguos llevaban los dos encuadres a mano.
-    motionMode: s.motionMode ?? (hasFrames ? "free" : "preset"),
+    motionMode: s.motionMode === "free" || s.motionMode === "continue"
+      ? s.motionMode
+      : s.motionMode === "preset" ? "preset" : (hasFrames ? "free" : "preset"),
     preset: normalizePreset(s.preset ?? defaultPreset(imgW, imgH), imgW, imgH),
     from: hasFrames ? s.from : base.from,
     to: hasFrames ? s.to : base.to,

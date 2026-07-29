@@ -1,5 +1,5 @@
 import {
-  flatten, locate, lerpFrame, framePx, resolveFrames, moveProgress, overlayBox,
+  flatten, locate, lerpFrame, framePx, moveProgress, overlayBox,
   dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE, ASPECTS, aspectInfo, setProjectAspect,
   overlayWindows,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
@@ -545,7 +545,7 @@ export class StoryEngine {
     const img = this.images.get(f.scene.imageId);
     const iw = img?.naturalWidth || f.scene.imgW || 16;
     const ih = img?.naturalHeight || f.scene.imgH || 9;
-    const frames = resolveFrames(f.shot, iw, ih);
+    const frames = f.frames;
 
     ctx.save();
     ctx.globalAlpha = alpha;
