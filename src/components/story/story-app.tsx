@@ -16,7 +16,7 @@ import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
-  ASPECTS, aspectInfo, setProjectAspect, switchAspect, framedFor, type Aspect,
+  ASPECTS, aspectInfo, setProjectAspect, switchAspect, type Aspect,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
@@ -148,7 +148,6 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // para que el editor y el motor dibujen siempre con la misma forma.
   const forma = aspectInfo(project.aspect);
   setProjectAspect(project.aspect);
-  const totalShots = project.scenes.reduce((n, sc) => n + sc.shots.length, 0);
 
   const pendientes = Object.keys(voiceJobs).length;
   // Diálogos cuyo texto cambió después de generar la voz.
@@ -476,6 +475,23 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   }
 
   // ---------- persistencia ----------
+
+  // Guarda (o crea, si no lleva id) y deja la lista al día. Devuelve el proyecto.
+  async function guardar(id: string | null, nombre: string, data: StoryProject) {
+    const res = await fetch("/api/story", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id ?? undefined, name: nombre, data }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || "Error");
+    setProjects((prev) => [
+      { id: j.project.id, name: j.project.name, updatedAt: j.project.updatedAt },
+      ...prev.filter((p) => p.id !== j.project.id),
+    ]);
+    return j.project as ProjMeta;
+  }
+
   async function save() {
     setBusy("save");
     setStatus(null);
@@ -529,6 +545,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     }
     setBusy(null);
   }
+  async function pedirProyecto(id: string): Promise<StoryProject> {
+    const r = await fetch(`/api/story?id=${id}`);
+    if (!r.ok) throw new Error("No se pudo leer el proyecto");
+    return migrateProject((await r.json()).project.data);
+  }
+
   // Borra el proyecto y, de paso, sus imágenes/audios/videos de este navegador:
   // son los archivos pesados y no sirven para nada sin el proyecto.
   async function deleteProject(p: ProjMeta) {
@@ -536,12 +558,22 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setBusy("delete");
     setStatus(null);
     try {
-      // Se piden los datos ANTES de borrarlo para saber qué archivos quitar.
+      // Se miran los archivos ANTES de borrarlo, y también los de los demás
+      // proyectos: una copia en otro formato usa las mismas imágenes, así que
+      // solo se borran las que no le sirvan ya a nadie. Si algo falla al
+      // consultarlos no se borra ninguna: mejor que sobre a que falte.
       let assets: string[] = [];
       try {
-        const r = await fetch(`/api/story?id=${p.id}`);
-        if (r.ok) assets = projectAssets(migrateProject((await r.json()).project.data));
-      } catch {}
+        const mios = projectAssets(await pedirProyecto(p.id));
+        const enUso = new Set<string>();
+        for (const otro of projects) {
+          if (otro.id === p.id) continue;
+          for (const a of projectAssets(await pedirProyecto(otro.id))) enUso.add(a);
+        }
+        assets = mios.filter((a) => !enUso.has(a));
+      } catch {
+        assets = [];
+      }
 
       const res = await fetch(`/api/story?id=${p.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Error");
@@ -593,16 +625,45 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // Al pasar de horizontal a vertical (o al revés) la ventana que recorre cada
   // imagen cambia de forma, así que los encuadres guardados se reajustan para
   // que sigan cabiendo. Se conserva el centro de cada uno.
-  function cambiarFormato(a: Aspect) {
+  // El formato de un proyecto NO se cambia: al cambiar de forma, la ventana que
+  // recorre cada imagen cambia y hay que reencuadrar todas las tomas, así que
+  // hacerlo encima del trabajo hecho lo estropea. En su lugar se saca una copia
+  // aparte y el proyecto original se queda intacto.
+  async function copiarEnFormato(a: Aspect) {
     if (a === project.aspect) return;
-    mut((p) => switchAspect(p, a));
     const info = aspectInfo(a);
-    const yaHechas = framedFor(project, a);
-    setStatus(
-      totalShots && yaHechas === totalShots
-        ? `${info.label} · se recuperaron tus encuadres de este formato`
-        : `${info.label} · ${info.w}×${info.h} · revisa los encuadres, la imagen se ve de otra forma`,
-    );
+    const nombre = `${name} (${info.label})`;
+    if (!confirm(
+      `Se creará una copia aparte llamada «${nombre}» en ${info.label} (${info.w}×${info.h}).\n\n` +
+      `«${name}» no se toca: se queda como está.\n\n` +
+      `En la copia habrá que revisar los encuadres, porque la imagen se ve de otra forma.`,
+    )) return;
+
+    setBusy("copy");
+    setStatus(null);
+    try {
+      // Lo que haya sin guardar se guarda ANTES en el original, para que la copia
+      // salga de lo que se ve y el original no pierda nada.
+      let baseId = projectId;
+      if (dirty || !baseId) {
+        const guardado = await guardar(projectId, name, projRef.current);
+        baseId = guardado.id;
+        setProjectId(guardado.id);
+        setDirty(false);
+      }
+      const copia = switchAspect(projRef.current, a);
+      const creado = await guardar(null, nombre, copia);
+      setProject(copia);
+      setProjectId(creado.id);
+      setName(nombre);
+      setSection(null);
+      setDirty(false);
+      seek(0);
+      setStatus(`Copia «${nombre}» creada ✓ · «${name}» quedó intacto · revisa los encuadres`);
+    } catch (err: any) {
+      setStatus("No se pudo copiar: " + (err?.message ?? ""));
+    }
+    setBusy(null);
   }
 
   // ---------- exportar ----------
@@ -945,23 +1006,32 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             <span className="min-w-0 flex-1 truncate text-[11px] text-muted">
               <strong className="text-fg">{forma.label}</strong> · {forma.w}×{forma.h}
             </span>
-            <select
-              className="input w-auto shrink-0 py-0.5 text-[11px]"
-              value={project.aspect}
-              disabled={exporting}
-              onChange={(e) => cambiarFormato(e.target.value as Aspect)}
-              aria-label="Cambiar el formato del video"
-            >
-              {ASPECTS.map((a) => (
-                <option key={a.id} value={a.id}>{a.id} · {a.corto}</option>
-              ))}
-            </select>
           </div>
-          {totalShots > 0 && (
-            <p className="mt-1 text-[11px] text-muted">
-              Si lo cambias, cada formato recuerda sus propios encuadres: puedes volver al
-              anterior sin perder nada.
-            </p>
+          {/* El formato no se cambia sobre la marcha: reencuadrar todas las tomas
+              estropearía lo ya hecho. Se saca una copia aparte. */}
+          {projectId && (
+            <div className="mt-2">
+              <span className="text-[11px] text-muted">Sacar una copia en otro formato</span>
+              <div className="mt-1 grid grid-cols-2 gap-1">
+                {ASPECTS.filter((a) => a.id !== project.aspect).map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => copiarEnFormato(a.id)}
+                    disabled={busy === "copy" || exporting}
+                    title={`Crear una copia en ${a.label} (${a.w}×${a.h}). El proyecto actual no se toca.`}
+                    className="flex items-center justify-center gap-1.5 rounded-lg border border-border px-1 py-1.5 text-[11px] text-muted hover:border-brand hover:bg-brand/10 hover:text-brand disabled:opacity-40"
+                  >
+                    <FormaVideo ratio={a.ratio} />
+                    {a.id}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[11px] text-muted">
+                {busy === "copy"
+                  ? "Creando la copia…"
+                  : "Se crea un proyecto aparte con ese formato. Este se queda como está."}
+              </p>
+            </div>
           )}
 
           <p className="mt-2 text-[11px] text-muted">
