@@ -12,6 +12,7 @@ import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
+import { NumberInput } from "./number-input";
 import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
@@ -1100,10 +1101,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                   <Slider label="Volumen" value={l.volume} min={0} max={1} step={0.01}
                     onChange={(v) => updLayer(l.id, { volume: v })}
                     format={(v) => `${Math.round(v * 100)}%`} />
-                  <label className="space-y-0.5 text-[11px] text-muted">Inicio (s)
-                    <input type="number" min={0} step={0.1} value={l.startSec}
-                      onChange={(e) => updLayer(l.id, { startSec: Math.max(0, Number(e.target.value)) })} className="input" />
-                  </label>
+                  <NumberInput
+                    label="Inicio (s)"
+                    value={l.startSec}
+                    onChange={(v) => updLayer(l.id, { startSec: v })}
+                    min={0} max={3600} step={0.5}
+                  />
                 </div>
                 <label className="mt-1 flex items-center gap-2 text-[11px] text-muted">
                   <input type="checkbox" checked={l.loop} onChange={(e) => updLayer(l.id, { loop: e.target.checked })} />
