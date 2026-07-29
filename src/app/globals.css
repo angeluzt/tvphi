@@ -80,6 +80,20 @@ body {
     @apply w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm text-fg
            placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-brand/50;
   }
+  /* Un control apagado tiene que NOTARSE: si no, parece que la app se rompió.
+     Se apaga el color, se marca el cursor y se raya en diagonal. */
+  .input:disabled,
+  fieldset:disabled .input {
+    @apply cursor-not-allowed border-dashed border-border/70 text-muted/70;
+    background-image: repeating-linear-gradient(
+      -45deg, transparent, transparent 5px,
+      rgb(255 255 255 / 0.035) 5px, rgb(255 255 255 / 0.035) 10px
+    );
+  }
+  /* La etiqueta de un control apagado también se apaga. */
+  label:has(.input:disabled) > span:first-child {
+    @apply text-muted/60;
+  }
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium;
   }

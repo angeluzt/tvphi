@@ -64,8 +64,12 @@ export function MotionEditor({
     if (mode === "free") onChange({ ...shot, motionMode: "free", from: frames.from, to: frames.to });
     else onChange({ ...shot, motionMode: "preset" });
   }
+  // El tamaño se guarda ya ajustado a lo que cabe con ese recorrido. Así el
+  // número que se ve es el de verdad y la barra no se mueve sola al tocar otra.
   function setPreset(patch: Partial<typeof preset>) {
-    onChange({ ...shot, motionMode: "preset", preset: { ...preset, ...patch } });
+    const next = { ...preset, ...patch };
+    next.w = Math.min(next.w, presetMaxW(next.kind, next.distance, imgW, imgH));
+    onChange({ ...shot, motionMode: "preset", preset: next });
   }
   function setKind(kind: MotionKind) {
     const r = distanceRange(kind);
@@ -201,22 +205,24 @@ export function MotionEditor({
             onChange={(v) => setPreset({ cx: v })} format={pct} />
           <Slider label="Posición Y" value={preset.cy} min={0} max={1} step={0.005}
             onChange={(v) => setPreset({ cy: v })} format={pct} />
-          <Slider label="Tamaño (zoom)" value={Math.min(preset.w, presetW)} min={0.1} max={presetW} step={0.005}
+          <Slider label="Tamaño (zoom)" value={preset.w} min={0.1} max={maxW} step={0.005}
             onChange={(v) => setPreset({ w: v })} format={pct}
             hint={presetW < maxW - 0.01
-              ? "Más pequeño = más acercado (limitado para que quepa el recorrido)"
+              ? `Más pequeño = más acercado · con este recorrido cabe hasta ${pct(presetW)}`
               : "Más pequeño = más acercado"} />
           {preset.kind !== "fixed" && (
             <Slider
-              label={preset.kind === "in" || preset.kind === "out" ? "Cuánto acerca/aleja" : "Separación entre 1 y 2"}
+              label={preset.kind === "in" || preset.kind === "out" ? "Cuánto acerca/aleja" : "Cuánto recorre"}
               value={preset.distance} min={range.min} max={range.max} step={0.005}
               onChange={(v) => setPreset({ distance: v })} format={pct}
-              hint="En negativo el movimiento va al revés"
+              hint={preset.distance < 0.005
+                ? "En 0 la imagen se queda quieta, como en Fijo"
+                : "El sentido lo marca el botón de arriba"}
             />
           )}
           <p className="text-[11px] text-muted">
-            Los dos recuadros se mueven y se redimensionan juntos; la separación decide
-            cuánto recorre y hacia dónde.
+            Los dos recuadros se mueven y se redimensionan juntos; el botón de arriba decide
+            hacia dónde va y la barra cuánto recorre.
           </p>
         </div>
       ) : (

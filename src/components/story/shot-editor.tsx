@@ -8,6 +8,7 @@ import type { VoiceStatus } from "@/lib/story/tts";
 import { MotionEditor } from "./motion-editor";
 import { Slider } from "./slider";
 import { GapInput } from "./gap-input";
+import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
 import {
   newDialogue, shotDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS,
@@ -110,7 +111,7 @@ export function ShotEditor({
               {shot.holdSec > 0 ? ` · pausa ${shot.holdSec.toFixed(1)}s` : ""}
               {shot.dialogues.length ? ` · ${shot.dialogues.length} diálogo${shot.dialogues.length > 1 ? "s" : ""}` : ""}
               {shot.sfx.length ? ` · ${shot.sfx.length} sonido${shot.sfx.length > 1 ? "s" : ""}` : ""}
-              {shot.overlays.length ? ` · ${shot.overlays.length} PNG` : ""}
+              {shot.overlays.length ? ` · ${shot.overlays.length} sticker${shot.overlays.length > 1 ? "s" : ""}` : ""}
             </span>
           )}
         </button>
@@ -172,15 +173,14 @@ export function ShotEditor({
               <option value="fija">Fija</option>
             </select>
           </label>
-          <label className="space-y-0.5 text-xs">
-            <span className="text-muted">Segundos</span>
-            <input
-              type="number" step={0.1} min={0.3} className="input"
-              value={shot.autoDuration ? dur.toFixed(1) : shot.durationSec}
-              disabled={shot.autoDuration}
-              onChange={(e) => onChange({ ...shot, durationSec: Math.max(0.3, Number(e.target.value)) })}
-            />
-          </label>
+          <NumberInput
+            label="Segundos"
+            value={shot.autoDuration ? dur : shot.durationSec}
+            onChange={(v) => onChange({ ...shot, durationSec: v })}
+            min={0.3} max={600} step={0.5}
+            disabled={shot.autoDuration}
+            disabledHint="Lo marcan los diálogos. Pon «Fija» para escribirlo."
+          />
         </div>
         <div className="mt-2">
           <Slider
@@ -207,15 +207,14 @@ export function ShotEditor({
             <option value="slide">Deslizar</option>
           </select>
         </label>
-        <label className="space-y-0.5 text-xs">
-          <span className="text-muted">Duración de la entrada (s)</span>
-          <input
-            type="number" step={0.1} min={0} max={5} className="input"
-            value={shot.transitionDur}
-            disabled={shot.transition === "cut"}
-            onChange={(e) => onChange({ ...shot, transitionDur: Math.max(0, Number(e.target.value)) })}
-          />
-        </label>
+        <NumberInput
+          label="Duración de la entrada (s)"
+          value={shot.transitionDur}
+          onChange={(v) => onChange({ ...shot, transitionDur: v })}
+          min={0} max={5} step={0.1}
+          disabled={shot.transition === "cut"}
+          disabledHint="El corte es instantáneo: no dura nada."
+        />
       </div>
 
       {/* Diálogos */}
@@ -424,12 +423,12 @@ export function ShotEditor({
         ))}
       </div>
 
-      {/* Stickers PNG */}
+      {/* Stickers: PNG quietos o GIF animados */}
       <div className="mt-3">
         <div className="flex items-center gap-2">
-          <span className="label">Imágenes encima (PNG)</span>
+          <span className="label">Imágenes encima (PNG / GIF)</span>
           <label className="btn-ghost ml-auto cursor-pointer text-xs">
-            <Sticker className="h-3.5 w-3.5 text-accent" /> Añadir PNG
+            <Sticker className="h-3.5 w-3.5 text-accent" /> Añadir PNG o GIF
             <input type="file" accept="image/*" className="hidden" onChange={onAddSticker} />
           </label>
         </div>
@@ -444,7 +443,7 @@ export function ShotEditor({
                 className="flex cursor-pointer flex-wrap items-center gap-2 px-2 py-1 text-xs"
               >
                 <ImageIcon className="h-3.5 w-3.5" />
-                <span className="flex-1">PNG {oi + 1}</span>
+                <span className="flex-1">Sticker {oi + 1}</span>
                 <span className="text-[11px] text-muted">{OVERLAY_MOTION_LABEL[o.motion]}</span>
                 <button
                   onClick={(e) => { e.stopPropagation(); onChange({ ...shot, overlays: shot.overlays.filter((x) => x.id !== o.id) }); onSelectOverlay(null); }}

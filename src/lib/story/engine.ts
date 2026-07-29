@@ -29,6 +29,9 @@ export class StoryEngine {
 
   private images = new Map<string, HTMLImageElement>();
   private buffers = new Map<string, AudioBuffer>();
+  // Stickers animados (GIF) ya descompuestos en fotogramas: el lienzo solo sabe
+  // dibujar imágenes quietas, así que hay que elegir el fotograma a mano.
+  private anims = new Map<string, { frames: ImageBitmap[]; ends: number[]; total: number }>();
 
   private raf = 0;
   private running = false;
@@ -126,6 +129,7 @@ export class StoryEngine {
         this.images.set(id, img);
         // Repinta en cuanto la imagen esté lista (si no se está reproduciendo).
         img.decode?.().then(() => { if (!this.playing) this.render(); }).catch(() => {});
+        void this.loadAnim(id);
       }),
       ...[...audioIds].map(async (id) => {
         if (this.buffers.has(id)) return;
@@ -138,6 +142,50 @@ export class StoryEngine {
         } catch {}
       }),
     ]);
+  }
+
+  // Si el sticker es un GIF con varios fotogramas, se descompone para poder
+  // animarlo. Un GIF de un solo fotograma se deja como imagen normal.
+  private async loadAnim(id: string) {
+    const Decoder = (globalThis as any).ImageDecoder;
+    if (!Decoder || this.anims.has(id)) return;
+    const blob = await getAsset(id);
+    if (!blob) return;
+    const datos = await blob.arrayBuffer();
+    // Por la firma del archivo, no por el tipo declarado (que a veces falta).
+    const firma = new Uint8Array(datos.slice(0, 3));
+    if (!(firma[0] === 0x47 && firma[1] === 0x49 && firma[2] === 0x46)) return; // "GIF"
+    try {
+      const dec = new Decoder({ data: datos, type: "image/gif" });
+      // Hay que esperar a las dos: una dice cuántos fotogramas hay y la otra
+      // que ya están todos disponibles.
+      await dec.tracks.ready;
+      await dec.completed;
+      const total = dec.tracks?.selectedTrack?.frameCount ?? 1;
+      if (total <= 1) { dec.close?.(); return; }
+      const frames: ImageBitmap[] = [];
+      const ends: number[] = [];
+      let t = 0;
+      const tope = Math.min(total, 300); // un GIF disparatado no se come la memoria
+      for (let i = 0; i < tope; i++) {
+        const { image } = await dec.decode({ frameIndex: i });
+        // La duración viene en microsegundos; algunos GIF no la traen.
+        t += Math.max(0.02, (image.duration ?? 100000) / 1e6);
+        frames.push(await createImageBitmap(image));
+        ends.push(t);
+        image.close?.();
+      }
+      dec.close?.();
+      this.anims.set(id, { frames, ends, total: t });
+      if (!this.playing) this.render();
+    } catch {}
+  }
+
+  // Fotograma que toca según el tiempo del video (el GIF se repite en bucle).
+  private animFrame(a: { frames: ImageBitmap[]; ends: number[]; total: number }) {
+    const t = a.total > 0 ? this.playhead % a.total : 0;
+    for (let i = 0; i < a.ends.length; i++) if (t < a.ends[i]) return a.frames[i];
+    return a.frames[a.frames.length - 1];
   }
 
   duration() {
@@ -383,6 +431,8 @@ export class StoryEngine {
   destroy() {
     this.stop();
     this.pause();
+    for (const a of this.anims.values()) for (const f of a.frames) f.close?.();
+    this.anims.clear();
     this.audioCtx?.close().catch(() => {});
   }
 
@@ -519,9 +569,15 @@ export class StoryEngine {
     const b = overlayBox(o, p, frames, iw, ih);
     const x = b.x * this.w, y = b.y * this.h, w = b.w * this.w, h = b.h * this.h;
     if (w <= 0 || h <= 0) return;
-    const sc = Math.min(w / img.naturalWidth, h / img.naturalHeight);
-    const dw = img.naturalWidth * sc, dh = img.naturalHeight * sc;
-    this.ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+    // Si es un GIF animado se dibuja el fotograma que toca; si no, la imagen.
+    const anim = this.anims.get(o.imageId);
+    const src: CanvasImageSource = anim ? this.animFrame(anim) : img;
+    const sw = anim ? (src as ImageBitmap).width : img.naturalWidth;
+    const sh = anim ? (src as ImageBitmap).height : img.naturalHeight;
+    if (!sw || !sh) return;
+    const sc = Math.min(w / sw, h / sh);
+    const dw = sw * sc, dh = sh * sc;
+    this.ctx.drawImage(src, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
   }
 
   // ---------------- export ----------------
