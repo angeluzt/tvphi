@@ -66,6 +66,9 @@ export interface Dialogue {
   audioId?: string; // audio generado (IndexedDB)
   dur: number; // duración del audio (s), 0 si aún no se generó
   effect: VoiceEffect;
+  // true cuando el texto cambió después de generar la voz: el audio sigue ahí
+  // (para poder seguir viendo el video) pero ya no corresponde a lo escrito.
+  stale: boolean;
   // Pausa antes de este diálogo, contada desde que acaba el anterior. Se usa una
   // pausa en vez de un instante absoluto para que el orden siga teniendo sentido
   // aunque la voz todavía no se haya generado (y por tanto no se sepa cuánto dura).
@@ -486,7 +489,7 @@ export function newScene(imageId: string, imgW: number, imgH: number): StoryScen
 }
 
 export function newDialogue(gapSec = 0.3): Dialogue {
-  return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none" };
+  return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none", stale: false };
 }
 
 export function newSfx(audioId: string, name: string, dur: number): ShotSfx {
@@ -501,6 +504,24 @@ export function newOverlay(imageId: string): PngOverlay {
     toX: 0.35, toY: 0.35, toW: 0.3, toH: 0.3,
     transition: "inherit",
   };
+}
+
+// Todos los archivos (imágenes, audios, videos) que usa un proyecto. Sirve para
+// poder limpiarlos del navegador cuando se borra el proyecto.
+export function projectAssets(p: StoryProject): string[] {
+  const ids = new Set<string>();
+  for (const sc of p.scenes) {
+    ids.add(sc.imageId);
+    for (const sh of sc.shots) {
+      for (const d of sh.dialogues) if (d.audioId) ids.add(d.audioId);
+      for (const s of sh.sfx) ids.add(s.audioId);
+      for (const o of sh.overlays) ids.add(o.imageId);
+    }
+  }
+  for (const l of p.audioLayers) ids.add(l.audioId);
+  if (p.intro) ids.add(p.intro.assetId);
+  if (p.outro) ids.add(p.outro.assetId);
+  return [...ids].filter(Boolean);
 }
 
 export function emptyProject(): StoryProject {
@@ -591,7 +612,7 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     to: hasFrames ? s.to : base.to,
     transition: s.transition ?? base.transition,
     transitionDur: s.transitionDur ?? base.transitionDur,
-    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none" }))),
+    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", stale: !!d.stale }))),
     sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
@@ -633,7 +654,7 @@ export function migrateProject(raw: any): StoryProject {
       ...base,
       transition: s.transition ?? "fade",
       dialogues: s.narration
-        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect }]
+        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect, stale: false }]
         : [],
       overlays: (s.overlays ?? []).map(normalizeOverlay),
     };
