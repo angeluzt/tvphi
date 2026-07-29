@@ -19,9 +19,16 @@ const overlaySchema = z.object({
   toX: z.number(), toY: z.number(), toW: z.number(), toH: z.number(),
   transition: z.enum(["inherit", "cut", "fade", "slide"]),
   // Cuándo se ve dentro de la toma.
-  timing: z.enum(["all", "range"]).optional(),
+  timing: z.enum(["all", "range", "after"]).optional(),
   startSec: z.number().optional(),
   endSec: z.number().optional(),
+  durSec: z.number().optional(),
+  // Su propio sonido: el archivo vive en el navegador, aquí solo la referencia.
+  soundId: z.string().optional(),
+  soundName: z.string().max(200).optional(),
+  soundVolume: z.number().optional(),
+  soundDelay: z.number().optional(),
+  soundLoop: z.boolean().optional(),
 });
 const dialogueSchema = z.object({
   id: z.string(),
@@ -49,7 +56,7 @@ const audioOverrideSchema = z.object({
 });
 // Encuadre guardado para un formato que no es el activo (horizontal/vertical…).
 const framingSchema = z.object({
-  motionMode: z.enum(["preset", "free"]),
+  motionMode: z.enum(["preset", "free", "continue"]),
   preset: presetSchema,
   from: frameSchema,
   to: frameSchema,
@@ -60,7 +67,7 @@ const shotSchema = z.object({
   durationSec: z.number(),
   autoDuration: z.boolean(),
   holdSec: z.number(),
-  motionMode: z.enum(["preset", "free"]),
+  motionMode: z.enum(["preset", "free", "continue"]),
   preset: presetSchema,
   from: frameSchema,
   to: frameSchema,

@@ -18,7 +18,7 @@ import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
   ASPECTS, aspectInfo, setProjectAspect, switchAspect, overlayWindow, type Aspect,
-  type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
+  type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay, type Frame,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
 import { convert, remux } from "@/lib/editor/ffmpeg";
@@ -228,6 +228,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const hi = sc ? sc.shots.findIndex((h) => h.id === shotId) : 0;
     void playSection(f.start, f.start + f.dur, `Escena ${si + 1} · toma ${hi + 1}`, { shotId }, true);
   }
+  // Dónde acabó la toma de antes: es el punto de partida de las que "siguen a
+  // la anterior". La primera de todas no tiene ninguna.
+  function frameAnterior(shotId: string): Frame | null {
+    const i = flat.findIndex((x) => x.shot.id === shotId);
+    return i > 0 ? flat[i - 1].frames.to : null;
+  }
+
   // Coloca el reproductor donde ese sticker se ve, para poder situarlo aunque
   // solo salga un rato de la toma.
   function irAlSticker(sh: Shot, overlayId: string) {
@@ -235,7 +242,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const o = sh.overlays.find((x) => x.id === overlayId);
     if (!f) return;
     if (!o || o.timing !== "range") { engineRef.current?.seekToShot(sh.id); return; }
-    const v = overlayWindow(o, f.dur);
+    const v = overlayWindow(o, sh.overlays, f.dur);
     engineRef.current?.seek(f.start + (v.start + v.end) / 2);
   }
   function toggleLoop() {
@@ -447,6 +454,18 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     // Coloca el reproductor en la toma para poder situar el sticker al momento.
     engineRef.current?.seekToShot(shot.id);
     setPlaying(false);
+  }
+  // El sonido propio de un sticker: se guarda el archivo y se cuelga de él.
+  async function addOverlaySound(sceneId: string, shot: Shot, overlayId: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    const soundId = nanoid(10);
+    await putAsset(soundId, f);
+    updShot(sceneId, shot.id, {
+      ...shot,
+      overlays: shot.overlays.map((o) => (o.id === overlayId ? { ...o, soundId, soundName: f.name } : o)),
+    });
   }
   function updOverlayPos(patch: Partial<PngOverlay>) {
     if (!curFlat || !curOverlay) return;
@@ -959,11 +978,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onDelete={() => delShot(sc, sh.id, hi)}
                         onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
                         onToggle={() => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id))}
+                        prevTo={frameAnterior(sh.id)}
                         onPlay={() => playShot(sc, sh.id, si, hi)}
                         onPreview={() => previewShot(sh.id)}
                         onGenVoice={(d) => genVoice(sc.id, sh.id, d)}
                         onAddSfx={(e) => addSfx(sc.id, sh, e)}
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
+                        onAddOverlaySound={(id, e) => addOverlaySound(sc.id, sh, id, e)}
                         onSelectOverlay={(id) => {
                           setSelShot(sh.id);
                           setSelOverlay(id);
@@ -1352,10 +1373,12 @@ function StickerBox({
     const d = drag.current; if (!d) return;
     const dx = (e.clientX - d.sx) / d.rw, dy = (e.clientY - d.sy) / d.rh;
     const cl = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-    if (d.mode === "move") emit(cl(d.ox + dx, 0, 1 - d.ow), cl(d.oy + dy, 0, 1 - d.oh), d.ow, d.oh);
+    // Se deja salir del cuadro: un sticker más grande que el video tiene que
+    // poder colocarse (para centrarlo hay que irse a negativo).
+    if (d.mode === "move") emit(cl(d.ox + dx, -1, 1), cl(d.oy + dy, -1, 1), d.ow, d.oh);
     else {
-      const w = cl(d.ow + dx, 0.03, 1 - d.ox);
-      emit(d.ox, d.oy, w, cl(d.oh + dy, 0.03, 1 - d.oy));
+      const w = cl(d.ow + dx, 0.03, 2);
+      emit(d.ox, d.oy, w, cl(d.oh + dy, 0.03, 2));
     }
   }
   function end(e: React.PointerEvent) { drag.current = null; try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {} }

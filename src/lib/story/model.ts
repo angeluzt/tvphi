@@ -28,7 +28,9 @@ export interface Frame {
 }
 
 export type MotionKind = "fixed" | "left" | "right" | "up" | "down" | "in" | "out";
-export type MotionMode = "preset" | "free";
+// "continue": la toma arranca justo donde acabó la anterior y va hasta su punto
+// 2. Sirve para encadenar A→B→C→D sin saltos entre tomas.
+export type MotionMode = "preset" | "free" | "continue";
 
 // Movimiento predefinido: un centro, un tamaño y cuánto recorre entre el punto 1
 // y el 2. El sentido lo marca el tipo (izquierda, abajo, acercar…), así que el
@@ -108,12 +110,32 @@ export interface PngOverlay {
   motion: OverlayMotion;
   toX: number; toY: number; toW: number; toH: number; // posición final si motion = "free"
   transition: OverlayTransition; // cómo aparece
-  // Cuándo se ve, dentro de la toma. Con "all" sale toda la toma; con "range",
-  // solo entre esos dos segundos. Así caben varias explosiones seguidas en la
-  // misma toma, cada una a su hora.
-  timing: "all" | "range";
+  // Cuándo se ve, dentro de la toma:
+  //   · "all"   → toda la toma
+  //   · "range" → entre startSec y endSec
+  //   · "after" → arranca cuando acaba el sticker anterior (más startSec de
+  //     pausa) y dura durSec. Así se encadenan explosiones sin recalcular los
+  //     tiempos a mano cada vez que se mueve una.
+  timing: "all" | "range" | "after";
   startSec: number;
   endSec: number;
+  durSec: number; // solo para "after"
+  // Sonido propio del sticker (la explosión que va con la explosión). Suena
+  // cuando el sticker aparece, no cuando empieza la toma.
+  soundId?: string;
+  soundName?: string;
+  soundVolume: number; // 0..1
+  soundDelay: number; // segundos de retraso desde que aparece el sticker
+  // En bucle se repite mientras el sticker se ve y se corta al irse; si no,
+  // suena una sola vez y se le deja acabar aunque el sticker ya se haya ido.
+  soundLoop: boolean;
+}
+
+// Cuándo suena el sonido de un sticker, dentro de la toma. Se retrasa respecto
+// a cuando aparece, sin poder salirse de su rato.
+export function overlaySoundStart(o: PngOverlay, ventana: { start: number; end: number }) {
+  const margen = Math.max(0, ventana.end - ventana.start - 0.05);
+  return ventana.start + Math.min(Math.max(0, o.soundDelay || 0), margen);
 }
 
 export interface Shot {
@@ -305,10 +327,18 @@ export function presetFrames(p: PresetMotion, imgW: number, imgH: number): { fro
   }
 }
 
-// Los dos encuadres efectivos de una toma, venga del modo que venga.
-export function resolveFrames(shot: Shot, imgW: number, imgH: number): { from: Frame; to: Frame } {
+// Los dos encuadres efectivos de una toma, venga del modo que venga. Con
+// "continue" el punto 1 es donde acabó la toma anterior; si no hay ninguna
+// antes, se queda con el suyo.
+export function resolveFrames(
+  shot: Shot,
+  imgW: number,
+  imgH: number,
+  prevTo?: Frame | null,
+): { from: Frame; to: Frame } {
   if (shot.motionMode === "preset") return presetFrames(shot.preset, imgW, imgH);
-  return { from: clampFrame(shot.from, imgW, imgH), to: clampFrame(shot.to, imgW, imgH) };
+  const from = shot.motionMode === "continue" && prevTo ? prevTo : shot.from;
+  return { from: clampFrame(from, imgW, imgH), to: clampFrame(shot.to, imgW, imgH) };
 }
 
 // Rango recomendado del deslizador de separación según el tipo de movimiento.
@@ -414,17 +444,24 @@ export interface FlatShot {
   shotIndex: number;
   start: number;
   dur: number;
+  // Los dos encuadres ya resueltos. Se calculan aquí porque una toma que
+  // "continúa" necesita saber dónde acabó la de antes, y eso solo se sabe
+  // recorriendo la línea de tiempo en orden.
+  frames: { from: Frame; to: Frame };
 }
 
 // Aplana escenas+tomas en una línea de tiempo con los tiempos globales.
 export function flatten(p: StoryProject): FlatShot[] {
   const out: FlatShot[] = [];
   let acc = 0;
+  let anterior: Frame | null = null; // dónde acabó la toma de antes
   p.scenes.forEach((scene, sceneIndex) => {
     scene.shots.forEach((shot, shotIndex) => {
       const dur = shotDur(shot);
-      out.push({ scene, shot, sceneIndex, shotIndex, start: acc, dur });
+      const frames = resolveFrames(shot, scene.imgW, scene.imgH, anterior);
+      out.push({ scene, shot, sceneIndex, shotIndex, start: acc, dur, frames });
       acc += dur;
+      anterior = frames.to;
     });
   });
   return out;
@@ -582,16 +619,38 @@ export function newOverlay(imageId: string): PngOverlay {
     motion: "follow",
     toX: 0.35, toY: 0.35, toW: 0.3, toH: 0.3,
     transition: "inherit",
-    timing: "all", startSec: 0, endSec: 1,
+    timing: "all", startSec: 0, endSec: 1, durSec: 1,
+    soundVolume: 0.9, soundDelay: 0, soundLoop: false,
   };
 }
 
-// Momento en que aparece y desaparece un sticker dentro de su toma.
-export function overlayWindow(o: PngOverlay, shotDuration: number) {
-  if (o.timing !== "range") return { start: 0, end: shotDuration };
-  const start = Math.max(0, Math.min(shotDuration, o.startSec));
-  const end = Math.max(start + 0.05, Math.min(shotDuration, o.endSec));
-  return { start, end };
+// Cuándo aparece y desaparece cada sticker de una toma. Los encadenados ("after")
+// dependen del que tienen delante, así que se calculan todos de una pasada.
+export function overlayWindows(overlays: PngOverlay[], shotDuration: number) {
+  let finAnterior = 0;
+  return overlays.map((o) => {
+    let start: number;
+    let end: number;
+    if (o.timing === "range") {
+      start = Math.max(0, Math.min(shotDuration, o.startSec));
+      end = Math.max(start + 0.05, Math.min(shotDuration, o.endSec));
+    } else if (o.timing === "after") {
+      start = Math.max(0, Math.min(shotDuration, finAnterior + Math.max(0, o.startSec)));
+      end = Math.min(shotDuration, start + Math.max(0.05, o.durSec));
+    } else {
+      start = 0;
+      end = shotDuration;
+    }
+    finAnterior = end;
+    return { start, end };
+  });
+}
+
+// El rato de un sticker suelto (hace falta su toma para los encadenados).
+export function overlayWindow(o: PngOverlay, overlays: PngOverlay[], shotDuration: number) {
+  const i = overlays.findIndex((x) => x.id === o.id);
+  const todos = overlayWindows(overlays, shotDuration);
+  return todos[i] ?? { start: 0, end: shotDuration };
 }
 
 // Cambia el formato del video conservando el encuadre de cada formato: el que
@@ -636,7 +695,10 @@ export function projectAssets(p: StoryProject): string[] {
     for (const sh of sc.shots) {
       for (const d of sh.dialogues) if (d.audioId) ids.add(d.audioId);
       for (const s of sh.sfx) ids.add(s.audioId);
-      for (const o of sh.overlays) ids.add(o.imageId);
+      for (const o of sh.overlays) {
+        ids.add(o.imageId);
+        if (o.soundId) ids.add(o.soundId);
+      }
     }
   }
   for (const l of p.audioLayers) ids.add(l.audioId);
@@ -700,9 +762,15 @@ function normalizeOverlay(o: any): PngOverlay {
     toX: o.toX ?? o.x ?? 0.35, toY: o.toY ?? o.y ?? 0.35,
     toW: o.toW ?? o.w ?? 0.3, toH: o.toH ?? o.h ?? 0.3,
     transition: o.transition ?? "inherit",
-    timing: o.timing === "range" ? "range" : "all",
+    timing: o.timing === "range" || o.timing === "after" ? o.timing : "all",
     startSec: Number(o.startSec) || 0,
     endSec: Number(o.endSec) || 1,
+    durSec: Number(o.durSec) || 1,
+    soundId: o.soundId || undefined,
+    soundName: o.soundName || undefined,
+    soundVolume: typeof o.soundVolume === "number" ? o.soundVolume : 0.9,
+    soundDelay: Number(o.soundDelay) || 0,
+    soundLoop: !!o.soundLoop,
   };
 }
 
@@ -740,7 +808,9 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     autoDuration: s.autoDuration ?? base.autoDuration,
     holdSec: s.holdSec ?? 0,
     // Sin modo guardado: los proyectos antiguos llevaban los dos encuadres a mano.
-    motionMode: s.motionMode ?? (hasFrames ? "free" : "preset"),
+    motionMode: s.motionMode === "free" || s.motionMode === "continue"
+      ? s.motionMode
+      : s.motionMode === "preset" ? "preset" : (hasFrames ? "free" : "preset"),
     preset: normalizePreset(s.preset ?? defaultPreset(imgW, imgH), imgW, imgH),
     from: hasFrames ? s.from : base.from,
     to: hasFrames ? s.to : base.to,

@@ -1,7 +1,7 @@
 import {
-  flatten, locate, lerpFrame, framePx, resolveFrames, moveProgress, overlayBox,
+  flatten, locate, lerpFrame, framePx, moveProgress, overlayBox,
   dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE, ASPECTS, aspectInfo, setProjectAspect,
-  overlayWindow,
+  overlayWindows, overlaySoundStart,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
   type ClipVideo,
 } from "./model";
@@ -118,7 +118,10 @@ export class StoryEngine {
       for (const sh of sc.shots) {
         for (const d of sh.dialogues) if (d.audioId) audioIds.add(d.audioId);
         for (const s of sh.sfx) audioIds.add(s.audioId);
-        for (const o of sh.overlays) imgIds.add(o.imageId);
+        for (const o of sh.overlays) {
+          imgIds.add(o.imageId);
+          if (o.soundId) audioIds.add(o.soundId);
+        }
       }
     }
     for (const l of p.audioLayers) audioIds.add(l.audioId);
@@ -357,6 +360,18 @@ export class StoryEngine {
           });
         }
       });
+      // El sonido de cada sticker va con él: empieza cuando el sticker aparece
+      // (más su retraso) y, si va en bucle, se corta cuando el sticker se va.
+      const ventanas = overlayWindows(f.shot.overlays, f.dur);
+      f.shot.overlays.forEach((o, k) => {
+        if (!o.soundId) return;
+        const v = ventanas[k];
+        events.push({
+          key: `ovl:${o.id}`, t: f.start + overlaySoundStart(o, v), audioId: o.soundId,
+          gain: o.soundVolume ?? 0.9, loop: !!o.soundLoop,
+          until: o.soundLoop ? f.start + v.end : Infinity,
+        });
+      });
     });
 
     for (const l of this.project.audioLayers) {
@@ -545,7 +560,7 @@ export class StoryEngine {
     const img = this.images.get(f.scene.imageId);
     const iw = img?.naturalWidth || f.scene.imgW || 16;
     const ih = img?.naturalHeight || f.scene.imgH || 9;
-    const frames = resolveFrames(f.shot, iw, ih);
+    const frames = f.frames;
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -559,12 +574,13 @@ export class StoryEngine {
 
     // Stickers: heredan la transición de entrada de la toma o llevan la suya,
     // y se mueven según su propio modo (quieto, pegado a la imagen o libre).
-    for (const o of f.shot.overlays) {
+    const ventanas = overlayWindows(f.shot.overlays, f.dur);
+    f.shot.overlays.forEach((o, idx) => {
       const oi = this.images.get(o.imageId);
-      if (!oi || !oi.complete || !oi.naturalWidth) continue;
+      if (!oi || !oi.complete || !oi.naturalWidth) return;
       // Fuera de su rato, el sticker no existe.
-      const v = overlayWindow(o, f.dur);
-      if (lt < v.start || lt > v.end) continue;
+      const v = ventanas[idx];
+      if (lt < v.start || lt > v.end) return;
       const desde = lt - v.start; // tiempo desde que apareció ESTE sticker
 
       let oa = alpha;
@@ -577,7 +593,7 @@ export class StoryEngine {
       }
       // Los que salen solo un rato se van con un fundido corto, para que no
       // desaparezcan de golpe.
-      if (o.timing === "range") {
+      if (o.timing !== "all") {
         const cola = Math.min(0.25, (v.end - v.start) / 4);
         if (cola > 0 && v.end - lt < cola) oa *= (v.end - lt) / cola;
       }
@@ -586,7 +602,7 @@ export class StoryEngine {
       if (ox) ctx.translate(ox, 0);
       this.drawOverlay(o, oi, p, frames, iw, ih, desde);
       ctx.restore();
-    }
+    });
   }
 
   private drawOverlay(
