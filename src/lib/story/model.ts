@@ -124,6 +124,19 @@ export interface Shot {
   sfx: ShotSfx[];
   audioOverrides: AudioOverride[]; // qué hacer con los bucles que vienen de arriba
   overlays: PngOverlay[];
+  // Encuadres de los OTROS formatos. Lo de arriba (motionMode/preset/from/to) es
+  // el encuadre del formato activo; al cambiar de formato se guarda aquí el que
+  // se deja y se recupera el que ya se hubiera ajustado, para poder tener el
+  // mismo capítulo en horizontal y en vertical sin rehacer los encuadres.
+  altFrames?: Partial<Record<Aspect, ShotFraming>>;
+}
+
+// Lo que define cómo se recorre la imagen en una toma.
+export interface ShotFraming {
+  motionMode: MotionMode;
+  preset: PresetMotion;
+  from: Frame;
+  to: Frame;
 }
 
 export interface StoryScene {
@@ -535,6 +548,45 @@ export function newOverlay(imageId: string): PngOverlay {
   };
 }
 
+// Cambia el formato del video conservando el encuadre de cada formato: el que
+// se deja se guarda, y si ya se había ajustado uno para el formato nuevo se
+// recupera tal cual. La primera vez que se estrena un formato se parte del
+// encuadre actual, ajustado para que quepa en la nueva forma.
+export function switchAspect(p: StoryProject, next: Aspect): StoryProject {
+  const prev = p.aspect;
+  if (prev === next) return p;
+  setProjectAspect(next); // los ajustes de abajo se hacen ya con la forma nueva
+  const scenes = p.scenes.map((sc) => ({
+    ...sc,
+    shots: sc.shots.map((sh) => {
+      const actual: ShotFraming = {
+        motionMode: sh.motionMode, preset: sh.preset, from: sh.from, to: sh.to,
+      };
+      const alt: Partial<Record<Aspect, ShotFraming>> = { ...(sh.altFrames ?? {}) };
+      alt[prev] = actual;
+      const guardado = alt[next];
+      delete alt[next];
+      const nuevo: ShotFraming = guardado ?? {
+        motionMode: actual.motionMode,
+        preset: {
+          ...actual.preset,
+          w: Math.min(actual.preset.w, presetMaxW(actual.preset.kind, actual.preset.distance, sc.imgW, sc.imgH)),
+        },
+        from: clampFrame(actual.from, sc.imgW, sc.imgH),
+        to: clampFrame(actual.to, sc.imgW, sc.imgH),
+      };
+      return { ...sh, ...nuevo, altFrames: alt };
+    }),
+  }));
+  return { ...p, aspect: next, scenes };
+}
+
+// Cuántas tomas tienen ya un encuadre propio guardado para un formato.
+export function framedFor(p: StoryProject, a: Aspect) {
+  if (a === p.aspect) return p.scenes.reduce((n, sc) => n + sc.shots.length, 0);
+  return p.scenes.reduce((n, sc) => n + sc.shots.filter((sh) => sh.altFrames?.[a]).length, 0);
+}
+
 // Todos los archivos (imágenes, audios, videos) que usa un proyecto. Sirve para
 // poder limpiarlos del navegador cuando se borra el proyecto.
 export function projectAssets(p: StoryProject): string[] {
@@ -625,6 +677,16 @@ function startsToGaps<T extends { startSec?: number; gapSec?: number; dur?: numb
   });
 }
 
+function normalizeFraming(f: any, imgW: number, imgH: number): ShotFraming | null {
+  if (!f || !f.preset || !f.from || !f.to) return null;
+  return {
+    motionMode: f.motionMode === "free" ? "free" : "preset",
+    preset: { ...defaultPreset(imgW, imgH), ...f.preset },
+    from: f.from,
+    to: f.to,
+  };
+}
+
 function normalizeShot(s: any, imgW: number, imgH: number): Shot {
   const base = newShot(imgW, imgH);
   const hasFrames = s.from && s.to && typeof s.from.cx === "number";
@@ -645,7 +707,18 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
+    altFrames: normalizeAltFrames(s.altFrames, imgW, imgH),
   };
+}
+
+function normalizeAltFrames(raw: any, imgW: number, imgH: number): Shot["altFrames"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Partial<Record<Aspect, ShotFraming>> = {};
+  for (const a of ASPECTS) {
+    const f = normalizeFraming(raw[a.id], imgW, imgH);
+    if (f) out[a.id] = f;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 export function migrateProject(raw: any): StoryProject {

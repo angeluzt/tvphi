@@ -43,8 +43,16 @@ const audioOverrideSchema = z.object({
   stop: z.boolean(),
   volume: z.number().nullable(),
 });
+// Encuadre guardado para un formato que no es el activo (horizontal/vertical…).
+const framingSchema = z.object({
+  motionMode: z.enum(["preset", "free"]),
+  preset: presetSchema,
+  from: frameSchema,
+  to: frameSchema,
+});
 const shotSchema = z.object({
   id: z.string(),
+  altFrames: z.record(z.string(), framingSchema).optional(),
   durationSec: z.number(),
   autoDuration: z.boolean(),
   holdSec: z.number(),
