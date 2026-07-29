@@ -23,6 +23,12 @@ const overlaySchema = z.object({
   startSec: z.number().optional(),
   endSec: z.number().optional(),
   durSec: z.number().optional(),
+  // Su propio sonido: el archivo vive en el navegador, aquí solo la referencia.
+  soundId: z.string().optional(),
+  soundName: z.string().max(200).optional(),
+  soundVolume: z.number().optional(),
+  soundDelay: z.number().optional(),
+  soundLoop: z.boolean().optional(),
 });
 const dialogueSchema = z.object({
   id: z.string(),

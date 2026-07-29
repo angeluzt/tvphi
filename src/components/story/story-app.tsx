@@ -455,6 +455,18 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     engineRef.current?.seekToShot(shot.id);
     setPlaying(false);
   }
+  // El sonido propio de un sticker: se guarda el archivo y se cuelga de él.
+  async function addOverlaySound(sceneId: string, shot: Shot, overlayId: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    const soundId = nanoid(10);
+    await putAsset(soundId, f);
+    updShot(sceneId, shot.id, {
+      ...shot,
+      overlays: shot.overlays.map((o) => (o.id === overlayId ? { ...o, soundId, soundName: f.name } : o)),
+    });
+  }
   function updOverlayPos(patch: Partial<PngOverlay>) {
     if (!curFlat || !curOverlay) return;
     updShot(curFlat.scene.id, curFlat.shot.id, {
@@ -972,6 +984,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onGenVoice={(d) => genVoice(sc.id, sh.id, d)}
                         onAddSfx={(e) => addSfx(sc.id, sh, e)}
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
+                        onAddOverlaySound={(id, e) => addOverlaySound(sc.id, sh, id, e)}
                         onSelectOverlay={(id) => {
                           setSelShot(sh.id);
                           setSelOverlay(id);

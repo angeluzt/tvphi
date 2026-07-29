@@ -13,6 +13,7 @@ import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
 import {
   newDialogue, shotDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
+  overlaySoundStart,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop, type Frame,
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect,
 } from "@/lib/story/model";
@@ -44,6 +45,7 @@ export function ShotEditor({
   onGenVoice,
   onAddSfx,
   onAddSticker,
+  onAddOverlaySound,
   onSelectOverlay,
 }: {
   shot: Shot;
@@ -70,6 +72,7 @@ export function ShotEditor({
   onGenVoice: (d: Dialogue) => void;
   onAddSfx: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddSticker: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onAddOverlaySound: (overlayId: string, e: React.ChangeEvent<HTMLInputElement>) => void;
   onSelectOverlay: (id: string | null) => void;
 }) {
   const dur = shotDur(shot);
@@ -578,6 +581,70 @@ export function ShotEditor({
                           ` (${(ventanas[oi].end - ventanas[oi].start).toFixed(1)}s de los ${dur.toFixed(1)}s de la toma)` +
                           (o.timing === "after" ? " · va detrás del sticker anterior" : "")}
                     </p>
+                  </div>
+
+                  {/* Su propio sonido: la explosión que va con la explosión.
+                      Cuelga del sticker, así que se mueve con él. */}
+                  <div className="rounded-lg border border-border/60 p-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Volume2 className="h-3.5 w-3.5 text-accent" />
+                      <span className="flex-1 truncate text-[11px]">
+                        {o.soundId ? (o.soundName || "Sonido") : <span className="text-muted">Sonido de este sticker</span>}
+                      </span>
+                      <label className="btn-ghost cursor-pointer text-[11px]">
+                        {o.soundId ? "Cambiar" : "Añadir sonido"}
+                        <input
+                          type="file" accept="audio/*" className="hidden"
+                          onChange={(e) => onAddOverlaySound(o.id, e)}
+                        />
+                      </label>
+                      {o.soundId && (
+                        <button
+                          onClick={() => updOverlay(o.id, { soundId: undefined, soundName: undefined })}
+                          className="text-muted hover:text-danger"
+                          title="Quitar el sonido de este sticker"
+                        ><Trash2 className="h-3.5 w-3.5" /></button>
+                      )}
+                    </div>
+                    {o.soundId ? (
+                      <>
+                        <div className="mt-1.5 grid grid-cols-2 gap-2">
+                          <label className="space-y-0.5 text-[11px]">
+                            <span className="text-muted">Cómo suena</span>
+                            <select
+                              className="input py-0.5 text-xs"
+                              value={o.soundLoop ? "loop" : "once"}
+                              onChange={(e) => updOverlay(o.id, { soundLoop: e.target.value === "loop" })}
+                            >
+                              <option value="once">Una sola vez</option>
+                              <option value="loop">En bucle mientras se ve</option>
+                            </select>
+                          </label>
+                          <NumberInput
+                            label="Empieza a los"
+                            value={o.soundDelay}
+                            onChange={(v) => updOverlay(o.id, { soundDelay: v })}
+                            min={0} max={Math.max(0, ventanas[oi].end - ventanas[oi].start - 0.05)} step={0.1}
+                            hint="Desde que aparece el sticker"
+                          />
+                        </div>
+                        <label className="mt-1.5 flex items-center gap-2 text-[11px] text-muted">
+                          Volumen
+                          <VolumeInput value={o.soundVolume} onChange={(v) => updOverlay(o.id, { soundVolume: v })} />
+                        </label>
+                        <p className="mt-1 text-[10px] text-muted/80">
+                          Suena a los {overlaySoundStart(o, ventanas[oi]).toFixed(1)}s de la toma
+                          {o.soundLoop
+                            ? `, repitiéndose hasta los ${ventanas[oi].end.toFixed(1)}s`
+                            : ", una vez (si dura más que el sticker, se le deja acabar)"}.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="mt-1 text-[10px] text-muted/80">
+                        Un golpe, una explosión… arranca cuando aparece el sticker, no cuando
+                        empieza la toma.
+                      </p>
+                    )}
                   </div>
 
                   <div className="rounded-lg border border-border/60 p-2">

@@ -120,6 +120,22 @@ export interface PngOverlay {
   startSec: number;
   endSec: number;
   durSec: number; // solo para "after"
+  // Sonido propio del sticker (la explosión que va con la explosión). Suena
+  // cuando el sticker aparece, no cuando empieza la toma.
+  soundId?: string;
+  soundName?: string;
+  soundVolume: number; // 0..1
+  soundDelay: number; // segundos de retraso desde que aparece el sticker
+  // En bucle se repite mientras el sticker se ve y se corta al irse; si no,
+  // suena una sola vez y se le deja acabar aunque el sticker ya se haya ido.
+  soundLoop: boolean;
+}
+
+// Cuándo suena el sonido de un sticker, dentro de la toma. Se retrasa respecto
+// a cuando aparece, sin poder salirse de su rato.
+export function overlaySoundStart(o: PngOverlay, ventana: { start: number; end: number }) {
+  const margen = Math.max(0, ventana.end - ventana.start - 0.05);
+  return ventana.start + Math.min(Math.max(0, o.soundDelay || 0), margen);
 }
 
 export interface Shot {
@@ -604,6 +620,7 @@ export function newOverlay(imageId: string): PngOverlay {
     toX: 0.35, toY: 0.35, toW: 0.3, toH: 0.3,
     transition: "inherit",
     timing: "all", startSec: 0, endSec: 1, durSec: 1,
+    soundVolume: 0.9, soundDelay: 0, soundLoop: false,
   };
 }
 
@@ -678,7 +695,10 @@ export function projectAssets(p: StoryProject): string[] {
     for (const sh of sc.shots) {
       for (const d of sh.dialogues) if (d.audioId) ids.add(d.audioId);
       for (const s of sh.sfx) ids.add(s.audioId);
-      for (const o of sh.overlays) ids.add(o.imageId);
+      for (const o of sh.overlays) {
+        ids.add(o.imageId);
+        if (o.soundId) ids.add(o.soundId);
+      }
     }
   }
   for (const l of p.audioLayers) ids.add(l.audioId);
@@ -746,6 +766,11 @@ function normalizeOverlay(o: any): PngOverlay {
     startSec: Number(o.startSec) || 0,
     endSec: Number(o.endSec) || 1,
     durSec: Number(o.durSec) || 1,
+    soundId: o.soundId || undefined,
+    soundName: o.soundName || undefined,
+    soundVolume: typeof o.soundVolume === "number" ? o.soundVolume : 0.9,
+    soundDelay: Number(o.soundDelay) || 0,
+    soundLoop: !!o.soundLoop,
   };
 }
 

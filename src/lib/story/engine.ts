@@ -1,7 +1,7 @@
 import {
   flatten, locate, lerpFrame, framePx, moveProgress, overlayBox,
   dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE, ASPECTS, aspectInfo, setProjectAspect,
-  overlayWindows,
+  overlayWindows, overlaySoundStart,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
   type ClipVideo,
 } from "./model";
@@ -118,7 +118,10 @@ export class StoryEngine {
       for (const sh of sc.shots) {
         for (const d of sh.dialogues) if (d.audioId) audioIds.add(d.audioId);
         for (const s of sh.sfx) audioIds.add(s.audioId);
-        for (const o of sh.overlays) imgIds.add(o.imageId);
+        for (const o of sh.overlays) {
+          imgIds.add(o.imageId);
+          if (o.soundId) audioIds.add(o.soundId);
+        }
       }
     }
     for (const l of p.audioLayers) audioIds.add(l.audioId);
@@ -356,6 +359,18 @@ export class StoryEngine {
             gain: s.volume, loop: false, until: Infinity,
           });
         }
+      });
+      // El sonido de cada sticker va con él: empieza cuando el sticker aparece
+      // (más su retraso) y, si va en bucle, se corta cuando el sticker se va.
+      const ventanas = overlayWindows(f.shot.overlays, f.dur);
+      f.shot.overlays.forEach((o, k) => {
+        if (!o.soundId) return;
+        const v = ventanas[k];
+        events.push({
+          key: `ovl:${o.id}`, t: f.start + overlaySoundStart(o, v), audioId: o.soundId,
+          gain: o.soundVolume ?? 0.9, loop: !!o.soundLoop,
+          until: o.soundLoop ? f.start + v.end : Infinity,
+        });
       });
     });
 
