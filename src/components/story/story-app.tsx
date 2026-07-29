@@ -19,7 +19,7 @@ import {
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
-import { convert } from "@/lib/editor/ffmpeg";
+import { convert, remux } from "@/lib/editor/ffmpeg";
 
 interface ProjMeta { id: string; name: string; updatedAt: string }
 
@@ -132,6 +132,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   const pendientes = Object.keys(voiceJobs).length;
   const dur = totalDuration(project);
+  // Lo que durará el archivo final, contando los videos que se le unen.
+  const durFinal = dur + (project.intro?.dur ?? 0) + (project.outro?.dur ?? 0);
   const flat = flatten(project);
   const curFlat = flat.find((f) => f.shot.id === selShot) ?? null;
   const curOverlay = curFlat?.shot.overlays.find((o) => o.id === selOverlay) ?? null;
@@ -371,6 +373,43 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     mut((p) => ({ ...p, audioLayers: p.audioLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)) }));
   }
 
+  // ---------- videos que se unen (careta / cierre) ----------
+
+  // Cuánto dura un video. Muchos archivos grabados en el navegador (incluidos
+  // los que exportaba TVPHI hasta ahora) no llevan la duración escrita y el
+  // reproductor dice "infinito"; el truco es saltar al final y volver a mirar.
+  async function videoDuration(url: string): Promise<number> {
+    return new Promise<number>((res) => {
+      const v = document.createElement("video");
+      let acabado = false;
+      const fin = (d: number) => { if (!acabado) { acabado = true; res(d > 0 && isFinite(d) ? d : 0); } };
+      v.preload = "metadata";
+      v.onloadedmetadata = () => {
+        if (isFinite(v.duration) && v.duration > 0) return fin(v.duration);
+        v.onseeked = () => { v.onseeked = null; fin(v.duration); };
+        try { v.currentTime = 1e101; } catch { fin(0); }
+      };
+      v.onerror = () => fin(0);
+      v.src = url;
+      setTimeout(() => fin(0), 15000);
+    });
+  }
+  async function addClip(donde: "intro" | "outro", e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setStatus(null);
+    const assetId = nanoid(10);
+    await putAsset(assetId, f);
+    // La duración se lee del propio archivo para poder anunciar cuánto durará
+    // el video final antes de exportarlo.
+    const url = URL.createObjectURL(f);
+    const dur = await videoDuration(url);
+    URL.revokeObjectURL(url);
+    if (!dur) setStatus("No se pudo leer ese video. Prueba con un MP4 o WebM normal.");
+    mut((p) => ({ ...p, [donde]: { assetId, name: f.name, dur } }));
+  }
+
   // ---------- persistencia ----------
   async function save() {
     setBusy("save");
@@ -439,30 +478,44 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   // ---------- exportar ----------
   async function doExport() {
-    if (!project.scenes.length) { setStatus("Añade al menos una imagen."); return; }
+    if (!project.scenes.length && !project.intro && !project.outro) {
+      setStatus("Añade al menos una imagen (o un video para unir).");
+      return;
+    }
     const eng = engineRef.current!;
     setExporting(true);
     setProgress(0);
     setStatus(null);
+    const nombre = `tvphi-historia-${Date.now()}`;
     try {
       const webmMime = Recorder.pickMime();
-      if (format === "webm") {
-        download(await eng.export(webmMime, setProgress), `tvphi-historia-${Date.now()}.webm`);
-      } else if (format === "mp4") {
-        const mp4 = Recorder.pickMp4();
-        if (mp4) {
-          download(await eng.export(mp4, setProgress), `tvphi-historia-${Date.now()}.mp4`);
-        } else {
+      if (format === "webm" || format === "mp4") {
+        const nativo = format === "mp4" ? Recorder.pickMp4() : webmMime;
+        if (format === "mp4" && !nativo) {
+          // El navegador no sabe grabar MP4: hay que recodificar.
           setStatus("Convirtiendo a MP4 (puede tardar)…");
           const b = await eng.export(webmMime, (p) => setProgress(p * 0.5));
-          download(await convert(b, "mp4", (p) => setProgress(0.5 + p * 0.5)), `tvphi-historia-${Date.now()}.mp4`);
+          download(await convert(b, "mp4", (p) => setProgress(0.5 + p * 0.5)), `${nombre}.mp4`);
+        } else {
+          const bruto = await eng.export(nativo, (p) => setProgress(p * 0.85));
+          // Lo que sale del grabador no lleva escrita su duración (el móvil marca
+          // 0:00) y el MP4 sale fragmentado, que es lo que rechaza YouTube. Se
+          // vuelve a empaquetar sin recodificar, que es rápido.
+          setStatus("Cerrando el archivo…");
+          let final = bruto;
+          try {
+            final = await remux(bruto, format, (p) => setProgress(0.85 + p * 0.15));
+          } catch {
+            setStatus("El video se descargó, pero no se pudo escribir su duración.");
+          }
+          download(final, `${nombre}.${format}`);
         }
       } else {
         setStatus(`Convirtiendo a ${format.toUpperCase()} (puede tardar)…`);
         const b = await eng.export(webmMime, (p) => setProgress(p * 0.5));
-        download(await convert(b, format, (p) => setProgress(0.5 + p * 0.5)), `tvphi-historia-${Date.now()}.${format}`);
+        download(await convert(b, format, (p) => setProgress(0.5 + p * 0.5)), `${nombre}.${format}`);
       }
-      setStatus("Descarga lista ✓");
+      setStatus((s) => (s?.startsWith("El video se descargó") ? s : "Descarga lista ✓"));
     } catch (err: any) {
       setStatus("Error al exportar: " + (err?.message ?? ""));
     }
@@ -799,6 +852,44 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           </div>
         </div>
 
+        {/* Unir con otros videos: la careta va en su propio proyecto, se exporta
+            y aquí se pega delante (o detrás) para que salga un solo capítulo. */}
+        <div className="card p-3">
+          <span className="label">Unir con otros videos</span>
+          <div className="mt-2 space-y-2">
+            {([["intro", "Al inicio"], ["outro", "Al final"]] as const).map(([donde, etiqueta]) => {
+              const clip = project[donde];
+              return (
+                <div key={donde} className="rounded-lg border border-border p-2">
+                  <div className="flex items-center gap-2">
+                    <span className="chip shrink-0 bg-brand/15 text-brand">{etiqueta}</span>
+                    {clip ? (
+                      <>
+                        <span className="min-w-0 flex-1 truncate text-xs">{clip.name}</span>
+                        <span className="shrink-0 text-[11px] tabular-nums text-muted">{fmt(clip.dur)}</span>
+                        <button
+                          onClick={() => mut((p) => ({ ...p, [donde]: null }))}
+                          className="shrink-0 text-muted hover:text-danger"
+                          title={`Quitar el video ${etiqueta.toLowerCase()}`}
+                        ><Trash2 className="h-3.5 w-3.5" /></button>
+                      </>
+                    ) : (
+                      <label className="btn-ghost flex-1 cursor-pointer justify-center text-xs">
+                        <Film className="h-3.5 w-3.5 text-accent" /> Elegir video
+                        <input type="file" accept="video/*" className="hidden" onChange={(e) => addClip(donde, e)} />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[11px] text-muted">
+            Se pegan al exportar y sale un único archivo. Haz la careta en otro proyecto, expórtala y
+            súbela aquí.
+          </p>
+        </div>
+
         <div className="card p-3">
           <span className="label">Exportar</span>
           <div className="mt-2 flex gap-2">
@@ -808,10 +899,21 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <option value="gif">GIF</option>
               <option value="mp3">MP3 (audio)</option>
             </select>
-            <button className="btn-brand" onClick={doExport} disabled={exporting || !project.scenes.length}>
+            <button
+              className="btn-brand"
+              onClick={doExport}
+              disabled={exporting || (!project.scenes.length && !project.intro && !project.outro)}
+            >
               <Download className="h-4 w-4" /> {exporting ? `${Math.round(progress * 100)}%` : "Exportar"}
             </button>
           </div>
+          {(project.intro || project.outro) && (
+            <p className="mt-2 text-[11px] text-muted">
+              Durará <strong className="tabular-nums text-fg">{fmt(durFinal)}</strong>:
+              {project.intro ? ` careta ${fmt(project.intro.dur)} +` : ""} historia {fmt(dur)}
+              {project.outro ? ` + cierre ${fmt(project.outro.dur)}` : ""}.
+            </p>
+          )}
           <p className="mt-2 flex items-center gap-1 text-[11px] text-muted"><Film className="h-3 w-3" /> El video se genera en tu navegador y se descarga.</p>
         </div>
 

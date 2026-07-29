@@ -73,10 +73,19 @@ const audioLayerSchema = z.object({
   startSec: z.number(),
   loop: z.boolean(),
 });
+// Videos que se pegan antes/después al exportar. Como todo lo pesado, el archivo
+// vive en el navegador; aquí solo se guarda a cuál se refiere.
+const clipSchema = z.object({
+  assetId: z.string(),
+  name: z.string().max(200),
+  dur: z.number(),
+}).nullable();
 const dataSchema = z.object({
   scenes: z.array(sceneSchema).max(200),
   audioLayers: z.array(audioLayerSchema).max(30),
   narrationVolume: z.number(),
+  intro: clipSchema.optional(),
+  outro: clipSchema.optional(),
 });
 const saveSchema = z.object({
   id: z.string().optional(),
