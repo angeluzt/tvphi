@@ -1,7 +1,7 @@
 import {
   flatten, locate, lerpFrame, framePx, resolveFrames, moveProgress, overlayBox,
-  dialogueStarts, sfxStarts, loopSpan,
-  type StoryProject, type FlatShot, type PngOverlay, type Frame,
+  dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE,
+  type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
 } from "./model";
 import { getAsset, assetUrl } from "./store";
 import { Recorder } from "@/lib/studio/recorder";
@@ -22,6 +22,7 @@ export class StoryEngine {
   private dest: MediaStreamAudioDestinationNode | null = null;
   private keepAlive: ConstantSourceNode | null = null;
   private sources: AudioBufferSourceNode[] = [];
+  private extras: (() => void)[] = []; // apagar osciladores de los efectos
   // Ganancias vivas por clip, para que mover un volumen se oiga al momento.
   private gains = new Map<string, GainNode>();
   private audioStartCtx = 0;
@@ -39,6 +40,9 @@ export class StoryEngine {
   playhead = 0;
   onTime: ((t: number) => void) | null = null;
   onEnded: (() => void) | null = null;
+  // El motor es quien manda sobre si suena o no; la interfaz solo lo refleja.
+  onPlaying: ((v: boolean) => void) | null = null;
+  private starting = false; // evita programar el audio dos veces a la vez
 
   constructor() {
     this.canvas = document.createElement("canvas");
@@ -124,8 +128,102 @@ export class StoryEngine {
   // ---------------- audio ----------------
   private stopSources() {
     for (const s of this.sources) { try { s.stop(); } catch {} }
+    for (const fn of this.extras) { try { fn(); } catch {} }
     this.sources = [];
+    this.extras = [];
     this.gains.clear();
+  }
+
+  // Cadena de efecto para la voz. Devuelve por dónde entra y por dónde sale.
+  private voiceChain(effect: VoiceEffect): { input: AudioNode; output: AudioNode } {
+    const ctx = this.audioCtx!;
+    const input = ctx.createGain();
+    let node: AudioNode = input;
+
+    const filtro = (type: BiquadFilterType, freq: number, q?: number) => {
+      const f = ctx.createBiquadFilter();
+      f.type = type; f.frequency.value = freq;
+      if (q !== undefined) f.Q.value = q;
+      return f;
+    };
+    // Saturación suave. La curva se normaliza para que a tope valga 1: así el
+    // efecto ensucia la voz sin dispararle el volumen.
+    const distorsion = (cantidad: number, salida = 1) => {
+      const ws = ctx.createWaveShaper();
+      const n = 1024;
+      const grado = Math.PI / 180;
+      const norm = (Math.PI + cantidad) / ((3 + cantidad) * 20 * grado);
+      const curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = (i * 2) / n - 1;
+        curve[i] = (((3 + cantidad) * x * 20 * grado) / (Math.PI + cantidad * Math.abs(x))) * norm;
+      }
+      ws.curve = curve;
+      ws.oversample = "2x";
+      const g = ctx.createGain();
+      g.gain.value = salida;
+      ws.connect(g);
+      return { entrada: ws as AudioNode, salida: g as AudioNode };
+    };
+    type Tramo = AudioNode | { entrada: AudioNode; salida: AudioNode };
+    const encadenar = (...nodos: Tramo[]) => {
+      for (const t of nodos) {
+        const entrada = "entrada" in t ? t.entrada : t;
+        node.connect(entrada);
+        node = "salida" in t ? t.salida : t;
+      }
+    };
+
+    switch (effect) {
+      case "deep": // grave: la velocidad ya baja el tono; el filtro le quita brillo
+        encadenar(filtro("lowpass", 2600));
+        break;
+      case "demon": // muy grave y con distorsión
+        encadenar(distorsion(16, 0.55), filtro("lowpass", 1700));
+        break;
+      case "whisper": // sin graves y flojito
+        encadenar(filtro("highpass", 1300), filtro("peaking", 4000, 0.8));
+        { const g = ctx.createGain(); g.gain.value = 1.5; encadenar(g); }
+        break;
+      case "robot": { // modulación en anillo
+        const ring = ctx.createGain();
+        ring.gain.value = 0;
+        const osc = ctx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = 42;
+        const depth = ctx.createGain();
+        depth.gain.value = 1;
+        osc.connect(depth);
+        depth.connect(ring.gain);
+        osc.start();
+        this.extras.push(() => { try { osc.stop(); } catch {} });
+        encadenar(ring);
+        break;
+      }
+      case "cave": { // eco con realimentación, mezclado con el sonido seco
+        const mix = ctx.createGain();
+        const delay = ctx.createDelay(1);
+        delay.delayTime.value = 0.15;
+        const fb = ctx.createGain();
+        fb.gain.value = 0.36;
+        const wet = ctx.createGain();
+        wet.gain.value = 0.55;
+        node.connect(mix);
+        node.connect(delay);
+        delay.connect(fb);
+        fb.connect(delay);
+        delay.connect(wet);
+        wet.connect(mix);
+        node = mix;
+        break;
+      }
+      case "radio": // banda estrecha y saturada
+        encadenar(filtro("bandpass", 1700, 1.1), distorsion(6, 0.8));
+        break;
+      default:
+        break;
+    }
+    return { input, output: node };
   }
 
   // Vuelca los volúmenes actuales del proyecto sobre las ganancias ya sonando,
@@ -155,6 +253,8 @@ export class StoryEngine {
       key: string; t: number; audioId: string; gain: number; loop: boolean;
       until: number; // cuándo deja de sonar (los bucles se cortan a mano)
       changes?: { at: number; volume: number }[];
+      effect?: VoiceEffect; // solo la narración lleva efecto
+      rate?: number;
     }
     const events: Ev[] = [];
 
@@ -165,6 +265,7 @@ export class StoryEngine {
         events.push({
           key: `dlg:${d.id}`, t: f.start + dStarts[k], audioId: d.audioId,
           gain: this.project!.narrationVolume, loop: false, until: Infinity,
+          effect: d.effect ?? "none", rate: VOICE_RATE[d.effect ?? "none"] ?? 1,
         });
       });
       const sStarts = sfxStarts(f.shot);
@@ -193,18 +294,30 @@ export class StoryEngine {
     for (const ev of events) {
       const buf = this.buffers.get(ev.audioId);
       if (!buf) continue;
-      const endT = Math.min(ev.until, ev.loop ? Infinity : ev.t + buf.duration);
+      const rate = ev.rate ?? 1;
+      // Con efecto de tono el audio suena más lento o más rápido, así que ocupa
+      // más o menos tiempo del que dura el archivo.
+      const dur = buf.duration / rate;
+      const endT = Math.min(ev.until, ev.loop ? Infinity : ev.t + dur);
       if (endT <= fromT) continue;
       const src = ctx.createBufferSource();
       src.buffer = buf;
       src.loop = ev.loop;
+      if (rate !== 1) src.playbackRate.value = rate;
       const g = ctx.createGain();
       g.gain.value = ev.gain;
-      src.connect(g);
+      if (ev.effect && ev.effect !== "none") {
+        const chain = this.voiceChain(ev.effect);
+        src.connect(chain.input);
+        chain.output.connect(g);
+      } else {
+        src.connect(g);
+      }
       g.connect(this.dest!);
       g.connect(ctx.destination);
       const when = now + Math.max(0, ev.t - fromT);
-      const offset = Math.max(0, fromT - ev.t);
+      // El desfase se mide sobre el archivo, que va a otra velocidad.
+      const offset = Math.max(0, (fromT - ev.t) * rate);
       try {
         src.start(when, ev.loop ? offset % buf.duration : offset);
         // Cambios de volumen al entrar en tomas que lo pidan.
@@ -230,7 +343,7 @@ export class StoryEngine {
         const limit = Math.min(this.duration(), this.rangeEnd);
         if (this.playhead >= limit) {
           this.playhead = limit;
-          this.pause();
+          this.pause(); // avisa por onPlaying
           this.onTime?.(this.playhead);
           this.onEnded?.();
           this.render();
@@ -266,31 +379,42 @@ export class StoryEngine {
   }
 
   async play() {
-    if (!this.project || this.playing) return;
-    this.ensureAudio();
-    await this.audioCtx?.resume().catch(() => {});
-    const limit = Math.min(this.duration(), this.rangeEnd);
-    // Fuera del tramo (o al final) se vuelve al principio de lo que toque sonar.
-    if (this.playhead >= limit - 0.05 || this.playhead < this.rangeStart) {
-      this.playhead = this.rangeStart;
+    // `starting` es síncrono: sin él, dos llamadas seguidas (por ejemplo un seek
+    // y un play) programaban el audio dos veces y la voz se oía duplicada.
+    if (!this.project || this.playing || this.starting) return;
+    this.starting = true;
+    try {
+      this.ensureAudio();
+      await this.audioCtx?.resume().catch(() => {});
+      const limit = Math.min(this.duration(), this.rangeEnd);
+      // Fuera del tramo (o al final) se vuelve al principio de lo que toque sonar.
+      if (this.playhead >= limit - 0.05 || this.playhead < this.rangeStart) {
+        this.playhead = this.rangeStart;
+      }
+      this.stopSources(); // por si algo quedó sonando
+      this.scheduleAudio(this.playhead);
+      this.playing = true;
+      this.onPlaying?.(true);
+      this.start();
+    } finally {
+      this.starting = false;
     }
-    this.scheduleAudio(this.playhead);
-    this.playing = true;
-    this.start();
   }
   pause() {
+    const era = this.playing;
     this.playing = false;
     this.stopSources();
+    if (era) this.onPlaying?.(false);
   }
+  // Mover el punto de reproducción siempre para el sonido: así el botón nunca
+  // dice "pausa" mientras se sigue oyendo.
   seek(t: number) {
-    const was = this.playing;
     this.pause();
     const lo = this.rangeStart;
     const hi = Math.min(this.duration(), this.rangeEnd);
     this.playhead = Math.max(lo, Math.min(hi, t));
     this.onTime?.(this.playhead);
     this.render();
-    if (was) void this.play();
   }
 
   // Coloca el reproductor al principio de una toma concreta.
@@ -415,6 +539,7 @@ export class StoryEngine {
         this.playhead = 0;
         this.scheduleAudio(0);
         this.playing = true;
+        this.onPlaying?.(true);
         this.start();
         mr.start(1000);
         this.onEnded = () => setTimeout(finish, 200);

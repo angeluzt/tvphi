@@ -10,9 +10,9 @@ import { Slider } from "./slider";
 import { GapInput } from "./gap-input";
 import { LockToggle } from "./lock-toggle";
 import {
-  newDialogue, shotDur, dialogueStarts, sfxStarts,
+  newDialogue, shotDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop,
-  type TransitionKind, type OverlayTransition, type OverlayMotion,
+  type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect,
 } from "@/lib/story/model";
 
 // Panel de una sub-escena (toma): movimiento, duración, transición de entrada,
@@ -259,8 +259,20 @@ export function ShotEditor({
                   onChange={(v) => updDialogue(d.id, { gapSec: v })}
                   label={i === 0 ? "Pausa al empezar" : "Pausa antes"}
                 />
+                <label className="flex items-center gap-1 text-[11px] text-muted">
+                  Efecto
+                  <select
+                    className="input w-32 py-0.5 text-[11px]"
+                    value={d.effect}
+                    onChange={(e) => updDialogue(d.id, { effect: e.target.value as VoiceEffect })}
+                  >
+                    {VOICE_EFFECTS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+                  </select>
+                </label>
                 {d.audioId ? (
-                  <span className="text-[11px] text-muted">🔊 {d.dur.toFixed(1)}s · empieza en {dStarts[i].toFixed(1)}s</span>
+                  <span className="text-[11px] text-muted">
+                    🔊 {dialogueDur(d).toFixed(1)}s · empieza en {dStarts[i].toFixed(1)}s
+                  </span>
                 ) : (
                   <span className="text-[11px] text-muted">sin voz aún</span>
                 )}

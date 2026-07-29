@@ -40,11 +40,32 @@ export interface PresetMotion {
   distance: number;
 }
 
+// Efectos para la voz narrada. "none" la deja tal cual.
+export type VoiceEffect = "none" | "deep" | "demon" | "whisper" | "robot" | "cave" | "radio" | "high";
+
+// Los que cambian el tono lo hacen cambiando la velocidad, así que también
+// cambian lo que dura el audio: hay que tenerlo en cuenta en los tiempos.
+export const VOICE_RATE: Record<VoiceEffect, number> = {
+  none: 1, deep: 0.86, demon: 0.72, whisper: 1, robot: 1, cave: 1, radio: 1, high: 1.28,
+};
+
+export const VOICE_EFFECTS: { id: VoiceEffect; label: string }[] = [
+  { id: "none", label: "Normal" },
+  { id: "deep", label: "Grave" },
+  { id: "demon", label: "Demonio" },
+  { id: "whisper", label: "Susurro" },
+  { id: "robot", label: "Robot" },
+  { id: "cave", label: "Cueva (eco)" },
+  { id: "radio", label: "Radio / megáfono" },
+  { id: "high", label: "Agudo" },
+];
+
 export interface Dialogue {
   id: string;
   text: string; // texto oculto que narra la voz IA
   audioId?: string; // audio generado (IndexedDB)
   dur: number; // duración del audio (s), 0 si aún no se generó
+  effect: VoiceEffect;
   // Pausa antes de este diálogo, contada desde que acaba el anterior. Se usa una
   // pausa en vez de un instante absoluto para que el orden siga teniendo sentido
   // aunque la voz todavía no se haya generado (y por tanto no se sepa cuánto dura).
@@ -239,6 +260,12 @@ export function distanceRange(kind: MotionKind): { min: number; max: number } {
 // Duraciones y recorrido del tiempo
 // --------------------------------------------------------------------------
 
+// Lo que ocupa un diálogo ya con su efecto: los que cambian el tono lo hacen
+// cambiando la velocidad, y entonces el audio dura más o menos.
+export function dialogueDur(d: Dialogue) {
+  return (d.dur || 0) / (VOICE_RATE[d.effect] ?? 1);
+}
+
 // Instante en que arranca cada diálogo dentro de la toma. Se encadenan: cada uno
 // empieza tras su pausa, contada desde el final del anterior.
 export function dialogueStarts(s: Shot): number[] {
@@ -247,7 +274,7 @@ export function dialogueStarts(s: Shot): number[] {
   for (const d of s.dialogues) {
     t += Math.max(0, d.gapSec || 0);
     out.push(t);
-    t += d.dur || 0;
+    t += dialogueDur(d);
   }
   return out;
 }
@@ -274,7 +301,7 @@ export function shotDur(s: Shot) {
   if (!s.autoDuration) return Math.max(0.3, s.durationSec);
   const starts = dialogueStarts(s);
   let end = 0;
-  s.dialogues.forEach((d, i) => { end = Math.max(end, starts[i] + (d.dur || 0)); });
+  s.dialogues.forEach((d, i) => { end = Math.max(end, starts[i] + dialogueDur(d)); });
   return Math.max(MIN_SHOT, end + (end > 0 ? TAIL : 0)) + Math.max(0, s.holdSec);
 }
 
@@ -449,7 +476,7 @@ export function newScene(imageId: string, imgW: number, imgH: number): StoryScen
 }
 
 export function newDialogue(gapSec = 0.3): Dialogue {
-  return { id: nanoid(6), text: "", dur: 0, gapSec };
+  return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none" };
 }
 
 export function newSfx(audioId: string, name: string, dur: number): ShotSfx {
@@ -554,7 +581,7 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     to: hasFrames ? s.to : base.to,
     transition: s.transition ?? base.transition,
     transitionDur: s.transitionDur ?? base.transitionDur,
-    dialogues: startsToGaps<Dialogue>(s.dialogues ?? []),
+    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none" }))),
     sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
@@ -594,7 +621,7 @@ export function migrateProject(raw: any): StoryProject {
       ...base,
       transition: s.transition ?? "fade",
       dialogues: s.narration
-        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0 }]
+        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect }]
         : [],
       overlays: (s.overlays ?? []).map(normalizeOverlay),
     };

@@ -97,6 +97,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     engineRef.current = eng;
     eng.onTime = (t) => setPlayhead(t);
     eng.onEnded = () => setPlaying(false);
+    // El botón refleja el estado real del motor, nunca una suposición.
+    eng.onPlaying = (v) => setPlaying(v);
     if (previewRef.current) {
       eng.canvas.className = "h-full w-full object-contain";
       previewRef.current.appendChild(eng.canvas);
@@ -154,18 +156,16 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // ---------- reproducción ----------
   async function togglePlay() {
     const eng = engineRef.current!;
-    if (playing) { eng.pause(); setPlaying(false); }
-    else { await eng.play(); setPlaying(true); }
+    if (playing) eng.pause();
+    else await eng.play();
   }
   function seek(t: number) {
     engineRef.current?.seek(t);
-    setPlaying(false);
   }
   function focusShot(shotId: string) {
     setSelShot(shotId);
     setSelOverlay(null);
     engineRef.current?.seekToShot(shotId);
-    setPlaying(false);
   }
 
   // Ver solo un tramo (una escena o una toma) en la miniatura flotante, sin
@@ -174,14 +174,15 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const eng = engineRef.current!;
     if (section && section.start === start && section.end === end && playing) {
       eng.pause();
-      setPlaying(false);
       return;
     }
+    // Cambiar de tramo con otro sonando: se corta el anterior antes de arrancar,
+    // si no se solapaban las dos mezclas y la voz salía deformada.
+    eng.pause();
     setSection({ start, end, label, ...ids });
     eng.setRange(start, end);
     eng.seek(start);
     await eng.play();
-    setPlaying(true);
   }
   function playScene(sc: StoryScene, i: number) {
     const r = sceneRange(flat, sc.id);
@@ -195,7 +196,6 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const eng = engineRef.current!;
     eng.pause();
     eng.clearRange();
-    setPlaying(false);
     setSection(null);
   }
 
@@ -442,7 +442,6 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     if (!project.scenes.length) { setStatus("Añade al menos una imagen."); return; }
     const eng = engineRef.current!;
     setExporting(true);
-    setPlaying(false);
     setProgress(0);
     setStatus(null);
     try {

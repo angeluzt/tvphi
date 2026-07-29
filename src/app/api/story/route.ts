@@ -25,6 +25,7 @@ const dialogueSchema = z.object({
   audioId: z.string().optional(),
   dur: z.number(),
   gapSec: z.number(),
+  effect: z.enum(["none", "deep", "demon", "whisper", "robot", "cave", "radio", "high"]),
 });
 const shotSfxSchema = z.object({
   id: z.string(),
