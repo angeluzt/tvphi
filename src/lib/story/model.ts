@@ -30,8 +30,9 @@ export interface Frame {
 export type MotionKind = "fixed" | "left" | "right" | "up" | "down" | "in" | "out";
 export type MotionMode = "preset" | "free";
 
-// Movimiento predefinido: un centro, un tamaño y una separación entre los dos
-// puntos. La separación puede ser negativa para invertir el sentido.
+// Movimiento predefinido: un centro, un tamaño y cuánto recorre entre el punto 1
+// y el 2. El sentido lo marca el tipo (izquierda, abajo, acercar…), así que el
+// recorrido nunca es negativo.
 export interface PresetMotion {
   kind: MotionKind;
   cx: number;
@@ -305,10 +306,40 @@ export function resolveFrames(shot: Shot, imgW: number, imgH: number): { from: F
 }
 
 // Rango recomendado del deslizador de separación según el tipo de movimiento.
+// Cuánto recorre el movimiento. Nunca negativo: el sentido lo deciden los
+// botones (izquierda/derecha, subir/bajar, acercar/alejar), así que un valor
+// negativo solo era otra forma de decir lo que ya dice el botón contrario.
 export function distanceRange(kind: MotionKind): { min: number; max: number } {
-  if (kind === "in" || kind === "out") return { min: -0.8, max: 0.8 };
+  if (kind === "in" || kind === "out") return { min: 0, max: 0.8 };
   if (kind === "fixed") return { min: 0, max: 0 };
-  return { min: -0.6, max: 0.6 };
+  return { min: 0, max: 0.6 };
+}
+
+// El botón contrario: el que hace el mismo movimiento al revés.
+const OPUESTO: Record<MotionKind, MotionKind> = {
+  fixed: "fixed", left: "right", right: "left", up: "down", down: "up", in: "out", out: "in",
+};
+
+// Convierte los movimientos guardados con separación negativa (cuando eso
+// existía) a su equivalente con el botón contrario, para que se sigan viendo
+// EXACTAMENTE igual:
+//   · en los desplazamientos basta con dar la vuelta al botón;
+//   · en acercar/alejar hay que rehacer también las cuentas, porque encoger un
+//     k% y agrandar un k% no son la misma proporción.
+export function normalizePreset(p: PresetMotion, imgW: number, imgH: number): PresetMotion {
+  if (!(p.distance < 0)) return p;
+  const k = -p.distance;
+  const kind = OPUESTO[p.kind] ?? p.kind;
+  if (p.kind !== "in" && p.kind !== "out") return { ...p, kind, distance: k };
+
+  // En acercar/alejar no basta con dar la vuelta: encoger un k% y agrandar un k%
+  // no son la misma proporción, y además el encuadre grande pudo quedar recortado
+  // por el borde de la imagen. Se parte de los tamaños que DE VERDAD salían.
+  const { from, to } = presetFrames(p, imgW, imgH);
+  if (!(from.w > 0) || !(to.w > 0)) return { ...p, kind, distance: k };
+  return to.w < from.w
+    ? { ...p, kind: "in", w: from.w, distance: 1 - to.w / from.w }
+    : { ...p, kind: "out", w: to.w, distance: 1 - from.w / to.w };
 }
 
 // --------------------------------------------------------------------------
@@ -692,7 +723,7 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     holdSec: s.holdSec ?? 0,
     // Sin modo guardado: los proyectos antiguos llevaban los dos encuadres a mano.
     motionMode: s.motionMode ?? (hasFrames ? "free" : "preset"),
-    preset: s.preset ?? defaultPreset(imgW, imgH),
+    preset: normalizePreset(s.preset ?? defaultPreset(imgW, imgH), imgW, imgH),
     from: hasFrames ? s.from : base.from,
     to: hasFrames ? s.to : base.to,
     transition: s.transition ?? base.transition,
