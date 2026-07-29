@@ -43,8 +43,16 @@ const audioOverrideSchema = z.object({
   stop: z.boolean(),
   volume: z.number().nullable(),
 });
+// Encuadre guardado para un formato que no es el activo (horizontal/vertical…).
+const framingSchema = z.object({
+  motionMode: z.enum(["preset", "free"]),
+  preset: presetSchema,
+  from: frameSchema,
+  to: frameSchema,
+});
 const shotSchema = z.object({
   id: z.string(),
+  altFrames: z.record(z.string(), framingSchema).optional(),
   durationSec: z.number(),
   autoDuration: z.boolean(),
   holdSec: z.number(),
@@ -83,6 +91,7 @@ const clipSchema = z.object({
   dur: z.number(),
 }).nullable();
 const dataSchema = z.object({
+  aspect: z.enum(["16:9", "9:16", "1:1"]).optional(),
   scenes: z.array(sceneSchema).max(200),
   audioLayers: z.array(audioLayerSchema).max(30),
   narrationVolume: z.number(),

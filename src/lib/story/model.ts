@@ -124,6 +124,19 @@ export interface Shot {
   sfx: ShotSfx[];
   audioOverrides: AudioOverride[]; // qué hacer con los bucles que vienen de arriba
   overlays: PngOverlay[];
+  // Encuadres de los OTROS formatos. Lo de arriba (motionMode/preset/from/to) es
+  // el encuadre del formato activo; al cambiar de formato se guarda aquí el que
+  // se deja y se recupera el que ya se hubiera ajustado, para poder tener el
+  // mismo capítulo en horizontal y en vertical sin rehacer los encuadres.
+  altFrames?: Partial<Record<Aspect, ShotFraming>>;
+}
+
+// Lo que define cómo se recorre la imagen en una toma.
+export interface ShotFraming {
+  motionMode: MotionMode;
+  preset: PresetMotion;
+  from: Frame;
+  to: Frame;
 }
 
 export interface StoryScene {
@@ -153,6 +166,7 @@ export interface ClipVideo {
 }
 
 export interface StoryProject {
+  aspect: Aspect; // forma del video: horizontal, vertical o cuadrado
   scenes: StoryScene[];
   audioLayers: AudioLayer[]; // música/efectos globales de todo el video
   narrationVolume: number; // 0..1
@@ -163,22 +177,50 @@ export interface StoryProject {
 export const MIN_SHOT = 2; // duración mínima de una toma sin diálogos
 export const TAIL = 0.4; // margen tras el último diálogo
 export const DEFAULT_TRANS_DUR = 0.6;
-export const TARGET_ASPECT = 16 / 9;
+
+// --------------------------------------------------------------------------
+// Formato del video
+// --------------------------------------------------------------------------
+
+export type Aspect = "16:9" | "9:16" | "1:1";
+
+export const ASPECTS: { id: Aspect; label: string; corto: string; ratio: number; w: number; h: number }[] = [
+  { id: "16:9", label: "Horizontal 16:9", corto: "YouTube, TV", ratio: 16 / 9, w: 1280, h: 720 },
+  { id: "9:16", label: "Vertical 9:16", corto: "Shorts, TikTok, Reels", ratio: 9 / 16, w: 720, h: 1280 },
+  { id: "1:1", label: "Cuadrado 1:1", corto: "Feed de Instagram", ratio: 1, w: 720, h: 720 },
+];
+
+export function aspectInfo(a: Aspect) {
+  return ASPECTS.find((x) => x.id === a) ?? ASPECTS[0];
+}
+
+// El formato afecta a TODOS los encuadres (el alto de la ventana se deduce del
+// ancho para que cuadre con el video). Como solo se edita un proyecto a la vez,
+// se guarda aquí en vez de arrastrarlo por cada llamada; quien carga o cambia el
+// proyecto lo pone al día con setProjectAspect.
+let aspectoActual = 16 / 9;
+export function setProjectAspect(a: Aspect) {
+  aspectoActual = aspectInfo(a).ratio;
+}
+function targetAspect() {
+  return aspectoActual;
+}
 
 // --------------------------------------------------------------------------
 // Encuadres
 // --------------------------------------------------------------------------
 
-// Alto (0..1 sobre la imagen) que corresponde a un ancho dado para quedar en 16:9.
+// Alto (0..1 sobre la imagen) que corresponde a un ancho dado para que la
+// ventana tenga la forma del video (16:9, 9:16 o cuadrado).
 export function frameH(w: number, imgW: number, imgH: number) {
   if (!imgW || !imgH) return w;
-  return (w * imgW) / (TARGET_ASPECT * imgH);
+  return (w * imgW) / (targetAspect() * imgH);
 }
 
-// Ancho máximo que cabe en la imagen manteniendo 16:9.
+// Ancho máximo que cabe en la imagen manteniendo la forma del video.
 export function maxFrameW(imgW: number, imgH: number) {
   if (!imgW || !imgH) return 1;
-  return Math.min(1, (imgH * TARGET_ASPECT) / imgW);
+  return Math.min(1, (imgH * targetAspect()) / imgW);
 }
 
 // Encuadre que abarca todo lo posible de la imagen (equivalente a "cover").
@@ -231,7 +273,7 @@ export function presetMaxW(kind: MotionKind, distance: number, imgW: number, img
   if (kind === "up" || kind === "down") {
     // El alto tiene que dejar hueco: h + d <= 1.
     const hMax = Math.max(0.05, 1 - d);
-    const wForH = imgW ? (hMax * TARGET_ASPECT * imgH) / imgW : max;
+    const wForH = imgW ? (hMax * targetAspect() * imgH) / imgW : max;
     return Math.max(0.05, Math.min(max, wForH));
   }
   return max;
@@ -506,6 +548,45 @@ export function newOverlay(imageId: string): PngOverlay {
   };
 }
 
+// Cambia el formato del video conservando el encuadre de cada formato: el que
+// se deja se guarda, y si ya se había ajustado uno para el formato nuevo se
+// recupera tal cual. La primera vez que se estrena un formato se parte del
+// encuadre actual, ajustado para que quepa en la nueva forma.
+export function switchAspect(p: StoryProject, next: Aspect): StoryProject {
+  const prev = p.aspect;
+  if (prev === next) return p;
+  setProjectAspect(next); // los ajustes de abajo se hacen ya con la forma nueva
+  const scenes = p.scenes.map((sc) => ({
+    ...sc,
+    shots: sc.shots.map((sh) => {
+      const actual: ShotFraming = {
+        motionMode: sh.motionMode, preset: sh.preset, from: sh.from, to: sh.to,
+      };
+      const alt: Partial<Record<Aspect, ShotFraming>> = { ...(sh.altFrames ?? {}) };
+      alt[prev] = actual;
+      const guardado = alt[next];
+      delete alt[next];
+      const nuevo: ShotFraming = guardado ?? {
+        motionMode: actual.motionMode,
+        preset: {
+          ...actual.preset,
+          w: Math.min(actual.preset.w, presetMaxW(actual.preset.kind, actual.preset.distance, sc.imgW, sc.imgH)),
+        },
+        from: clampFrame(actual.from, sc.imgW, sc.imgH),
+        to: clampFrame(actual.to, sc.imgW, sc.imgH),
+      };
+      return { ...sh, ...nuevo, altFrames: alt };
+    }),
+  }));
+  return { ...p, aspect: next, scenes };
+}
+
+// Cuántas tomas tienen ya un encuadre propio guardado para un formato.
+export function framedFor(p: StoryProject, a: Aspect) {
+  if (a === p.aspect) return p.scenes.reduce((n, sc) => n + sc.shots.length, 0);
+  return p.scenes.reduce((n, sc) => n + sc.shots.filter((sh) => sh.altFrames?.[a]).length, 0);
+}
+
 // Todos los archivos (imágenes, audios, videos) que usa un proyecto. Sirve para
 // poder limpiarlos del navegador cuando se borra el proyecto.
 export function projectAssets(p: StoryProject): string[] {
@@ -525,7 +606,7 @@ export function projectAssets(p: StoryProject): string[] {
 }
 
 export function emptyProject(): StoryProject {
-  return { scenes: [], audioLayers: [], narrationVolume: 1, intro: null, outro: null };
+  return { aspect: "16:9", scenes: [], audioLayers: [], narrationVolume: 1, intro: null, outro: null };
 }
 
 // --------------------------------------------------------------------------
@@ -596,6 +677,16 @@ function startsToGaps<T extends { startSec?: number; gapSec?: number; dur?: numb
   });
 }
 
+function normalizeFraming(f: any, imgW: number, imgH: number): ShotFraming | null {
+  if (!f || !f.preset || !f.from || !f.to) return null;
+  return {
+    motionMode: f.motionMode === "free" ? "free" : "preset",
+    preset: { ...defaultPreset(imgW, imgH), ...f.preset },
+    from: f.from,
+    to: f.to,
+  };
+}
+
 function normalizeShot(s: any, imgW: number, imgH: number): Shot {
   const base = newShot(imgW, imgH);
   const hasFrames = s.from && s.to && typeof s.from.cx === "number";
@@ -616,7 +707,18 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
+    altFrames: normalizeAltFrames(s.altFrames, imgW, imgH),
   };
+}
+
+function normalizeAltFrames(raw: any, imgW: number, imgH: number): Shot["altFrames"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Partial<Record<Aspect, ShotFraming>> = {};
+  for (const a of ASPECTS) {
+    const f = normalizeFraming(raw[a.id], imgW, imgH);
+    if (f) out[a.id] = f;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 export function migrateProject(raw: any): StoryProject {
@@ -625,6 +727,7 @@ export function migrateProject(raw: any): StoryProject {
   // Modelo actual o intermedio: escenas con tomas.
   if (Array.isArray(raw.scenes)) {
     return {
+      aspect: normalizeAspect(raw.aspect),
       scenes: raw.scenes.map((sc: any) => ({
         id: sc.id ?? nanoid(6),
         imageId: sc.imageId,
@@ -661,12 +764,17 @@ export function migrateProject(raw: any): StoryProject {
     return { id: s.id ?? nanoid(6), imageId: s.imageId, imgW, imgH, shots: [shot] };
   });
   return {
+    aspect: normalizeAspect(raw.aspect),
     scenes,
     audioLayers: raw.audioLayers ?? [],
     narrationVolume: typeof raw.narrationVolume === "number" ? raw.narrationVolume : 1,
     intro: normalizeClip(raw.intro),
     outro: normalizeClip(raw.outro),
   };
+}
+
+function normalizeAspect(a: any): Aspect {
+  return ASPECTS.some((x) => x.id === a) ? (a as Aspect) : "16:9";
 }
 
 function normalizeClip(c: any): ClipVideo | null {

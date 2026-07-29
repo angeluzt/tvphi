@@ -16,6 +16,7 @@ import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
+  ASPECTS, aspectInfo, setProjectAspect, switchAspect, framedFor, type Aspect,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
@@ -23,6 +24,16 @@ import { convert, remux } from "@/lib/editor/ffmpeg";
 import { exportDialogues, applyDialogues } from "@/lib/story/dialogues";
 
 interface ProjMeta { id: string; name: string; updatedAt: string }
+
+// Rectángulo con la forma real del video, para reconocerlo de un vistazo.
+function FormaVideo({ ratio }: { ratio: number }) {
+  return (
+    <span
+      className="block shrink-0 rounded-[3px] border-2 border-current"
+      style={{ width: ratio >= 1 ? 24 : 24 * ratio, height: ratio >= 1 ? 24 / ratio : 24 }}
+    />
+  );
+}
 
 function fmt(s: number) {
   if (!isFinite(s)) s = 0;
@@ -64,6 +75,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [section, setSection] = useState<{ start: number; end: number; label: string; shotId?: string; sceneId?: string } | null>(null);
   // Escena cuya posición se está cambiando escribiendo el número.
   const [movingScene, setMovingScene] = useState<{ id: string; value: string } | null>(null);
+  // Al crear un proyecto se elige primero la forma del video.
+  const [creando, setCreando] = useState(false);
 
   // Escenas y tomas bloqueadas para no cambiarlas por accidente. Viven en el
   // navegador, así que se recuerdan aunque no se guarde el proyecto.
@@ -130,6 +143,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     window.addEventListener("beforeunload", h);
     return () => window.removeEventListener("beforeunload", h);
   }, [dirty, project.scenes.length, voiceJobs]);
+
+  // El formato manda sobre todos los encuadres; se pone al día en cada render
+  // para que el editor y el motor dibujen siempre con la misma forma.
+  const forma = aspectInfo(project.aspect);
+  setProjectAspect(project.aspect);
+  const totalShots = project.scenes.reduce((n, sc) => n + sc.shots.length, 0);
 
   const pendientes = Object.keys(voiceJobs).length;
   // Diálogos cuyo texto cambió después de generar la voz.
@@ -547,16 +566,43 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setBusy(null);
   }
 
+  // Un proyecto nuevo empieza eligiendo la forma del video: cada historia se
+  // hace para un sitio (YouTube, Shorts…) y se trabaja con esa forma desde el
+  // primer encuadre, que es lo que evita rehacerlos después.
   function newProject() {
     if (dirty && !confirm("Tienes cambios sin guardar. ¿Empezar un proyecto nuevo?")) return;
-    setProject(emptyProject());
+    setCreando(true);
+  }
+  function crearProyecto(a: Aspect) {
+    setProjectAspect(a);
+    setProject({ ...emptyProject(), aspect: a });
     setProjectId(null);
     setName("Mi historia");
     setOpenScene(null);
     setSelShot(null);
     setSelOverlay(null);
+    setSection(null);
     setDirty(false);
+    setCreando(false);
     seek(0);
+    setStatus(`Proyecto nuevo en ${aspectInfo(a).label} (${aspectInfo(a).w}×${aspectInfo(a).h})`);
+  }
+
+  // ---------- formato del video ----------
+
+  // Al pasar de horizontal a vertical (o al revés) la ventana que recorre cada
+  // imagen cambia de forma, así que los encuadres guardados se reajustan para
+  // que sigan cabiendo. Se conserva el centro de cada uno.
+  function cambiarFormato(a: Aspect) {
+    if (a === project.aspect) return;
+    mut((p) => switchAspect(p, a));
+    const info = aspectInfo(a);
+    const yaHechas = framedFor(project, a);
+    setStatus(
+      totalShots && yaHechas === totalShots
+        ? `${info.label} · se recuperaron tus encuadres de este formato`
+        : `${info.label} · ${info.w}×${info.h} · revisa los encuadres, la imagen se ve de otra forma`,
+    );
   }
 
   // ---------- exportar ----------
@@ -612,7 +658,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             stickers y ver el encuadre mientras se edita una toma larga. */}
         <div className="card p-3 lg:sticky lg:top-16 lg:z-20">
           {/* Se limita la altura para que, al quedarse fija, deje sitio al editor. */}
-          <div className="relative mx-auto aspect-video w-full max-w-[calc(42vh*16/9)] overflow-hidden rounded-2xl border border-border bg-black">
+          <div
+            className="relative mx-auto w-full overflow-hidden rounded-2xl border border-border bg-black"
+            style={{ aspectRatio: `${forma.w} / ${forma.h}`, maxWidth: `calc(42vh * ${forma.ratio})` }}
+          >
             <div ref={previewRef} className="absolute inset-0" />
             {curOverlay && overlayVisible && (
               <>
@@ -865,6 +914,56 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               </div>
             </div>
           )}
+          {creando && (
+            <div className="mt-3 rounded-xl border border-brand/60 bg-brand/5 p-2">
+              <p className="text-xs font-medium text-fg">¿Cómo será este video?</p>
+              <p className="mt-0.5 text-[11px] text-muted">
+                Se elige ahora porque los encuadres se hacen para esta forma.
+              </p>
+              <div className="mt-2 grid grid-cols-3 gap-1">
+                {ASPECTS.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => crearProyecto(a.id)}
+                    title={`${a.label} · ${a.corto} · ${a.w}×${a.h}`}
+                    className="flex flex-col items-center gap-1 rounded-lg border border-border px-1 py-2 text-[10px] leading-tight text-muted hover:border-brand hover:bg-brand/10 hover:text-brand"
+                  >
+                    <FormaVideo ratio={a.ratio} />
+                    <span className="font-medium">{a.id}</span>
+                    <span className="text-[9px]">{a.corto.split(",")[0]}</span>
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setCreando(false)} className="btn-ghost mt-2 w-full text-[11px]">
+                Cancelar
+              </button>
+            </div>
+          )}
+
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-border px-2 py-1.5">
+            <FormaVideo ratio={forma.ratio} />
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted">
+              <strong className="text-fg">{forma.label}</strong> · {forma.w}×{forma.h}
+            </span>
+            <select
+              className="input w-auto shrink-0 py-0.5 text-[11px]"
+              value={project.aspect}
+              disabled={exporting}
+              onChange={(e) => cambiarFormato(e.target.value as Aspect)}
+              aria-label="Cambiar el formato del video"
+            >
+              {ASPECTS.map((a) => (
+                <option key={a.id} value={a.id}>{a.id} · {a.corto}</option>
+              ))}
+            </select>
+          </div>
+          {totalShots > 0 && (
+            <p className="mt-1 text-[11px] text-muted">
+              Si lo cambias, cada formato recuerda sus propios encuadres: puedes volver al
+              anterior sin perder nada.
+            </p>
+          )}
+
           <p className="mt-2 text-[11px] text-muted">
             Se guardan los textos y ajustes. Las imágenes/audios se quedan en este navegador.
           </p>
@@ -1007,6 +1106,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
         <div className="card p-3">
           <span className="label">Exportar</span>
+          <p className="mt-1 text-[11px] text-muted">
+            Saldrá en <strong className="text-fg">{forma.label}</strong> ({forma.w}×{forma.h}).
+            El formato se cambia arriba, en Proyecto.
+          </p>
           <div className="mt-2 flex gap-2">
             <select value={format} onChange={(e) => setFormat(e.target.value as any)} disabled={exporting} className="input">
               <option value="webm">WebM</option>
@@ -1055,7 +1158,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div ref={floatRef} className="relative aspect-video overflow-hidden rounded-xl bg-black" />
+          <div
+            ref={floatRef}
+            className="relative mx-auto w-full overflow-hidden rounded-xl bg-black"
+            style={{ aspectRatio: `${forma.w} / ${forma.h}`, maxWidth: `calc(46vh * ${forma.ratio})` }}
+          />
           <div className="mt-2 flex items-center gap-2 px-1">
             <button onClick={togglePlay} className="btn-brand py-1">
               {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
