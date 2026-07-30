@@ -6,6 +6,7 @@ import {
   type ClipVideo,
 } from "./model";
 import { VfxScene, type VfxInput } from "./vfx";
+import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
 import { Recorder } from "@/lib/studio/recorder";
 
@@ -31,6 +32,10 @@ export class StoryEngine {
 
   private images = new Map<string, HTMLImageElement>();
   private buffers = new Map<string, AudioBuffer>();
+  // Voces ya estiradas para una velocidad/tono concretos. Estirar cuesta unos
+  // milisegundos, así que se guarda el resultado: mientras no se toquen las
+  // barras, no se vuelve a calcular.
+  private estirados = new Map<string, AudioBuffer>();
   // Stickers animados (GIF) ya descompuestos en fotogramas: el lienzo solo sabe
   // dibujar imágenes quietas, así que hay que elegir el fotograma a mano.
   private anims = new Map<string, { frames: ImageBitmap[]; ends: number[]; total: number }>();
@@ -334,6 +339,8 @@ export class StoryEngine {
       changes?: { at: number; volume: number }[];
       effect?: VoiceEffect; // solo la narración lleva efecto
       rate?: number;
+      // Cuánto se estira el audio antes de sonar (1 = tal cual).
+      alpha?: number;
     }
     const events: Ev[] = [];
 
@@ -341,10 +348,19 @@ export class StoryEngine {
       const dStarts = dialogueStarts(f.shot);
       f.shot.dialogues.forEach((d, k) => {
         if (!d.audioId) return;
+        // Velocidad y tono van por separado, y para eso hay que combinar dos
+        // cosas: estirar el audio (que cambia la duración sin tocar el tono) y
+        // reproducirlo más rápido o más lento (que cambia las dos). Estirando
+        // por tono/velocidad y reproduciendo a "tono", cada barra acaba
+        // mandando solo sobre lo suyo. Ver stretch.ts.
+        const efecto = d.effect ?? "none";
+        const vel = d.speed || 1;
+        const tono = d.pitch || 1;
+        const rate = (VOICE_RATE[efecto] ?? 1) * tono;
         events.push({
           key: `dlg:${d.id}`, t: f.start + dStarts[k], audioId: d.audioId,
           gain: this.project!.narrationVolume, loop: false, until: Infinity,
-          effect: d.effect ?? "none", rate: VOICE_RATE[d.effect ?? "none"] ?? 1,
+          effect: efecto, rate, alpha: tono / vel,
         });
       });
       const sStarts = sfxStarts(f.shot);
@@ -383,7 +399,7 @@ export class StoryEngine {
     }
 
     for (const ev of events) {
-      const buf = this.buffers.get(ev.audioId);
+      const buf = this.estirar(ev.audioId, ev.alpha ?? 1);
       if (!buf) continue;
       const rate = ev.rate ?? 1;
       // Con efecto de tono el audio suena más lento o más rápido, así que ocupa
@@ -420,6 +436,26 @@ export class StoryEngine {
         this.sources.push(src);
         this.gains.set(ev.key, g);
       } catch {}
+    }
+  }
+
+  // Devuelve el audio ya estirado para esa velocidad/tono, guardándolo para no
+  // repetir la cuenta. Con factor 1 se usa el original tal cual.
+  private estirar(audioId: string, alpha: number): AudioBuffer | undefined {
+    const buf = this.buffers.get(audioId);
+    if (!buf || Math.abs(alpha - 1) < 0.005) return buf;
+    const clave = `${audioId}:${alpha.toFixed(3)}`;
+    const ya = this.estirados.get(clave);
+    if (ya) return ya;
+    this.ensureAudio();
+    try {
+      const out = stretchBuffer(this.audioCtx!, buf, alpha);
+      // No se guardan mil versiones mientras se arrastra una barra.
+      if (this.estirados.size > 60) this.estirados.clear();
+      this.estirados.set(clave, out);
+      return out;
+    } catch {
+      return buf;
     }
   }
 
@@ -620,7 +656,7 @@ export class StoryEngine {
     const entradas: VfxInput[] = capas.map((v) => {
       const w = vfxWindow(v, f.dur);
       return {
-        id: v.id, kind: v.kind, x: v.x, y: v.y, x2: v.x2, y2: v.y2,
+        id: v.id, kind: v.kind, nodes: v.nodes ?? [],
         colorHex: v.colorHex, params: v.params, start: w.start, end: w.end,
       };
     });

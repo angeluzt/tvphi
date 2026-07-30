@@ -4,8 +4,8 @@ import { Sparkles, Trash2, Copy, Plus } from "lucide-react";
 import { nanoid } from "nanoid";
 import { Slider } from "./slider";
 import { NumberInput } from "./number-input";
-import { VFX, vfxSpec, vfxDefaults, type VfxKind } from "@/lib/story/vfx";
-import { newVfx, vfxWindow, type VfxLayer } from "@/lib/story/model";
+import { VFX, vfxSpec, vfxDefaults, SHAPE_LABEL, type VfxKind, type VfxShape } from "@/lib/story/vfx";
+import { newVfx, vfxWindow, defaultNode, type VfxLayer } from "@/lib/story/model";
 
 // Panel de efectos (partículas) de una toma: lluvia, fuego, explosiones…
 //
@@ -36,17 +36,31 @@ export function VfxEditor({
     onSelect(nuevo.id);
   }
   function duplicar(v: VfxLayer) {
-    const copia = { ...v, id: nanoid(6), params: { ...v.params } };
+    const copia = { ...v, id: nanoid(6), params: { ...v.params }, nodes: v.nodes.map((n) => ({ ...n })) };
     const i = vfx.findIndex((x) => x.id === v.id);
     const lista = [...vfx];
     lista.splice(i + 1, 0, copia);
     onChange(lista);
     onSelect(copia.id);
   }
-  // Cambiar de efecto conserva el sitio, pero los ajustes son otros.
+  // Cambiar de efecto: los ajustes son otros, y la forma puede no valer para
+  // el nuevo (una explosión no se dibuja a mano alzada).
   function cambiarTipo(v: VfxLayer, kind: VfxKind) {
     const spec = vfxSpec(kind);
-    upd(v.id, { kind, params: vfxDefaults(kind), colorHex: spec.color ?? v.colorHex });
+    const forma = spec.shapes.includes(v.shape) ? v.shape : spec.shapes[0];
+    upd(v.id, {
+      kind, shape: forma,
+      nodes: forma === v.shape ? v.nodes : (forma === "libre" ? [] : [defaultNode(forma)]),
+      auto: forma === v.shape ? v.auto : true,
+      params: vfxDefaults(kind),
+      colorHex: spec.color ?? v.colorHex,
+    });
+  }
+  // Al cambiar de forma se parte de un sitio razonable, salvo a mano alzada,
+  // que empieza en blanco porque lo suyo es dibujarla.
+  function cambiarForma(v: VfxLayer, shape: VfxShape) {
+    if (shape === v.shape) return;
+    upd(v.id, { shape, nodes: shape === "libre" ? [] : [defaultNode(shape)], auto: true });
   }
 
   return (
@@ -165,24 +179,55 @@ export function VfxEditor({
                     </p>
                   </div>
 
-                  {/* Dónde */}
+                  {/* Dónde: la forma y los sitios. Se dibujan encima de la
+                      previsualización, que es lo cómodo; aquí solo se listan
+                      para poder borrarlos y ver cuántos hay. */}
                   <div className="rounded-lg border border-border/60 p-2">
-                    <span className="text-[11px] text-muted">
-                      {spec.shape === "punto" ? "Dónde salta"
-                        : spec.shape === "franja" ? "Por dónde entra (de un lado a otro)"
-                        : "De dónde a dónde"}
-                    </span>
-                    <Slider label="X" value={v.x} min={-0.2} max={1.2} step={0.005}
-                      onChange={(n) => upd(v.id, spec.shape === "punto" ? { x: n, x2: n } : { x: n })} format={pct} />
-                    <Slider label="Y" value={v.y} min={-0.2} max={1.2} step={0.005}
-                      onChange={(n) => upd(v.id, spec.shape === "punto" ? { y: n, y2: n } : { y: n })} format={pct} />
-                    {spec.shape !== "punto" && (
-                      <>
-                        <Slider label="X final" value={v.x2} min={-0.2} max={1.2} step={0.005}
-                          onChange={(n) => upd(v.id, { x2: n })} format={pct} />
-                        <Slider label="Y final" value={v.y2} min={-0.2} max={1.2} step={0.005}
-                          onChange={(n) => upd(v.id, { y2: n })} format={pct} />
-                      </>
+                    <label className="block space-y-0.5 text-[11px]">
+                      <span className="text-muted">Cómo se coloca</span>
+                      <select
+                        className="input py-0.5 text-xs"
+                        value={v.shape}
+                        onChange={(e) => cambiarForma(v, e.target.value as VfxShape)}
+                      >
+                        {spec.shapes.map((f) => (
+                          <option key={f} value={f}>{SHAPE_LABEL[f]}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className="mt-1 text-[10px] text-muted/80">
+                      {v.shape === "arriba"
+                        ? "Entra por todo lo alto del cuadro, como si cayera del cielo."
+                        : v.shape === "punto"
+                          ? "Toca la previsualización para ir poniendo sitios. Puedes poner varios."
+                          : v.shape === "linea"
+                            ? "Arrastra sobre la previsualización para trazar una línea. Puedes trazar varias."
+                            : "Dibuja sobre la previsualización con el dedo o el ratón."}
+                    </p>
+                    {v.shape !== "arriba" && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] text-muted">
+                          {v.nodes.length === 0
+                            ? "Todavía no has puesto ninguno"
+                            : `${v.nodes.length} ${v.nodes.length === 1 ? "sitio" : "sitios"}`}
+                        </span>
+                        {v.nodes.length > 0 && (
+                          <button
+                            onClick={() => upd(v.id, { nodes: v.nodes.slice(0, -1), auto: false })}
+                            className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2"
+                          >
+                            Deshacer el último
+                          </button>
+                        )}
+                        {v.nodes.length > 0 && (
+                          <button
+                            onClick={() => upd(v.id, { nodes: [], auto: false })}
+                            className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2"
+                          >
+                            Quitar todos
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
 

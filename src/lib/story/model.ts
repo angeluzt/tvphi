@@ -13,7 +13,7 @@
 //     posición y su tamaño, para ir de cualquier sitio a cualquier otro.
 
 import { nanoid } from "nanoid";
-import { type VfxKind, vfxSpec, vfxDefaults } from "./vfx";
+import { type VfxKind, type VfxShape, vfxSpec, vfxDefaults } from "./vfx";
 
 export type TransitionKind = "cut" | "fade" | "slide";
 // Los stickers pueden seguir la transición de entrada de la toma o llevar la suya.
@@ -70,6 +70,13 @@ export interface Dialogue {
   audioId?: string; // audio generado (IndexedDB)
   dur: number; // duración del audio (s), 0 si aún no se generó
   effect: VoiceEffect;
+  // Velocidad de lectura (1 = tal cual). Cambia lo que dura SIN tocar el tono:
+  // el modelo de voz no deja pedirle otra velocidad, así que se estira el audio
+  // ya generado.
+  speed: number;
+  // Tono (1 = tal cual). Cambia lo grave/agudo SIN tocar la duración. Es lo que
+  // permite tener voces distintas con el mismo modelo, que solo trae una.
+  pitch: number;
   // true cuando el texto cambió después de generar la voz: el audio sigue ahí
   // (para poder seguir viendo el video) pero ya no corresponde a lo escrito.
   stale: boolean;
@@ -142,12 +149,22 @@ export function overlaySoundStart(o: PngOverlay, ventana: { start: number; end: 
 // Un efecto de partículas colocado sobre una toma (lluvia, fuego, una explosión
 // a los 2 s…). Se dibuja sobre el mismo lienzo que graba el exportador, así que
 // sale en el video con la calidad del códec, no de un GIF.
+// Un sitio donde actúa un efecto: un punto (inicio = fin) o una línea.
+export interface VfxNode { x: number; y: number; x2: number; y2: number } // 0..1
+
 export interface VfxLayer {
   id: string;
   kind: VfxKind;
-  // Dónde. Normalizado sobre el lienzo (0..1). Los de forma "punto" solo usan
-  // x/y; los de línea y los de franja van de (x,y) a (x2,y2).
-  x: number; y: number; x2: number; y2: number;
+  // Cómo se coloca (puntos sueltos, líneas, a mano alzada, desde arriba) y
+  // TODOS los sitios donde actúa: tres ramas ardiendo son tres nodos de la
+  // misma capa, con los mismos ajustes y el mismo color.
+  shape: VfxShape;
+  nodes: VfxNode[];
+  // true mientras los sitios sean los de serie (los que se ponen solos al
+  // añadir el efecto, para que se vea algo al momento). En cuanto se coloca
+  // uno a mano, los de serie se van: si tocas tres sitios quieres tres, no
+  // cuatro.
+  auto: boolean;
   colorHex: string;
   params: Record<string, number>;
   // Cuándo, dentro de la toma. "all" = mientras dure.
@@ -156,18 +173,22 @@ export interface VfxLayer {
   endSec: number;
 }
 
+// Sitio de partida para una forma, para que un efecto recién añadido ya se vea
+// sin tener que dibujar nada.
+export function defaultNode(shape: VfxShape): VfxNode {
+  if (shape === "arriba") return { x: 0, y: -0.02, x2: 1, y2: -0.02 };
+  if (shape === "punto") return { x: 0.5, y: 0.5, x2: 0.5, y2: 0.5 };
+  return { x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 };
+}
+
 export function newVfx(kind: VfxKind): VfxLayer {
   const spec = vfxSpec(kind);
-  // De serie se coloca donde tiene sentido para cada forma: el punto en el
-  // centro, la línea de lado a lado por la mitad, y la franja arriba del todo
-  // (que es por donde entra la lluvia o la nieve).
-  const sitio = spec.shape === "punto"
-    ? { x: 0.5, y: 0.5, x2: 0.5, y2: 0.5 }
-    : spec.shape === "franja"
-      ? { x: 0, y: -0.02, x2: 1, y2: -0.02 }
-      : { x: 0.2, y: 0.5, x2: 0.8, y2: 0.5 };
+  const shape = spec.shapes[0];
   return {
-    id: nanoid(6), kind, ...sitio,
+    id: nanoid(6), kind, shape,
+    // "A mano alzada" empieza vacío: lo suyo es dibujarlo.
+    nodes: shape === "libre" ? [] : [defaultNode(shape)],
+    auto: true,
     colorHex: spec.color ?? "#ffffff",
     params: vfxDefaults(kind),
     timing: "all", startSec: 0, endSec: 2,
@@ -433,7 +454,9 @@ export function normalizePreset(p: PresetMotion, imgW: number, imgH: number): Pr
 // Lo que ocupa un diálogo ya con su efecto: los que cambian el tono lo hacen
 // cambiando la velocidad, y entonces el audio dura más o menos.
 export function dialogueDur(d: Dialogue) {
-  return (d.dur || 0) / (VOICE_RATE[d.effect] ?? 1);
+  // El efecto ya cambiaba la duración (sigue igual que siempre) y la velocidad
+  // se le suma encima. El tono no aparece aquí: no altera lo que dura.
+  return (d.dur || 0) / ((VOICE_RATE[d.effect] ?? 1) * (d.speed || 1));
 }
 
 // Instante en que arranca cada diálogo dentro de la toma. Se encadenan: cada uno
@@ -659,7 +682,7 @@ export function newScene(imageId: string, imgW: number, imgH: number): StoryScen
 }
 
 export function newDialogue(gapSec = 0.3): Dialogue {
-  return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none", stale: false };
+  return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none", speed: 1, pitch: 1, stale: false };
 }
 
 export function newSfx(audioId: string, name: string, dur: number): ShotSfx {
@@ -811,11 +834,25 @@ export function moveShot(p: StoryProject, sceneId: string, shotId: string, dir: 
 // rellena con lo que falte para que no haya que migrar nada a mano.
 function normalizeVfx(v: any): VfxLayer {
   const kind: VfxKind = vfxSpec(v.kind).id;
+  const permitidas = vfxSpec(kind).shapes;
+  const forma: VfxShape = permitidas.includes(v.shape) ? v.shape : permitidas[0];
   return {
     id: v.id ?? nanoid(6),
     kind,
-    x: Number(v.x) || 0, y: Number(v.y) || 0,
-    x2: Number(v.x2) || 0, y2: Number(v.y2) || 0,
+    shape: forma,
+    // En un proyecto de antes el sitio se puso a mano con las barras: no se
+    // toca.
+    auto: !!v.auto,
+    // Los proyectos de antes traían un solo sitio suelto en x/y/x2/y2.
+    nodes: Array.isArray(v.nodes)
+      ? v.nodes.map((n: any) => ({
+          x: Number(n.x) || 0, y: Number(n.y) || 0,
+          x2: Number(n.x2) || 0, y2: Number(n.y2) || 0,
+        }))
+      : [{
+          x: Number(v.x) || 0, y: Number(v.y) || 0,
+          x2: Number(v.x2) || 0, y2: Number(v.y2) || 0,
+        }],
     colorHex: typeof v.colorHex === "string" ? v.colorHex : (vfxSpec(kind).color ?? "#ffffff"),
     params: { ...vfxDefaults(kind), ...(v.params ?? {}) },
     timing: v.timing === "range" ? "range" : "all",
@@ -887,7 +924,7 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     to: hasFrames ? s.to : base.to,
     transition: s.transition ?? base.transition,
     transitionDur: s.transitionDur ?? base.transitionDur,
-    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", stale: !!d.stale }))),
+    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", speed: Number(d.speed) || 1, pitch: Number(d.pitch) || 1, stale: !!d.stale }))),
     sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
@@ -942,7 +979,7 @@ export function migrateProject(raw: any): StoryProject {
       ...base,
       transition: s.transition ?? "fade",
       dialogues: s.narration
-        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect, stale: false }]
+        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect, speed: 1, pitch: 1, stale: false }]
         : [],
       overlays: (s.overlays ?? []).map(normalizeOverlay),
       vfx: (s.vfx ?? []).map(normalizeVfx),

@@ -320,6 +320,21 @@ export function ShotEditor({
                     {VOICE_EFFECTS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
                   </select>
                 </label>
+                {/* Atajos: la voz IA solo trae una, así que las "otras voces"
+                    salen de tocarle el tono sin cambiar lo que tarda en leer. */}
+                <label className="flex items-center gap-1 text-[11px] text-muted">
+                  Voz
+                  <select
+                    className="input w-28 py-0.5 text-[11px]"
+                    value={vozPreset(d.pitch)}
+                    onChange={(e) => updDialogue(d.id, { pitch: Number(e.target.value) })}
+                  >
+                    {VOZ_PRESETS.map((v) => <option key={v.pitch} value={v.pitch}>{v.label}</option>)}
+                    {!VOZ_PRESETS.some((v) => v.pitch === vozPreset(d.pitch)) && (
+                      <option value={d.pitch}>A mano</option>
+                    )}
+                  </select>
+                </label>
                 {d.audioId ? (
                   <span className="text-[11px] text-muted">
                     🔊 {dialogueDur(d).toFixed(1)}s · empieza en {dStarts[i].toFixed(1)}s
@@ -332,6 +347,22 @@ export function ShotEditor({
                     texto cambiado · regenera la voz
                   </span>
                 )}
+              </div>
+              {/* Velocidad y tono, cada uno por su lado. No hay que regenerar
+                  la voz: se retoca el audio que ya está hecho. */}
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
+                <Slider
+                  label="Velocidad de lectura" value={d.speed} min={0.6} max={1.6} step={0.05}
+                  onChange={(v) => updDialogue(d.id, { speed: v })}
+                  format={(v) => `${v.toFixed(2)}×`}
+                  hint={Math.abs(d.speed - 1) < 0.005 ? undefined : "El tono no cambia"}
+                />
+                <Slider
+                  label="Tono de voz" value={d.pitch} min={0.7} max={1.5} step={0.02}
+                  onChange={(v) => updDialogue(d.id, { pitch: v })}
+                  format={(v) => `${v.toFixed(2)}×`}
+                  hint={Math.abs(d.pitch - 1) < 0.005 ? undefined : "Lo que tarda en leer no cambia"}
+                />
               </div>
               {voiceJobs[d.id]?.stage === "loading" && (
                 <div className="mt-1 h-1 w-full overflow-hidden rounded bg-surface-2">
@@ -740,6 +771,25 @@ export function ShotEditor({
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+// La voz IA (MMS-TTS) trae UNA sola voz por idioma: no hay hombre/mujer que
+// elegir dentro del modelo. Estos atajos son esa misma voz con el tono movido,
+// que es lo que se puede hacer sin cambiar de modelo. No suplantan a una voz
+// distinta de verdad, pero dan personajes que se distinguen entre sí.
+const VOZ_PRESETS: { pitch: number; label: string }[] = [
+  { pitch: 0.82, label: "Muy grave" },
+  { pitch: 0.92, label: "Grave" },
+  { pitch: 1, label: "Normal" },
+  { pitch: 1.12, label: "Clara" },
+  { pitch: 1.24, label: "Aguda" },
+];
+// Se redondea al atajo más cercano para que el desplegable no parezca vacío
+// cuando el tono se ha ajustado con la barra.
+const vozPreset = (p: number) => {
+  const v = p || 1;
+  const cerca = VOZ_PRESETS.find((x) => Math.abs(x.pitch - v) < 0.01);
+  return cerca ? cerca.pitch : v;
+};
 
 // Hasta dónde puede irse un sticker por la izquierda o por arriba: a −tamaño ya
 // está fuera del todo. Nunca menos de −1, para que con un sticker pequeño la

@@ -28,11 +28,21 @@ export type VfxKind =
   | "rayo" | "portal" | "glitch" | "speedlines" | "luz" | "baliza"
   | "neon" | "navidad" | "magiccircle" | "escarcha" | "polvo";
 
-// Cómo se coloca el efecto sobre la imagen:
-//   · "punto": un sitio (una explosión, una hoguera)
-//   · "linea": de un punto a otro (un rayo, un tubo de neón, una guirnalda)
-//   · "franja": una banda por la que entra (lluvia, nieve…); de serie, todo el ancho
-export type VfxShape = "punto" | "linea" | "franja";
+// Cómo se coloca el efecto sobre la imagen. Un mismo efecto admite varias
+// formas, y casi siempre VARIOS sitios a la vez: la gracia es tocar tres ramas
+// de un árbol y que ardan las tres, o picar dos puntos y que caigan dos chorros.
+//   · "arriba": una franja a lo ancho por arriba (lluvia cayendo del cielo)
+//   · "punto":  un sitio suelto (una hoguera, un chorro, una explosión)
+//   · "linea":  de un punto a otro (una rama, un tubo de neón, un rayo)
+//   · "libre":  un trazo a mano alzada, que por dentro son muchas líneas
+export type VfxShape = "arriba" | "punto" | "linea" | "libre";
+
+export const SHAPE_LABEL: Record<VfxShape, string> = {
+  arriba: "Desde arriba",
+  punto: "Puntos sueltos",
+  linea: "Líneas",
+  libre: "A mano alzada",
+};
 
 export interface VfxParam {
   key: string;
@@ -45,7 +55,7 @@ export interface VfxParam {
 export interface VfxSpec {
   id: VfxKind;
   label: string;
-  shape: VfxShape;
+  shapes: VfxShape[]; // la primera es la de serie
   color: string | null; // color por defecto, o null si el efecto no lo usa
   params: VfxParam[];
   // Los que no paran de emitir mientras dure su rato. Los demás son un golpe.
@@ -60,52 +70,52 @@ const VELOCIDAD = P("speed", "Velocidad");
 const VIENTO = P("wind", "Viento", -3, 3, 0.1);
 
 export const VFX: VfxSpec[] = [
-  { id: "explosion", label: "Explosión", shape: "punto", color: "#ff8a3d", continuo: false,
+  { id: "explosion", label: "Explosión", shapes: ["punto"], color: "#ff8a3d", continuo: false,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
-  { id: "chispas", label: "Chispas", shape: "punto", color: "#ffd23f", continuo: false,
+  { id: "chispas", label: "Chispas", shapes: ["punto"], color: "#ffd23f", continuo: false,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, P("gravity", "Peso")] },
-  { id: "destello", label: "Destello", shape: "punto", color: "#8fd3ff", continuo: false,
+  { id: "destello", label: "Destello", shapes: ["punto"], color: "#8fd3ff", continuo: false,
     params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta")] },
-  { id: "shockwave", label: "Onda de choque", shape: "punto", color: "#ffffff", continuo: false,
+  { id: "shockwave", label: "Onda de choque", shapes: ["punto"], color: "#ffffff", continuo: false,
     params: [TAMANO, VELOCIDAD, P("thickness", "Grosor")] },
-  { id: "escarcha", label: "Escarcha / hielo", shape: "punto", color: "#bff2ff", continuo: false,
+  { id: "escarcha", label: "Escarcha / hielo", shapes: ["punto"], color: "#bff2ff", continuo: false,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
-  { id: "speedlines", label: "Líneas de velocidad", shape: "punto", color: "#ffffff", continuo: false,
+  { id: "speedlines", label: "Líneas de velocidad", shapes: ["punto"], color: "#ffffff", continuo: false,
     params: [INTENSIDAD, P("thickness", "Grosor"), P("length", "Largo")] },
-  { id: "glitch", label: "Glitch digital", shape: "punto", color: null, continuo: false,
+  { id: "glitch", label: "Glitch digital", shapes: ["punto"], color: null, continuo: false,
     params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta")] },
-  { id: "magiccircle", label: "Círculo mágico", shape: "punto", color: "#b98bff", continuo: false,
+  { id: "magiccircle", label: "Círculo mágico", shapes: ["punto"], color: "#b98bff", continuo: false,
     params: [TAMANO, VELOCIDAD, P("duration", "Cuánto aguanta")] },
 
-  { id: "fuego", label: "Fuego", shape: "linea", color: "#ff8a3d", continuo: true,
+  { id: "fuego", label: "Fuego", shapes: ["punto", "linea", "libre"], color: "#ff8a3d", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
-  { id: "aura", label: "Aura de energía", shape: "punto", color: "#7effc2", continuo: true,
+  { id: "aura", label: "Aura de energía", shapes: ["punto"], color: "#7effc2", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, P("turb", "Revuelo")] },
-  { id: "portal", label: "Portal", shape: "punto", color: "#7ee8ff", continuo: true,
+  { id: "portal", label: "Portal", shapes: ["punto"], color: "#7ee8ff", continuo: true,
     params: [TAMANO, VELOCIDAD, INTENSIDAD, P("dir", "Hacia dentro (0) / fuera (1)", 0, 1, 1)] },
-  { id: "luz", label: "Luz (esfera)", shape: "punto", color: "#a0c8ff", continuo: true,
+  { id: "luz", label: "Luz (esfera)", shapes: ["punto"], color: "#a0c8ff", continuo: true,
     params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo")] },
-  { id: "baliza", label: "Baliza (policía / ambulancia)", shape: "punto", color: null, continuo: true,
+  { id: "baliza", label: "Baliza (policía / ambulancia)", shapes: ["punto"], color: null, continuo: true,
     params: [TAMANO, P("blink", "Parpadeo"), INTENSIDAD, P("preset", "Policía (0) / ambulancia (1)", 0, 1, 1)] },
-  { id: "neon", label: "Neón", shape: "linea", color: "#ff2fd6", continuo: true,
+  { id: "neon", label: "Neón", shapes: ["linea", "libre", "punto"], color: "#ff2fd6", continuo: true,
     params: [P("thickness", "Grosor"), INTENSIDAD, P("blink", "Parpadeo")] },
-  { id: "navidad", label: "Luces navideñas", shape: "linea", color: null, continuo: true,
+  { id: "navidad", label: "Luces navideñas", shapes: ["linea", "libre"], color: null, continuo: true,
     params: [TAMANO, P("spacing", "Separación"), P("blink", "Parpadeo")] },
-  { id: "rayo", label: "Rayo", shape: "linea", color: null, continuo: true,
+  { id: "rayo", label: "Rayo", shapes: ["linea", "punto"], color: null, continuo: true,
     params: [P("thickness", "Grosor"), P("branch", "Ramas"), P("flicker", "Parpadeo"),
              P("stormrate", "Cada cuánto cae", 0.05, 3, 0.05)] },
 
-  { id: "lluvia", label: "Lluvia", shape: "franja", color: "#8fc4ff", continuo: true,
+  { id: "lluvia", label: "Lluvia", shapes: ["arriba", "punto", "linea", "libre"], color: "#8fc4ff", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO] },
-  { id: "nieve", label: "Nieve", shape: "franja", color: "#ffffff", continuo: true,
+  { id: "nieve", label: "Nieve", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffffff", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO] },
-  { id: "ceniza", label: "Ceniza", shape: "franja", color: "#caa27a", continuo: true,
+  { id: "ceniza", label: "Ceniza", shapes: ["arriba", "punto", "linea", "libre"], color: "#caa27a", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
-  { id: "hojas", label: "Hojas / pétalos", shape: "franja", color: "#8a6a3a", continuo: true,
+  { id: "hojas", label: "Hojas / pétalos", shapes: ["arriba", "punto", "linea", "libre"], color: "#8a6a3a", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO] },
-  { id: "polvo", label: "Polvo mágico / luciérnagas", shape: "franja", color: "#ffe28a", continuo: true,
+  { id: "polvo", label: "Polvo mágico / luciérnagas", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffe28a", continuo: true,
     params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo"), VELOCIDAD] },
-  { id: "niebla", label: "Niebla", shape: "franja", color: "#cfd6e6", continuo: true,
+  { id: "niebla", label: "Niebla", shapes: ["punto", "linea", "arriba", "libre"], color: "#cfd6e6", continuo: true,
     params: [P("density", "Densidad"), VELOCIDAD, TAMANO] },
 ];
 
@@ -196,10 +206,13 @@ interface Storm { id: string; x: number; y: number; x2: number; y2: number; par:
 
 // Lo que el motor necesita saber de una capa. El modelo guarda algo más
 // (cuándo se ve), pero aquí solo llega lo que se dibuja.
+export interface VfxNodeIn { x: number; y: number; x2: number; y2: number } // 0..1
 export interface VfxInput {
   id: string;
   kind: VfxKind;
-  x: number; y: number; x2: number; y2: number; // 0..1 sobre el lienzo
+  // Todos los sitios donde actúa: tres puntos de fuego son tres nodos. Un punto
+  // suelto es un nodo con inicio y fin en el mismo sitio.
+  nodes: VfxNodeIn[];
   colorHex: string;
   params: Record<string, number>;
   start: number; // segundos dentro de la toma
@@ -317,21 +330,20 @@ export class VfxScene {
   private montar(capas: VfxInput[], t: number) {
     for (const c of capas) {
       const dentro = t >= c.start && t < c.end;
-      const yaEsta = this.vivos.has(c.id);
-      if (dentro && !yaEsta) { this.vivos.add(c.id); this.alta(c); }
-      else if (!dentro && yaEsta) { this.vivos.delete(c.id); this.baja(c); }
+      // Cada sitio va por su cuenta: así se pueden tener tres hogueras de un
+      // mismo efecto, y quitar una sin tocar las otras.
+      c.nodes.forEach((n, i) => {
+        const clave = `${c.id}#${i}`;
+        const yaEsta = this.vivos.has(clave);
+        if (dentro && !yaEsta) { this.vivos.add(clave); this.alta(c, n, clave); }
+        else if (!dentro && yaEsta) { this.vivos.delete(clave); this.baja(clave); }
+      });
     }
   }
 
-  private px(c: VfxInput) {
-    return {
-      x: c.x * this.w, y: c.y * this.h,
-      x2: c.x2 * this.w, y2: c.y2 * this.h,
-    };
-  }
-
-  private alta(c: VfxInput) {
-    const { x, y, x2, y2 } = this.px(c);
+  private alta(c: VfxInput, n: VfxNodeIn, clave: string) {
+    const x = n.x * this.w, y = n.y * this.h;
+    const x2 = n.x2 * this.w, y2 = n.y2 * this.h;
     const col = hexToHsl(c.colorHex || "#ffffff");
     const p = c.params;
     switch (c.kind) {
@@ -343,36 +355,36 @@ export class VfxScene {
       case "speedlines": return this.speedlines(x, y, col, p);
       case "glitch": return this.glitch(x, y, p);
       case "magiccircle": return this.circulo(x, y, col, p);
-      case "fuego": this.fires.push({ id: c.id, x, y, x2, y2, color: col, par: p }); return;
-      case "aura": this.auras.push({ id: c.id, x, y, color: col, par: p }); return;
-      case "portal": this.portals.push({ id: c.id, x, y, phase: 0, color: col, par: p }); return;
-      case "luz": this.orbs.push({ id: c.id, x, y, phase: 0, color: col, par: p }); return;
+      case "fuego": this.fires.push({ id: clave, x, y, x2, y2, color: col, par: p }); return;
+      case "aura": this.auras.push({ id: clave, x, y, color: col, par: p }); return;
+      case "portal": this.portals.push({ id: clave, x, y, phase: 0, color: col, par: p }); return;
+      case "luz": this.orbs.push({ id: clave, x, y, phase: 0, color: col, par: p }); return;
       case "baliza": {
         const b = BALIZAS[p.preset ? 1 : 0];
-        this.beacons.push({ id: c.id, x, y, colors: b.colors, pattern: b.pattern, phase: 0, par: p });
+        this.beacons.push({ id: clave, x, y, colors: b.colors, pattern: b.pattern, phase: 0, par: p });
         return;
       }
       case "neon": {
         const punto = Math.hypot(x2 - x, y2 - y) < 6;
         this.neons.push({
-          id: c.id, mode: punto ? "point" : "line", x, y, x2, y2,
+          id: clave, mode: punto ? "point" : "line", x, y, x2, y2,
           thickness: (p.thickness ?? 1) * 3 * this.k, color: col,
           dim: false, dimTimer: 0, flickerRate: (p.blink ?? 0.5) * 0.01,
         });
         return;
       }
-      case "navidad": this.xmas.push(this.guirnalda(c.id, x, y, x2, y2, p)); return;
-      case "rayo": this.storms.push({ id: c.id, x, y, x2, y2, par: p, t: 1e9 }); return;
-      case "niebla": this.fogs.push({ id: c.id, x, y, phase: this.rnd() * 6.28, par: p, color: col }); return;
+      case "navidad": this.xmas.push(this.guirnalda(clave, x, y, x2, y2, p)); return;
+      case "rayo": this.storms.push({ id: clave, x, y, x2, y2, par: p, t: 1e9 }); return;
+      case "niebla": this.fogs.push({ id: clave, x, y, phase: this.rnd() * 6.28, par: p, color: col }); return;
       default:
-        this.ambients.push({ id: c.id, kind: c.kind, x, y, x2, y2, color: col, par: p });
+        this.ambients.push({ id: clave, kind: c.kind, x, y, x2, y2, color: col, par: p });
     }
   }
 
   // Al acabar su rato el emisor se apaga; lo que ya soltó se apaga solo, que es
   // lo que se quiere (la lluvia que ya cae termina de caer).
-  private baja(c: VfxInput) {
-    const sin = <T extends { id: string }>(a: T[]) => a.filter((e) => e.id !== c.id);
+  private baja(clave: string) {
+    const sin = <T extends { id: string }>(a: T[]) => a.filter((e) => e.id !== clave);
     this.fires = sin(this.fires);
     this.auras = sin(this.auras);
     this.portals = sin(this.portals);
