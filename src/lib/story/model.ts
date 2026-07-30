@@ -13,6 +13,7 @@
 //     posición y su tamaño, para ir de cualquier sitio a cualquier otro.
 
 import { nanoid } from "nanoid";
+import { type VfxKind, vfxSpec, vfxDefaults } from "./vfx";
 
 export type TransitionKind = "cut" | "fade" | "slide";
 // Los stickers pueden seguir la transición de entrada de la toma o llevar la suya.
@@ -138,6 +139,49 @@ export function overlaySoundStart(o: PngOverlay, ventana: { start: number; end: 
   return ventana.start + Math.min(Math.max(0, o.soundDelay || 0), margen);
 }
 
+// Un efecto de partículas colocado sobre una toma (lluvia, fuego, una explosión
+// a los 2 s…). Se dibuja sobre el mismo lienzo que graba el exportador, así que
+// sale en el video con la calidad del códec, no de un GIF.
+export interface VfxLayer {
+  id: string;
+  kind: VfxKind;
+  // Dónde. Normalizado sobre el lienzo (0..1). Los de forma "punto" solo usan
+  // x/y; los de línea y los de franja van de (x,y) a (x2,y2).
+  x: number; y: number; x2: number; y2: number;
+  colorHex: string;
+  params: Record<string, number>;
+  // Cuándo, dentro de la toma. "all" = mientras dure.
+  timing: "all" | "range";
+  startSec: number;
+  endSec: number;
+}
+
+export function newVfx(kind: VfxKind): VfxLayer {
+  const spec = vfxSpec(kind);
+  // De serie se coloca donde tiene sentido para cada forma: el punto en el
+  // centro, la línea de lado a lado por la mitad, y la franja arriba del todo
+  // (que es por donde entra la lluvia o la nieve).
+  const sitio = spec.shape === "punto"
+    ? { x: 0.5, y: 0.5, x2: 0.5, y2: 0.5 }
+    : spec.shape === "franja"
+      ? { x: 0, y: -0.02, x2: 1, y2: -0.02 }
+      : { x: 0.2, y: 0.5, x2: 0.8, y2: 0.5 };
+  return {
+    id: nanoid(6), kind, ...sitio,
+    colorHex: spec.color ?? "#ffffff",
+    params: vfxDefaults(kind),
+    timing: "all", startSec: 0, endSec: 2,
+  };
+}
+
+// El rato en el que cada efecto está activo dentro de la toma.
+export function vfxWindow(v: VfxLayer, shotDuration: number) {
+  if (v.timing !== "range") return { start: 0, end: shotDuration };
+  const start = Math.max(0, Math.min(shotDuration, v.startSec));
+  const end = Math.max(start + 0.05, Math.min(shotDuration, v.endSec));
+  return { start, end };
+}
+
 export interface Shot {
   id: string;
   durationSec: number; // duración explícita
@@ -156,6 +200,7 @@ export interface Shot {
   sfx: ShotSfx[];
   audioOverrides: AudioOverride[]; // qué hacer con los bucles que vienen de arriba
   overlays: PngOverlay[];
+  vfx: VfxLayer[];
   // Encuadres de los OTROS formatos. Lo de arriba (motionMode/preset/from/to) es
   // el encuadre del formato activo; al cambiar de formato se guarda aquí el que
   // se deja y se recupera el que ya se hubiera ajustado, para poder tener el
@@ -605,6 +650,7 @@ export function newShot(imgW: number, imgH: number, kind: MotionKind = "in"): Sh
     sfx: [],
     audioOverrides: [],
     overlays: [],
+    vfx: [],
   };
 }
 
@@ -761,6 +807,23 @@ export function moveShot(p: StoryProject, sceneId: string, shotId: string, dir: 
 // Compatibilidad con proyectos guardados con modelos anteriores
 // --------------------------------------------------------------------------
 
+// Un proyecto guardado antes de que existieran los efectos no trae nada; se
+// rellena con lo que falte para que no haya que migrar nada a mano.
+function normalizeVfx(v: any): VfxLayer {
+  const kind: VfxKind = vfxSpec(v.kind).id;
+  return {
+    id: v.id ?? nanoid(6),
+    kind,
+    x: Number(v.x) || 0, y: Number(v.y) || 0,
+    x2: Number(v.x2) || 0, y2: Number(v.y2) || 0,
+    colorHex: typeof v.colorHex === "string" ? v.colorHex : (vfxSpec(kind).color ?? "#ffffff"),
+    params: { ...vfxDefaults(kind), ...(v.params ?? {}) },
+    timing: v.timing === "range" ? "range" : "all",
+    startSec: Number(v.startSec) || 0,
+    endSec: Number(v.endSec) || 2,
+  };
+}
+
 function normalizeOverlay(o: any): PngOverlay {
   return {
     id: o.id ?? nanoid(6),
@@ -828,6 +891,7 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
+    vfx: (s.vfx ?? []).map(normalizeVfx),
     altFrames: normalizeAltFrames(s.altFrames, imgW, imgH),
   };
 }
@@ -881,6 +945,7 @@ export function migrateProject(raw: any): StoryProject {
         ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect, stale: false }]
         : [],
       overlays: (s.overlays ?? []).map(normalizeOverlay),
+      vfx: (s.vfx ?? []).map(normalizeVfx),
     };
     return { id: s.id ?? nanoid(6), imageId: s.imageId, imgW, imgH, shots: [shot] };
   });

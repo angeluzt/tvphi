@@ -1,0 +1,228 @@
+"use client";
+
+import { Sparkles, Trash2, Copy, Plus } from "lucide-react";
+import { nanoid } from "nanoid";
+import { Slider } from "./slider";
+import { NumberInput } from "./number-input";
+import { VFX, vfxSpec, vfxDefaults, type VfxKind } from "@/lib/story/vfx";
+import { newVfx, vfxWindow, type VfxLayer } from "@/lib/story/model";
+
+// Panel de efectos (partículas) de una toma: lluvia, fuego, explosiones…
+//
+// Cada efecto es una capa con su sitio, su rato y sus propios ajustes. Los
+// ajustes se sacan de la lista de VFX, así que añadir un efecto nuevo al motor
+// lo hace aparecer aquí solo, sin tocar esta pantalla.
+export function VfxEditor({
+  vfx,
+  dur,
+  seleccionado,
+  onChange,
+  onSelect,
+}: {
+  vfx: VfxLayer[];
+  dur: number;
+  seleccionado: string | null;
+  onChange: (v: VfxLayer[]) => void;
+  onSelect: (id: string | null) => void;
+}) {
+  const upd = (id: string, patch: Partial<VfxLayer>) =>
+    onChange(vfx.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+  const updParam = (id: string, key: string, valor: number) =>
+    onChange(vfx.map((v) => (v.id === id ? { ...v, params: { ...v.params, [key]: valor } } : v)));
+
+  function anadir(kind: VfxKind) {
+    const nuevo = newVfx(kind);
+    onChange([...vfx, nuevo]);
+    onSelect(nuevo.id);
+  }
+  function duplicar(v: VfxLayer) {
+    const copia = { ...v, id: nanoid(6), params: { ...v.params } };
+    const i = vfx.findIndex((x) => x.id === v.id);
+    const lista = [...vfx];
+    lista.splice(i + 1, 0, copia);
+    onChange(lista);
+    onSelect(copia.id);
+  }
+  // Cambiar de efecto conserva el sitio, pero los ajustes son otros.
+  function cambiarTipo(v: VfxLayer, kind: VfxKind) {
+    const spec = vfxSpec(kind);
+    upd(v.id, { kind, params: vfxDefaults(kind), colorHex: spec.color ?? v.colorHex });
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="label">Efectos (partículas)</span>
+        <span className="ml-auto flex items-center gap-1">
+          <Plus className="h-3.5 w-3.5 text-accent" />
+          <select
+            className="input w-auto py-1 text-xs"
+            aria-label="Añadir efecto"
+            value=""
+            onChange={(e) => { if (e.target.value) anadir(e.target.value as VfxKind); }}
+          >
+            <option value="">Añadir efecto…</option>
+            {VFX.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
+        </span>
+      </div>
+
+      <div className="mt-2 space-y-2">
+        {vfx.map((v) => {
+          const spec = vfxSpec(v.kind);
+          const ventana = vfxWindow(v, dur);
+          const abierto = seleccionado === v.id;
+          return (
+            <div
+              key={v.id}
+              className={`rounded-lg border ${abierto ? "border-accent bg-accent/10" : "border-border"}`}
+            >
+              <div
+                onClick={() => onSelect(abierto ? null : v.id)}
+                className="flex cursor-pointer flex-wrap items-center gap-2 px-2 py-1 text-xs"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-accent" />
+                <span className="flex-1">{spec.label}</span>
+                <span className="text-[11px] text-muted">
+                  {v.timing === "all" ? "toda la toma" : `${ventana.start.toFixed(1)}–${ventana.end.toFixed(1)}s`}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); duplicar(v); }}
+                  className="text-muted hover:text-fg" title="Duplicar este efecto"
+                ><Copy className="h-3.5 w-3.5" /></button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onChange(vfx.filter((x) => x.id !== v.id)); onSelect(null); }}
+                  className="text-muted hover:text-danger" title="Quitar este efecto"
+                ><Trash2 className="h-3.5 w-3.5" /></button>
+              </div>
+
+              {abierto && (
+                <div className="space-y-2 border-t border-border/60 p-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-0.5 text-[11px]">
+                      <span className="text-muted">Efecto</span>
+                      <select
+                        className="input py-0.5 text-xs"
+                        value={v.kind}
+                        onChange={(e) => cambiarTipo(v, e.target.value as VfxKind)}
+                      >
+                        {VFX.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                      </select>
+                    </label>
+                    {spec.color !== null ? (
+                      <label className="space-y-0.5 text-[11px]">
+                        <span className="text-muted">Color</span>
+                        <input
+                          type="color"
+                          className="h-[34px] w-full cursor-pointer rounded-xl border border-border bg-surface-2"
+                          value={v.colorHex}
+                          onChange={(e) => upd(v.id, { colorHex: e.target.value })}
+                        />
+                      </label>
+                    ) : (
+                      <p className="self-end text-[10px] text-muted/80">
+                        Este efecto trae sus propios colores.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Cuándo actúa */}
+                  <div className="rounded-lg border border-border/60 p-2">
+                    <label className="block space-y-0.5 text-[11px]">
+                      <span className="text-muted">Cuándo se ve</span>
+                      <select
+                        className="input py-0.5 text-xs"
+                        value={v.timing}
+                        onChange={(e) => {
+                          const t = e.target.value as VfxLayer["timing"];
+                          upd(v.id, t === "range"
+                            ? { timing: t, startSec: v.startSec || 0, endSec: Math.min(dur, (v.startSec || 0) + 2) }
+                            : { timing: t });
+                        }}
+                      >
+                        <option value="all">Toda la toma</option>
+                        <option value="range">Solo un rato</option>
+                      </select>
+                    </label>
+                    {v.timing === "range" && (
+                      <div className="mt-1.5 grid grid-cols-2 gap-2">
+                        <NumberInput
+                          label="Empieza a los" value={v.startSec}
+                          onChange={(n) => upd(v.id, { startSec: n, endSec: Math.max(n + 0.1, v.endSec) })}
+                          min={0} max={Math.max(0.1, dur - 0.1)} step={0.2}
+                        />
+                        <NumberInput
+                          label="Acaba a los" value={Math.min(v.endSec, dur)}
+                          onChange={(n) => upd(v.id, { endSec: n })}
+                          min={0.1} max={dur} step={0.2}
+                        />
+                      </div>
+                    )}
+                    <p className="mt-1 text-[10px] text-muted/80">
+                      {spec.continuo
+                        ? `No para mientras dure su rato (${ventana.start.toFixed(1)}s a ${ventana.end.toFixed(1)}s de los ${dur.toFixed(1)}s).`
+                        : `Es un golpe: salta a los ${ventana.start.toFixed(1)}s y se apaga solo.`}
+                    </p>
+                  </div>
+
+                  {/* Dónde */}
+                  <div className="rounded-lg border border-border/60 p-2">
+                    <span className="text-[11px] text-muted">
+                      {spec.shape === "punto" ? "Dónde salta"
+                        : spec.shape === "franja" ? "Por dónde entra (de un lado a otro)"
+                        : "De dónde a dónde"}
+                    </span>
+                    <Slider label="X" value={v.x} min={-0.2} max={1.2} step={0.005}
+                      onChange={(n) => upd(v.id, spec.shape === "punto" ? { x: n, x2: n } : { x: n })} format={pct} />
+                    <Slider label="Y" value={v.y} min={-0.2} max={1.2} step={0.005}
+                      onChange={(n) => upd(v.id, spec.shape === "punto" ? { y: n, y2: n } : { y: n })} format={pct} />
+                    {spec.shape !== "punto" && (
+                      <>
+                        <Slider label="X final" value={v.x2} min={-0.2} max={1.2} step={0.005}
+                          onChange={(n) => upd(v.id, { x2: n })} format={pct} />
+                        <Slider label="Y final" value={v.y2} min={-0.2} max={1.2} step={0.005}
+                          onChange={(n) => upd(v.id, { y2: n })} format={pct} />
+                      </>
+                    )}
+                  </div>
+
+                  {/* Ajustes propios del efecto */}
+                  <div className="rounded-lg border border-accent/40 p-2">
+                    <span className="text-[11px] text-muted">Ajustes</span>
+                    {spec.params.map((p) => (
+                      p.step === 1 ? (
+                        <label key={p.key} className="mt-1 flex items-center gap-2 text-[11px]">
+                          <input
+                            type="checkbox"
+                            checked={!!v.params[p.key]}
+                            onChange={(e) => updParam(v.id, p.key, e.target.checked ? 1 : 0)}
+                          />
+                          <span className="text-muted">{p.label}</span>
+                        </label>
+                      ) : (
+                        <Slider
+                          key={p.key} label={p.label}
+                          value={v.params[p.key] ?? 1}
+                          min={p.min} max={p.max} step={p.step}
+                          onChange={(n) => updParam(v.id, p.key, n)}
+                          format={(n) => n.toFixed(2)}
+                        />
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!vfx.length && (
+          <p className="text-[11px] text-muted">
+            Lluvia, fuego, explosiones, rayos… se dibujan dentro del video, no encima con un GIF.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;

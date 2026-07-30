@@ -71,6 +71,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [openScene, setOpenScene] = useState<string | null>(null);
   const [selShot, setSelShot] = useState<string | null>(null);
   const [selOverlay, setSelOverlay] = useState<string | null>(null);
+  const [selVfx, setSelVfx] = useState<string | null>(null);
   const [dragScene, setDragScene] = useState<string | null>(null);
   // Qué escena se ha agarrado POR EL ASA. La tarjeta entera no puede ser
   // arrastrable: tocando cualquier hueco (o mientras se mueve una barra) se
@@ -999,6 +1000,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onAddSfx={(e) => addSfx(sc.id, sh, e)}
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
                         onAddOverlaySound={(id, e) => addOverlaySound(sc.id, sh, id, e)}
+                        selectedVfx={selVfx}
+                        onSelectVfx={(id) => { setSelShot(sh.id); setSelVfx(id); }}
                         onSelectOverlay={(id) => {
                           setSelShot(sh.id);
                           setSelOverlay(id);

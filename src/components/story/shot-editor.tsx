@@ -11,6 +11,7 @@ import { Slider } from "./slider";
 import { GapInput } from "./gap-input";
 import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
+import { VfxEditor } from "./vfx-editor";
 import {
   newDialogue, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
   overlaySoundStart,
@@ -31,6 +32,7 @@ export function ShotEditor({
   expanded,
   voiceJobs,
   selectedOverlay,
+  selectedVfx,
   inherited,
   playing,
   locked,
@@ -47,6 +49,7 @@ export function ShotEditor({
   onAddSticker,
   onAddOverlaySound,
   onSelectOverlay,
+  onSelectVfx,
 }: {
   shot: Shot;
   index: number;
@@ -58,6 +61,7 @@ export function ShotEditor({
   expanded: boolean;
   voiceJobs: Record<string, VoiceStatus>;
   selectedOverlay: string | null;
+  selectedVfx: string | null;
   inherited: InheritedLoop[];
   playing: boolean;
   locked: boolean;
@@ -74,6 +78,7 @@ export function ShotEditor({
   onAddSticker: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddOverlaySound: (overlayId: string, e: React.ChangeEvent<HTMLInputElement>) => void;
   onSelectOverlay: (id: string | null) => void;
+  onSelectVfx: (id: string | null) => void;
 }) {
   const dur = shotDur(shot);
   const movim = moveDur(shot); // lo que tarda el recorrido, sin la pausa
@@ -718,6 +723,14 @@ export function ShotEditor({
           )}
         </div>
       </div>
+
+      <VfxEditor
+        vfx={shot.vfx ?? []}
+        dur={dur}
+        seleccionado={selectedVfx}
+        onChange={(v) => onChange({ ...shot, vfx: v })}
+        onSelect={onSelectVfx}
+      />
       </fieldset>
       </div>
       </>
