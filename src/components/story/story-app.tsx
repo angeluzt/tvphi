@@ -10,6 +10,7 @@ import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
+import { VfxCanvas } from "./vfx-canvas";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
 import { NumberInput } from "./number-input";
@@ -19,6 +20,7 @@ import {
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
   ASPECTS, aspectInfo, setProjectAspect, switchAspect, overlayWindow, type Aspect,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay, type Frame,
+  type VfxNode,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
 import { convert, remux } from "@/lib/editor/ffmpeg";
@@ -472,6 +474,16 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       overlays: shot.overlays.map((o) => (o.id === overlayId ? { ...o, soundId, soundName: f.name } : o)),
     });
   }
+  // El efecto que se está colocando ahora mismo (si hay uno abierto).
+  const curVfx = curFlat?.shot.vfx?.find((v) => v.id === selVfx) ?? null;
+  function updVfxNodes(id: string, nodes: VfxNode[]) {
+    if (!curFlat) return;
+    updShot(curFlat.scene.id, curFlat.shot.id, {
+      ...curFlat.shot,
+      // Colocar a mano deja de ser "de serie": a partir de aquí manda el usuario.
+      vfx: curFlat.shot.vfx.map((v) => (v.id === id ? { ...v, nodes, auto: false } : v)),
+    });
+  }
   function updOverlayPos(patch: Partial<PngOverlay>) {
     if (!curFlat || !curOverlay) return;
     updShot(curFlat.scene.id, curFlat.shot.id, {
@@ -797,6 +809,14 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                   />
                 )}
               </>
+            )}
+            {/* Colocar el efecto dibujando encima: tocar puntos, trazar líneas
+                o pintar a mano alzada, que es como se acierta de verdad. */}
+            {curVfx && (
+              <VfxCanvas
+                layer={curVfx}
+                onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
+              />
             )}
             {!project.scenes.length && (
               <div className="absolute inset-0 grid place-items-center p-4 text-center text-sm text-muted">

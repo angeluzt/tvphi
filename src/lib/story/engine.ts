@@ -656,7 +656,7 @@ export class StoryEngine {
     const entradas: VfxInput[] = capas.map((v) => {
       const w = vfxWindow(v, f.dur);
       return {
-        id: v.id, kind: v.kind, x: v.x, y: v.y, x2: v.x2, y2: v.y2,
+        id: v.id, kind: v.kind, nodes: v.nodes ?? [],
         colorHex: v.colorHex, params: v.params, start: w.start, end: w.end,
       };
     });

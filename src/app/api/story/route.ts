@@ -35,7 +35,11 @@ const overlaySchema = z.object({
 const vfxSchema = z.object({
   id: z.string(),
   kind: z.string().max(40),
-  x: z.number(), y: z.number(), x2: z.number(), y2: z.number(),
+  shape: z.enum(["arriba", "punto", "linea", "libre"]).optional(),
+  auto: z.boolean().optional(),
+  nodes: z.array(z.object({
+    x: z.number(), y: z.number(), x2: z.number(), y2: z.number(),
+  })).max(200).optional(),
   colorHex: z.string().max(9),
   params: z.record(z.string(), z.number()),
   timing: z.enum(["all", "range"]),

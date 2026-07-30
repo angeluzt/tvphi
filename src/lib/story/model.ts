@@ -13,7 +13,7 @@
 //     posición y su tamaño, para ir de cualquier sitio a cualquier otro.
 
 import { nanoid } from "nanoid";
-import { type VfxKind, vfxSpec, vfxDefaults } from "./vfx";
+import { type VfxKind, type VfxShape, vfxSpec, vfxDefaults } from "./vfx";
 
 export type TransitionKind = "cut" | "fade" | "slide";
 // Los stickers pueden seguir la transición de entrada de la toma o llevar la suya.
@@ -149,12 +149,22 @@ export function overlaySoundStart(o: PngOverlay, ventana: { start: number; end: 
 // Un efecto de partículas colocado sobre una toma (lluvia, fuego, una explosión
 // a los 2 s…). Se dibuja sobre el mismo lienzo que graba el exportador, así que
 // sale en el video con la calidad del códec, no de un GIF.
+// Un sitio donde actúa un efecto: un punto (inicio = fin) o una línea.
+export interface VfxNode { x: number; y: number; x2: number; y2: number } // 0..1
+
 export interface VfxLayer {
   id: string;
   kind: VfxKind;
-  // Dónde. Normalizado sobre el lienzo (0..1). Los de forma "punto" solo usan
-  // x/y; los de línea y los de franja van de (x,y) a (x2,y2).
-  x: number; y: number; x2: number; y2: number;
+  // Cómo se coloca (puntos sueltos, líneas, a mano alzada, desde arriba) y
+  // TODOS los sitios donde actúa: tres ramas ardiendo son tres nodos de la
+  // misma capa, con los mismos ajustes y el mismo color.
+  shape: VfxShape;
+  nodes: VfxNode[];
+  // true mientras los sitios sean los de serie (los que se ponen solos al
+  // añadir el efecto, para que se vea algo al momento). En cuanto se coloca
+  // uno a mano, los de serie se van: si tocas tres sitios quieres tres, no
+  // cuatro.
+  auto: boolean;
   colorHex: string;
   params: Record<string, number>;
   // Cuándo, dentro de la toma. "all" = mientras dure.
@@ -163,18 +173,22 @@ export interface VfxLayer {
   endSec: number;
 }
 
+// Sitio de partida para una forma, para que un efecto recién añadido ya se vea
+// sin tener que dibujar nada.
+export function defaultNode(shape: VfxShape): VfxNode {
+  if (shape === "arriba") return { x: 0, y: -0.02, x2: 1, y2: -0.02 };
+  if (shape === "punto") return { x: 0.5, y: 0.5, x2: 0.5, y2: 0.5 };
+  return { x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 };
+}
+
 export function newVfx(kind: VfxKind): VfxLayer {
   const spec = vfxSpec(kind);
-  // De serie se coloca donde tiene sentido para cada forma: el punto en el
-  // centro, la línea de lado a lado por la mitad, y la franja arriba del todo
-  // (que es por donde entra la lluvia o la nieve).
-  const sitio = spec.shape === "punto"
-    ? { x: 0.5, y: 0.5, x2: 0.5, y2: 0.5 }
-    : spec.shape === "franja"
-      ? { x: 0, y: -0.02, x2: 1, y2: -0.02 }
-      : { x: 0.2, y: 0.5, x2: 0.8, y2: 0.5 };
+  const shape = spec.shapes[0];
   return {
-    id: nanoid(6), kind, ...sitio,
+    id: nanoid(6), kind, shape,
+    // "A mano alzada" empieza vacío: lo suyo es dibujarlo.
+    nodes: shape === "libre" ? [] : [defaultNode(shape)],
+    auto: true,
     colorHex: spec.color ?? "#ffffff",
     params: vfxDefaults(kind),
     timing: "all", startSec: 0, endSec: 2,
@@ -820,11 +834,25 @@ export function moveShot(p: StoryProject, sceneId: string, shotId: string, dir: 
 // rellena con lo que falte para que no haya que migrar nada a mano.
 function normalizeVfx(v: any): VfxLayer {
   const kind: VfxKind = vfxSpec(v.kind).id;
+  const permitidas = vfxSpec(kind).shapes;
+  const forma: VfxShape = permitidas.includes(v.shape) ? v.shape : permitidas[0];
   return {
     id: v.id ?? nanoid(6),
     kind,
-    x: Number(v.x) || 0, y: Number(v.y) || 0,
-    x2: Number(v.x2) || 0, y2: Number(v.y2) || 0,
+    shape: forma,
+    // En un proyecto de antes el sitio se puso a mano con las barras: no se
+    // toca.
+    auto: !!v.auto,
+    // Los proyectos de antes traían un solo sitio suelto en x/y/x2/y2.
+    nodes: Array.isArray(v.nodes)
+      ? v.nodes.map((n: any) => ({
+          x: Number(n.x) || 0, y: Number(n.y) || 0,
+          x2: Number(n.x2) || 0, y2: Number(n.y2) || 0,
+        }))
+      : [{
+          x: Number(v.x) || 0, y: Number(v.y) || 0,
+          x2: Number(v.x2) || 0, y2: Number(v.y2) || 0,
+        }],
     colorHex: typeof v.colorHex === "string" ? v.colorHex : (vfxSpec(kind).color ?? "#ffffff"),
     params: { ...vfxDefaults(kind), ...(v.params ?? {}) },
     timing: v.timing === "range" ? "range" : "all",
