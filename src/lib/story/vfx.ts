@@ -79,24 +79,29 @@ const INTENSIDAD = P("intensity", "Cantidad");
 const TAMANO = P("size", "Tamaño");
 const VELOCIDAD = P("speed", "Velocidad");
 const VIENTO = P("wind", "Viento", -3, 3, 0.1);
+// Los golpes (explosión, onda, líneas…) son de un disparo. Con estos dos se
+// vuelven repetibles: cada cuánto vuelven a saltar y cuánto se separan del
+// sitio marcado, para que no caigan siempre en el mismo pixel.
+const REPETIR = P("every", "Cada cuántos segundos se repite (0 = una sola vez)", 0, 8, 0.1);
+const REPARTO = P("spread", "Se reparte alrededor del sitio", 0, 1, 0.02);
 
 export const VFX: VfxSpec[] = [
   { id: "explosion", label: "Explosión", group: "golpes", shapes: ["punto"], color: "#ff8a3d", continuo: false,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, REPETIR, REPARTO] },
   { id: "chispas", label: "Chispas", group: "golpes", shapes: ["punto"], color: "#ffd23f", continuo: false,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD, P("gravity", "Peso")] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, P("gravity", "Peso"), REPETIR, REPARTO] },
   { id: "destello", label: "Destello", group: "golpes", shapes: ["punto"], color: "#8fd3ff", continuo: false,
-    params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta")] },
+    params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta"), REPETIR, REPARTO] },
   { id: "shockwave", label: "Onda de choque", group: "golpes", shapes: ["punto"], color: "#ffffff", continuo: false,
-    params: [TAMANO, VELOCIDAD, P("thickness", "Grosor")] },
+    params: [TAMANO, VELOCIDAD, P("thickness", "Grosor"), REPETIR, REPARTO] },
   { id: "escarcha", label: "Escarcha / hielo", group: "golpes", shapes: ["punto"], color: "#bff2ff", continuo: false,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, REPETIR, REPARTO] },
   { id: "speedlines", label: "Líneas de velocidad", group: "golpes", shapes: ["punto"], color: "#ffffff", continuo: false,
-    params: [INTENSIDAD, P("thickness", "Grosor"), P("length", "Largo")] },
+    params: [INTENSIDAD, P("thickness", "Grosor"), P("length", "Largo"), REPETIR, REPARTO] },
   { id: "glitch", label: "Glitch digital", group: "golpes", shapes: ["punto"], color: null, continuo: false,
-    params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta")] },
+    params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta"), REPETIR, REPARTO] },
   { id: "magiccircle", label: "Círculo mágico", group: "fuego", shapes: ["punto"], color: "#b98bff", continuo: false,
-    params: [TAMANO, VELOCIDAD, P("duration", "Cuánto aguanta")] },
+    params: [TAMANO, VELOCIDAD, P("duration", "Cuánto aguanta"), REPETIR, REPARTO] },
 
   { id: "fuego", label: "Fuego", group: "fuego", shapes: ["punto", "linea", "libre"], color: "#ff8a3d", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
@@ -147,7 +152,11 @@ export function vfxDefaults(k: VfxKind): Record<string, number> {
   const out: Record<string, number> = {};
   for (const p of vfxSpec(k).params) {
     // Los interruptores (0/1) empiezan apagados; el resto, a la mitad natural.
-    out[p.key] = p.step === 1 ? p.min : (p.key === "wind" ? 0 : 1);
+    // Los interruptores (0/1) empiezan apagados; "cada cuánto", "reparto" y
+    // "viento" empiezan en cero (un golpe suelto, centrado y sin viento); el
+    // resto, a la mitad natural.
+    const enCero = p.key === "wind" || p.key === "every" || p.key === "spread";
+    out[p.key] = p.step === 1 ? p.min : (enCero ? 0 : 1);
   }
   if (k === "rayo") { out.stormrate = 0.5; out.flash = 1; } // el fogonazo viene puesto
   if (k === "neon") out.blink = 0.5;
@@ -224,6 +233,11 @@ interface Portal { id: string; x: number; y: number; phase: number; color: Hsl; 
 interface Aura { id: string; x: number; y: number; color: Hsl; par: Record<string, number> }
 interface Fire { id: string; x: number; y: number; x2: number; y2: number; color: Hsl; par: Record<string, number>; humo: boolean }
 interface Ambient { id: string; kind: VfxKind; x: number; y: number; x2: number; y2: number; color: Hsl; par: Record<string, number> }
+// Un golpe que vuelve a saltar cada cierto rato.
+interface BurstEm {
+  id: string; kind: VfxKind; x: number; y: number;
+  color: Hsl; par: Record<string, number>; t: number; cada: number;
+}
 interface Storm { id: string; x: number; y: number; x2: number; y2: number; par: Record<string, number>; t: number; cada: number; arriba: boolean }
 
 // Lo que el motor necesita saber de una capa. El modelo guarda algo más
@@ -290,6 +304,7 @@ export class VfxScene {
   private fires: Fire[] = [];
   private ambients: Ambient[] = [];
   private storms: Storm[] = [];
+  private bursts: BurstEm[] = [];
 
   private rnd: () => number = Math.random;
   private clave = "";
@@ -307,7 +322,7 @@ export class VfxScene {
     this.speeds = []; this.glitches = []; this.circles = []; this.fogs = [];
     this.neons = []; this.xmas = []; this.beacons = []; this.orbs = [];
     this.portals = []; this.auras = []; this.fires = []; this.ambients = [];
-    this.storms = []; this.vivos.clear();
+    this.storms = []; this.bursts = []; this.vivos.clear();
     this.t = 0;
   }
 
@@ -366,6 +381,7 @@ export class VfxScene {
         const clave = `${c.id}#${i}`;
         const x = n.x * this.w, y = n.y * this.h;
         const x2 = n.x2 * this.w, y2 = n.y2 * this.h;
+        for (const e of this.bursts) if (e.id === clave) { e.x = x; e.y = y; }
         for (const e of this.fires) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.ambients) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.auras) if (e.id === clave) { e.x = x; e.y = y; }
@@ -400,14 +416,21 @@ export class VfxScene {
     const col = hexToHsl(c.colorHex || "#ffffff");
     const p = c.params;
     switch (c.kind) {
-      case "explosion": return this.explosion(x, y, col, p);
-      case "chispas": return this.chispas(x, y, col, p);
-      case "destello": return this.destello(x, y, col, p);
-      case "shockwave": return this.shockwave(x, y, col, p);
-      case "escarcha": return this.escarcha(x, y, col, p);
-      case "speedlines": return this.speedlines(x, y, col, p);
-      case "glitch": return this.glitch(x, y, p);
-      case "magiccircle": return this.circulo(x, y, col, p);
+      case "explosion": case "chispas": case "destello": case "shockwave":
+      case "escarcha": case "speedlines": case "glitch": case "magiccircle": {
+        const cada = Math.max(0, p.every ?? 0);
+        if (cada <= 0) {
+          // De una sola vez: salta justo al empezar su rato, que es lo
+          // predecible cuando se pone una explosión a un segundo concreto.
+          this.golpe(c.kind, x, y, col, p);
+          return;
+        }
+        // Repitiendo, cada uno entra con su propio desfase dentro del primer
+        // intervalo: si no, tres explosiones puestas a la vez saltarían todas
+        // en el mismo fotograma.
+        this.bursts.push({ id: clave, kind: c.kind, x, y, color: col, par: p, t: this.r(0, cada), cada });
+        return;
+      }
       case "fuego": this.fires.push({ id: clave, x, y, x2, y2, color: col, par: p, humo: false }); return;
       case "humo": this.fires.push({ id: clave, x, y, x2, y2, color: col, par: p, humo: true }); return;
       case "aura": this.auras.push({ id: clave, x, y, color: col, par: p }); return;
@@ -459,6 +482,7 @@ export class VfxScene {
     this.storms = sin(this.storms);
     this.fogs = sin(this.fogs);
     this.ambients = sin(this.ambients);
+    this.bursts = sin(this.bursts);
   }
 
   private r(a: number, b: number) { return a + this.rnd() * (b - a); }
@@ -551,6 +575,31 @@ export class VfxScene {
     const bulbs: Bulb[] = [];
     for (let i = 0; i <= n; i++) bulbs.push({ t: i / n, colorIdx: Math.floor(this.r(0, 5)), phase: this.r(0, Math.PI * 2) });
     return { id, x, y, x2, y2, bulbs, size: (p.size ?? 1) * this.k, blink: p.blink ?? 1 };
+  }
+
+  // Lanza un golpe del tipo que sea, repartido alrededor del sitio si se ha
+  // pedido: sin esto una explosión que se repite cae siempre en el mismo pixel.
+  private golpe(kind: VfxKind, x: number, y: number, col: Hsl, p: Record<string, number>) {
+    const radio = Math.max(0, p.spread ?? 0) * this.h * 0.5;
+    if (radio > 0) {
+      const a = this.r(0, Math.PI * 2);
+      // Raíz cuadrada del azar: así se reparten por todo el círculo y no se
+      // amontonan en el centro.
+      const d = Math.sqrt(this.rnd()) * radio;
+      x += Math.cos(a) * d;
+      y += Math.sin(a) * d;
+    }
+    switch (kind) {
+      case "explosion": return this.explosion(x, y, col, p);
+      case "chispas": return this.chispas(x, y, col, p);
+      case "destello": return this.destello(x, y, col, p);
+      case "shockwave": return this.shockwave(x, y, col, p);
+      case "escarcha": return this.escarcha(x, y, col, p);
+      case "speedlines": return this.speedlines(x, y, col, p);
+      case "glitch": return this.glitch(x, y, p);
+      case "magiccircle": return this.circulo(x, y, col, p);
+      default: return;
+    }
   }
 
   // ---------------- rayo ----------------
@@ -729,6 +778,17 @@ export class VfxScene {
     }
     for (const s of this.xmas) for (const b of s.bulbs) b.phase += s.blink * 0.06;
     for (const f of this.fogs) f.phase += 0.01 * (f.par.speed ?? 1);
+
+    for (const b of this.bursts) {
+      b.t += PASO;
+      if (b.t < b.cada) continue;
+      // El siguiente no cae al mismo ritmo exacto: ±40 %, para que dos
+      // explosiones repitiéndose no se acompasen nunca.
+      const base = Math.max(0.05, b.par.every ?? 1);
+      b.cada = base * this.r(0.6, 1.4);
+      b.t = 0;
+      this.golpe(b.kind, b.x, b.y, b.color, b.par);
+    }
 
     for (const s of this.storms) {
       s.t += PASO;

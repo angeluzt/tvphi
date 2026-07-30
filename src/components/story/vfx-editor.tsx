@@ -227,7 +227,9 @@ export function VfxEditor({
                     <p className="mt-1 text-[10px] text-muted/80">
                       {spec.continuo
                         ? `No para mientras dure su rato (${ventana.start.toFixed(1)}s a ${ventana.end.toFixed(1)}s de los ${dur.toFixed(1)}s).`
-                        : `Es un golpe: salta a los ${ventana.start.toFixed(1)}s y se apaga solo.`}
+                        : (v.params.every ?? 0) > 0
+                          ? `Salta cada ${(v.params.every ?? 0).toFixed(1)}s más o menos, de los ${ventana.start.toFixed(1)}s a los ${ventana.end.toFixed(1)}s. El ritmo lleva algo de azar para que no suene a metrónomo.`
+                          : `Es un golpe: salta a los ${ventana.start.toFixed(1)}s y se apaga solo. Sube «cada cuántos segundos se repite» para que no pare.`}
                     </p>
                   </div>
 
