@@ -30,6 +30,18 @@ const overlaySchema = z.object({
   soundDelay: z.number().optional(),
   soundLoop: z.boolean().optional(),
 });
+// Efectos de partículas colocados sobre la toma. Solo ajustes: todo lo que se
+// dibuja lo genera el motor, así que aquí no hay nada pesado.
+const vfxSchema = z.object({
+  id: z.string(),
+  kind: z.string().max(40),
+  x: z.number(), y: z.number(), x2: z.number(), y2: z.number(),
+  colorHex: z.string().max(9),
+  params: z.record(z.string(), z.number()),
+  timing: z.enum(["all", "range"]),
+  startSec: z.number(),
+  endSec: z.number(),
+});
 const dialogueSchema = z.object({
   id: z.string(),
   text: z.string().max(5000),
@@ -77,6 +89,7 @@ const shotSchema = z.object({
   sfx: z.array(shotSfxSchema).max(20),
   audioOverrides: z.array(audioOverrideSchema).max(30),
   overlays: z.array(overlaySchema).max(20),
+  vfx: z.array(vfxSchema).max(20).optional(),
 });
 const sceneSchema = z.object({
   id: z.string(),

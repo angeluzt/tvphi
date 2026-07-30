@@ -1,10 +1,11 @@
 import {
   flatten, locate, lerpFrame, framePx, moveProgress, overlayBox,
   dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE, ASPECTS, aspectInfo, setProjectAspect,
-  overlayWindows, overlaySoundStart,
+  overlayWindows, overlaySoundStart, vfxWindow,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
   type ClipVideo,
 } from "./model";
+import { VfxScene, type VfxInput } from "./vfx";
 import { getAsset, assetUrl } from "./store";
 import { Recorder } from "@/lib/studio/recorder";
 
@@ -33,6 +34,9 @@ export class StoryEngine {
   // Stickers animados (GIF) ya descompuestos en fotogramas: el lienzo solo sabe
   // dibujar imágenes quietas, así que hay que elegir el fotograma a mano.
   private anims = new Map<string, { frames: ImageBitmap[]; ends: number[]; total: number }>();
+  // Partículas. Una sola escena para todo: solo hay una toma a la vista, y así
+  // el estado se rehace al cambiar de toma en vez de acumularse.
+  private vfx = new VfxScene();
 
   private raf = 0;
   private running = false;
@@ -603,6 +607,29 @@ export class StoryEngine {
       this.drawOverlay(o, oi, p, frames, iw, ih, desde);
       ctx.restore();
     });
+
+    this.drawVfx(f, lt, alpha);
+  }
+
+  // Partículas de la toma. Van encima de todo (la lluvia cae por delante de los
+  // stickers) y no se dibujan durante la transición de salida de la anterior:
+  // la escena es de ESTA toma y no tiene sentido verla sobre la de antes.
+  private drawVfx(f: FlatShot, lt: number, alpha: number) {
+    const capas = f.shot.vfx ?? [];
+    if (!capas.length) { return; }
+    const entradas: VfxInput[] = capas.map((v) => {
+      const w = vfxWindow(v, f.dur);
+      return {
+        id: v.id, kind: v.kind, x: v.x, y: v.y, x2: v.x2, y2: v.y2,
+        colorHex: v.colorHex, params: v.params, start: w.start, end: w.end,
+      };
+    });
+    this.vfx.setSize(this.w, this.h);
+    // La clave incluye los ajustes: al tocar una barra la escena se rehace, que
+    // es lo que hace que el cambio se vea al momento sin darle al play.
+    const clave = `${f.shot.id}:${JSON.stringify(entradas)}`;
+    this.vfx.seek(clave, entradas, lt);
+    this.vfx.draw(this.ctx, alpha);
   }
 
   private drawOverlay(
