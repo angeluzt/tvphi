@@ -70,6 +70,13 @@ export interface Dialogue {
   audioId?: string; // audio generado (IndexedDB)
   dur: number; // duración del audio (s), 0 si aún no se generó
   effect: VoiceEffect;
+  // Velocidad de lectura (1 = tal cual). Cambia lo que dura SIN tocar el tono:
+  // el modelo de voz no deja pedirle otra velocidad, así que se estira el audio
+  // ya generado.
+  speed: number;
+  // Tono (1 = tal cual). Cambia lo grave/agudo SIN tocar la duración. Es lo que
+  // permite tener voces distintas con el mismo modelo, que solo trae una.
+  pitch: number;
   // true cuando el texto cambió después de generar la voz: el audio sigue ahí
   // (para poder seguir viendo el video) pero ya no corresponde a lo escrito.
   stale: boolean;
@@ -433,7 +440,9 @@ export function normalizePreset(p: PresetMotion, imgW: number, imgH: number): Pr
 // Lo que ocupa un diálogo ya con su efecto: los que cambian el tono lo hacen
 // cambiando la velocidad, y entonces el audio dura más o menos.
 export function dialogueDur(d: Dialogue) {
-  return (d.dur || 0) / (VOICE_RATE[d.effect] ?? 1);
+  // El efecto ya cambiaba la duración (sigue igual que siempre) y la velocidad
+  // se le suma encima. El tono no aparece aquí: no altera lo que dura.
+  return (d.dur || 0) / ((VOICE_RATE[d.effect] ?? 1) * (d.speed || 1));
 }
 
 // Instante en que arranca cada diálogo dentro de la toma. Se encadenan: cada uno
@@ -659,7 +668,7 @@ export function newScene(imageId: string, imgW: number, imgH: number): StoryScen
 }
 
 export function newDialogue(gapSec = 0.3): Dialogue {
-  return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none", stale: false };
+  return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none", speed: 1, pitch: 1, stale: false };
 }
 
 export function newSfx(audioId: string, name: string, dur: number): ShotSfx {
@@ -887,7 +896,7 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     to: hasFrames ? s.to : base.to,
     transition: s.transition ?? base.transition,
     transitionDur: s.transitionDur ?? base.transitionDur,
-    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", stale: !!d.stale }))),
+    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", speed: Number(d.speed) || 1, pitch: Number(d.pitch) || 1, stale: !!d.stale }))),
     sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
@@ -942,7 +951,7 @@ export function migrateProject(raw: any): StoryProject {
       ...base,
       transition: s.transition ?? "fade",
       dialogues: s.narration
-        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect, stale: false }]
+        ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect, speed: 1, pitch: 1, stale: false }]
         : [],
       overlays: (s.overlays ?? []).map(normalizeOverlay),
       vfx: (s.vfx ?? []).map(normalizeVfx),

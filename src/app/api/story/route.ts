@@ -49,6 +49,9 @@ const dialogueSchema = z.object({
   dur: z.number(),
   gapSec: z.number(),
   effect: z.enum(["none", "deep", "demon", "whisper", "robot", "cave", "radio", "high"]),
+  // Velocidad de lectura y tono, cada uno por su lado.
+  speed: z.number().optional(),
+  pitch: z.number().optional(),
   // El texto cambió y la voz aún es la antigua.
   stale: z.boolean().optional(),
 });
