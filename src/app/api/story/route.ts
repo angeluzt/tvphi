@@ -37,6 +37,7 @@ const vfxSchema = z.object({
   kind: z.string().max(40),
   shape: z.enum(["arriba", "punto", "linea", "libre"]).optional(),
   auto: z.boolean().optional(),
+  follow: z.boolean().optional(),
   nodes: z.array(z.object({
     x: z.number(), y: z.number(), x2: z.number(), y2: z.number(),
   })).max(200).optional(),
