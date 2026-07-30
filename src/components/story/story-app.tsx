@@ -10,7 +10,7 @@ import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
-import { VfxCanvas } from "./vfx-canvas";
+import { VfxCanvas, VfxTools } from "./vfx-canvas";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
 import { NumberInput } from "./number-input";
@@ -74,6 +74,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [selShot, setSelShot] = useState<string | null>(null);
   const [selOverlay, setSelOverlay] = useState<string | null>(null);
   const [selVfx, setSelVfx] = useState<string | null>(null);
+  // Colocar sitios se enciende y se apaga: apagado, la previsualización se ve
+  // limpia y se puede tocar por debajo; encendido, el dedo va a los puntos.
+  const [colocando, setColocando] = useState(true);
+  const [borrandoVfx, setBorrandoVfx] = useState(false);
   const [dragScene, setDragScene] = useState<string | null>(null);
   // Qué escena se ha agarrado POR EL ASA. La tarjeta entera no puede ser
   // arrastrable: tocando cualquier hueco (o mientras se mueve una barra) se
@@ -790,6 +794,15 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         {/* Previsualización: se queda fija al desplazarse para poder colocar
             stickers y ver el encuadre mientras se edita una toma larga. */}
         <div className="card p-3 lg:sticky lg:top-16 lg:z-20">
+          {/* Los botones van FUERA del cuadro: encima de la imagen tapaban justo
+              la parte donde hace falta poner sitios. */}
+          {curVfx && !section && (
+            <VfxTools
+              layer={curVfx} activo={colocando} borrando={borrandoVfx}
+              onToggle={setColocando} onBorrando={setBorrandoVfx}
+              onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
+            />
+          )}
           {/* Se limita la altura para que, al quedarse fija, deje sitio al editor. */}
           <div
             className="relative mx-auto w-full overflow-hidden rounded-2xl border border-border bg-black"
@@ -812,9 +825,9 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             )}
             {/* Colocar el efecto dibujando encima: tocar puntos, trazar líneas
                 o pintar a mano alzada, que es como se acierta de verdad. */}
-            {curVfx && (
+            {curVfx && colocando && (
               <VfxCanvas
-                layer={curVfx}
+                layer={curVfx} borrando={borrandoVfx}
                 onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
               />
             )}
@@ -1021,7 +1034,18 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
                         onAddOverlaySound={(id, e) => addOverlaySound(sc.id, sh, id, e)}
                         selectedVfx={selVfx}
-                        onSelectVfx={(id) => { setSelShot(sh.id); setSelVfx(id); }}
+                        onSelectVfx={(id) => {
+                          setSelShot(sh.id);
+                          setSelVfx(id);
+                          // Al abrir otro efecto se vuelve a "poner": quedarse en
+                          // modo borrar sin darte cuenta hace que el primer toque
+                          // en el nuevo no cree nada.
+                          setBorrandoVfx(false);
+                          // Al abrir un efecto se lleva el reproductor a su toma:
+                          // si no, la capa para colocar sitios no sale porque el
+                          // vídeo está en otro sitio.
+                          if (id) engineRef.current?.seekToShot(sh.id);
+                        }}
                         onSelectOverlay={(id) => {
                           setSelShot(sh.id);
                           setSelOverlay(id);
@@ -1329,11 +1353,27 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <X className="h-4 w-4" />
             </button>
           </div>
+          {/* Aquí también se pueden colocar los sitios: es el motivo de que exista
+              esta miniatura, no tener que subir al reproductor de arriba. */}
+          {curVfx && (
+            <VfxTools
+              layer={curVfx} activo={colocando} borrando={borrandoVfx}
+              onToggle={setColocando} onBorrando={setBorrandoVfx}
+              onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
+            />
+          )}
           <div
             ref={floatRef}
             className="relative mx-auto w-full overflow-hidden rounded-xl bg-black"
             style={{ aspectRatio: `${forma.w} / ${forma.h}`, maxWidth: `calc(46vh * ${forma.ratio})` }}
-          />
+          >
+            {curVfx && colocando && (
+              <VfxCanvas
+                layer={curVfx} borrando={borrandoVfx}
+                onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
+              />
+            )}
+          </div>
           <div className="mt-2 flex items-center gap-2 px-1">
             <button onClick={togglePlay} className="btn-brand py-1">
               {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
