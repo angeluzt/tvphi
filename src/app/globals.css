@@ -100,4 +100,20 @@ body {
   .label {
     @apply text-xs font-medium uppercase tracking-wide text-muted;
   }
+  /* Esto es una herramienta, no un documento: arrastrar para seleccionar solo
+     estorba. Al mover una barra se acababa pintando de azul media pantalla (y
+     encima se podía arrastrar el trozo seleccionado). Se deja la selección
+     donde sí hace falta: los campos donde se escribe. */
+  .tool-ui {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tool-ui input,
+  .tool-ui textarea,
+  .tool-ui [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
 }
