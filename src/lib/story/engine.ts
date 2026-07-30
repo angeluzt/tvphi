@@ -1,5 +1,5 @@
 import {
-  flatten, locate, lerpFrame, framePx, moveProgress, overlayBox,
+  flatten, locate, lerpFrame, framePx, frameH, moveProgress, overlayBox,
   dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE, ASPECTS, aspectInfo, setProjectAspect,
   overlayWindows, overlaySoundStart, vfxWindow,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
@@ -653,17 +653,45 @@ export class StoryEngine {
   private drawVfx(f: FlatShot, lt: number, alpha: number) {
     const capas = f.shot.vfx ?? [];
     if (!capas.length) { return; }
+    // Si la capa sigue a la toma, sus sitios se anclan a la IMAGEN: se pasan por
+    // el encuadre para saber dónde caen ahora en el cuadro. Es lo mismo que
+    // hacen los stickers "pegados a la imagen", y evita que una hoguera se
+    // quede flotando cuando la cámara se desplaza.
+    const p = moveProgress(f.shot, lt);
+    const fr = f.frames;
+    const iw = f.scene.imgW || 16, ih = f.scene.imgH || 9;
+    const seguir = (n: { x: number; y: number; x2: number; y2: number }) => {
+      const f0 = fr.from;
+      const fa = lerpFrame(fr.from, fr.to, p);
+      const h0 = frameH(f0.w, iw, ih);
+      const hp = frameH(fa.w, iw, ih);
+      const mapa = (x: number, y: number) => {
+        const ix = f0.cx - f0.w / 2 + x * f0.w;
+        const iy = f0.cy - h0 / 2 + y * h0;
+        return {
+          x: (ix - (fa.cx - fa.w / 2)) / (fa.w || 1),
+          y: (iy - (fa.cy - hp / 2)) / (hp || 1),
+        };
+      };
+      const a = mapa(n.x, n.y), b = mapa(n.x2, n.y2);
+      return { x: a.x, y: a.y, x2: b.x, y2: b.y };
+    };
     const entradas: VfxInput[] = capas.map((v) => {
       const w = vfxWindow(v, f.dur);
+      const nodes = v.nodes ?? [];
       return {
-        id: v.id, kind: v.kind, nodes: v.nodes ?? [],
+        id: v.id, kind: v.kind, shape: v.shape,
+        nodes: v.follow ? nodes.map(seguir) : nodes,
         colorHex: v.colorHex, params: v.params, start: w.start, end: w.end,
       };
     });
     this.vfx.setSize(this.w, this.h);
     // La clave incluye los ajustes: al tocar una barra la escena se rehace, que
     // es lo que hace que el cambio se vea al momento sin darle al play.
-    const clave = `${f.shot.id}:${JSON.stringify(entradas)}`;
+    // La clave lleva los AJUSTES, no los sitios ya proyectados: si llevara la
+    // posición del fotograma, la escena se reharía entera en cada frame
+    // mientras la cámara se mueve y no habría partículas que valieran.
+    const clave = `${f.shot.id}:${JSON.stringify(capas)}`;
     this.vfx.seek(clave, entradas, lt);
     this.vfx.draw(this.ctx, alpha);
   }

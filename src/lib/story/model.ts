@@ -160,6 +160,11 @@ export interface VfxLayer {
   // misma capa, con los mismos ajustes y el mismo color.
   shape: VfxShape;
   nodes: VfxNode[];
+  // Si va pegado a la imagen: al moverse o acercarse la toma, el efecto se
+  // mueve con ella. Es lo que hace que una hoguera no se quede flotando en el
+  // aire cuando la cámara se desplaza. No tiene sentido en lo que cae sobre
+  // todo el cuadro (lluvia desde arriba), y ahí se deja apagado.
+  follow: boolean;
   // true mientras los sitios sean los de serie (los que se ponen solos al
   // añadir el efecto, para que se vea algo al momento). En cuanto se coloca
   // uno a mano, los de serie se van: si tocas tres sitios quieres tres, no
@@ -189,6 +194,9 @@ export function newVfx(kind: VfxKind): VfxLayer {
     // "A mano alzada" empieza vacío: lo suyo es dibujarlo.
     nodes: shape === "libre" ? [] : [defaultNode(shape)],
     auto: true,
+    // Lo que se coloca en un sitio concreto se pega a la imagen; lo que cae
+    // sobre todo el cuadro, no.
+    follow: shape !== "arriba",
     colorHex: spec.color ?? "#ffffff",
     params: vfxDefaults(kind),
     timing: "all", startSec: 0, endSec: 2,
@@ -841,8 +849,9 @@ function normalizeVfx(v: any): VfxLayer {
     kind,
     shape: forma,
     // En un proyecto de antes el sitio se puso a mano con las barras: no se
-    // toca.
+    // toca. Y como entonces nada seguía a la cámara, se respeta.
     auto: !!v.auto,
+    follow: !!v.follow,
     // Los proyectos de antes traían un solo sitio suelto en x/y/x2/y2.
     nodes: Array.isArray(v.nodes)
       ? v.nodes.map((n: any) => ({

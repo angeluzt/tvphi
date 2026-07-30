@@ -26,7 +26,8 @@ export type VfxKind =
   | "explosion" | "chispas" | "destello" | "shockwave" | "aura"
   | "fuego" | "lluvia" | "nieve" | "niebla" | "ceniza" | "hojas"
   | "rayo" | "portal" | "glitch" | "speedlines" | "luz" | "baliza"
-  | "neon" | "navidad" | "magiccircle" | "escarcha" | "polvo";
+  | "neon" | "navidad" | "magiccircle" | "escarcha" | "polvo"
+  | "humo" | "burbujas" | "confeti" | "estrellas";
 
 // Cómo se coloca el efecto sobre la imagen. Un mismo efecto admite varias
 // formas, y casi siempre VARIOS sitios a la vez: la gracia es tocar tres ramas
@@ -52,9 +53,19 @@ export interface VfxParam {
   step: number;
 }
 
+export type VfxGroup = "golpes" | "fuego" | "clima" | "ambiente" | "luces";
+export const GROUP_LABEL: Record<VfxGroup, string> = {
+  golpes: "Golpes e impactos",
+  fuego: "Fuego y energía",
+  clima: "Clima",
+  ambiente: "Ambiente",
+  luces: "Luces y neón",
+};
+
 export interface VfxSpec {
   id: VfxKind;
   label: string;
+  group: VfxGroup;
   shapes: VfxShape[]; // la primera es la de serie
   color: string | null; // color por defecto, o null si el efecto no lo usa
   params: VfxParam[];
@@ -70,53 +81,64 @@ const VELOCIDAD = P("speed", "Velocidad");
 const VIENTO = P("wind", "Viento", -3, 3, 0.1);
 
 export const VFX: VfxSpec[] = [
-  { id: "explosion", label: "Explosión", shapes: ["punto"], color: "#ff8a3d", continuo: false,
+  { id: "explosion", label: "Explosión", group: "golpes", shapes: ["punto"], color: "#ff8a3d", continuo: false,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
-  { id: "chispas", label: "Chispas", shapes: ["punto"], color: "#ffd23f", continuo: false,
+  { id: "chispas", label: "Chispas", group: "golpes", shapes: ["punto"], color: "#ffd23f", continuo: false,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, P("gravity", "Peso")] },
-  { id: "destello", label: "Destello", shapes: ["punto"], color: "#8fd3ff", continuo: false,
+  { id: "destello", label: "Destello", group: "golpes", shapes: ["punto"], color: "#8fd3ff", continuo: false,
     params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta")] },
-  { id: "shockwave", label: "Onda de choque", shapes: ["punto"], color: "#ffffff", continuo: false,
+  { id: "shockwave", label: "Onda de choque", group: "golpes", shapes: ["punto"], color: "#ffffff", continuo: false,
     params: [TAMANO, VELOCIDAD, P("thickness", "Grosor")] },
-  { id: "escarcha", label: "Escarcha / hielo", shapes: ["punto"], color: "#bff2ff", continuo: false,
+  { id: "escarcha", label: "Escarcha / hielo", group: "golpes", shapes: ["punto"], color: "#bff2ff", continuo: false,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
-  { id: "speedlines", label: "Líneas de velocidad", shapes: ["punto"], color: "#ffffff", continuo: false,
+  { id: "speedlines", label: "Líneas de velocidad", group: "golpes", shapes: ["punto"], color: "#ffffff", continuo: false,
     params: [INTENSIDAD, P("thickness", "Grosor"), P("length", "Largo")] },
-  { id: "glitch", label: "Glitch digital", shapes: ["punto"], color: null, continuo: false,
+  { id: "glitch", label: "Glitch digital", group: "golpes", shapes: ["punto"], color: null, continuo: false,
     params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta")] },
-  { id: "magiccircle", label: "Círculo mágico", shapes: ["punto"], color: "#b98bff", continuo: false,
+  { id: "magiccircle", label: "Círculo mágico", group: "fuego", shapes: ["punto"], color: "#b98bff", continuo: false,
     params: [TAMANO, VELOCIDAD, P("duration", "Cuánto aguanta")] },
 
-  { id: "fuego", label: "Fuego", shapes: ["punto", "linea", "libre"], color: "#ff8a3d", continuo: true,
+  { id: "fuego", label: "Fuego", group: "fuego", shapes: ["punto", "linea", "libre"], color: "#ff8a3d", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
-  { id: "aura", label: "Aura de energía", shapes: ["punto"], color: "#7effc2", continuo: true,
+  { id: "aura", label: "Aura de energía", group: "fuego", shapes: ["punto"], color: "#7effc2", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, P("turb", "Revuelo")] },
-  { id: "portal", label: "Portal", shapes: ["punto"], color: "#7ee8ff", continuo: true,
+  { id: "portal", label: "Portal", group: "fuego", shapes: ["punto"], color: "#7ee8ff", continuo: true,
     params: [TAMANO, VELOCIDAD, INTENSIDAD, P("dir", "Hacia dentro (0) / fuera (1)", 0, 1, 1)] },
-  { id: "luz", label: "Luz (esfera)", shapes: ["punto"], color: "#a0c8ff", continuo: true,
+  { id: "luz", label: "Luz (esfera)", group: "luces", shapes: ["punto"], color: "#a0c8ff", continuo: true,
     params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo")] },
-  { id: "baliza", label: "Baliza (policía / ambulancia)", shapes: ["punto"], color: null, continuo: true,
+  { id: "baliza", label: "Baliza (policía / ambulancia)", group: "luces", shapes: ["punto"], color: null, continuo: true,
     params: [TAMANO, P("blink", "Parpadeo"), INTENSIDAD, P("preset", "Policía (0) / ambulancia (1)", 0, 1, 1)] },
-  { id: "neon", label: "Neón", shapes: ["linea", "libre", "punto"], color: "#ff2fd6", continuo: true,
+  { id: "neon", label: "Neón", group: "luces", shapes: ["linea", "libre", "punto"], color: "#ff2fd6", continuo: true,
     params: [P("thickness", "Grosor"), INTENSIDAD, P("blink", "Parpadeo")] },
-  { id: "navidad", label: "Luces navideñas", shapes: ["linea", "libre"], color: null, continuo: true,
+  { id: "navidad", label: "Luces navideñas", group: "luces", shapes: ["linea", "libre"], color: null, continuo: true,
     params: [TAMANO, P("spacing", "Separación"), P("blink", "Parpadeo")] },
-  { id: "rayo", label: "Rayo", shapes: ["linea", "punto"], color: null, continuo: true,
+  { id: "rayo", label: "Rayo", group: "clima", shapes: ["arriba", "linea", "punto"], color: null, continuo: true,
     params: [P("thickness", "Grosor"), P("branch", "Ramas"), P("flicker", "Parpadeo"),
-             P("stormrate", "Cada cuánto cae", 0.05, 3, 0.05)] },
+             P("stormrate", "Cada cuánto cae", 0.05, 3, 0.05),
+             P("flash", "Fogonazo en toda la pantalla", 0, 1, 1)] },
 
-  { id: "lluvia", label: "Lluvia", shapes: ["arriba", "punto", "linea", "libre"], color: "#8fc4ff", continuo: true,
+  { id: "lluvia", label: "Lluvia", group: "clima", shapes: ["arriba", "punto", "linea", "libre"], color: "#8fc4ff", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO] },
-  { id: "nieve", label: "Nieve", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffffff", continuo: true,
+  { id: "nieve", label: "Nieve", group: "clima", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffffff", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO] },
-  { id: "ceniza", label: "Ceniza", shapes: ["arriba", "punto", "linea", "libre"], color: "#caa27a", continuo: true,
+  { id: "ceniza", label: "Ceniza", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#caa27a", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD] },
-  { id: "hojas", label: "Hojas / pétalos", shapes: ["arriba", "punto", "linea", "libre"], color: "#8a6a3a", continuo: true,
+  { id: "hojas", label: "Hojas / pétalos", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#8a6a3a", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO] },
-  { id: "polvo", label: "Polvo mágico / luciérnagas", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffe28a", continuo: true,
+  { id: "polvo", label: "Polvo mágico / luciérnagas", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffe28a", continuo: true,
     params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo"), VELOCIDAD] },
-  { id: "niebla", label: "Niebla", shapes: ["punto", "linea", "arriba", "libre"], color: "#cfd6e6", continuo: true,
+  { id: "niebla", label: "Niebla", group: "clima", shapes: ["punto", "linea", "arriba", "libre"], color: "#cfd6e6", continuo: true,
     params: [P("density", "Densidad"), VELOCIDAD, TAMANO] },
+
+  // Añadidos aprovechando lo que el motor ya sabe hacer.
+  { id: "humo", label: "Humo", group: "fuego", shapes: ["punto", "linea", "libre"], color: "#8a8a8a", continuo: true,
+    params: [INTENSIDAD, TAMANO, VELOCIDAD] },
+  { id: "burbujas", label: "Burbujas", group: "ambiente", shapes: ["punto", "linea", "libre", "arriba"], color: "#bfe8ff", continuo: true,
+    params: [INTENSIDAD, TAMANO, VELOCIDAD] },
+  { id: "confeti", label: "Confeti", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#ff5fa2", continuo: true,
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO] },
+  { id: "estrellas", label: "Estrellas / brillos", group: "luces", shapes: ["arriba", "punto", "linea", "libre"], color: "#fff3b0", continuo: true,
+    params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo")] },
 ];
 
 export const vfxSpec = (k: VfxKind) => VFX.find((v) => v.id === k) ?? VFX[0];
@@ -127,7 +149,7 @@ export function vfxDefaults(k: VfxKind): Record<string, number> {
     // Los interruptores (0/1) empiezan apagados; el resto, a la mitad natural.
     out[p.key] = p.step === 1 ? p.min : (p.key === "wind" ? 0 : 1);
   }
-  if (k === "rayo") out.stormrate = 0.5;
+  if (k === "rayo") { out.stormrate = 0.5; out.flash = 1; } // el fogonazo viene puesto
   if (k === "neon") out.blink = 0.5;
   if (k === "hojas") out.wind = 0.5;
   return out;
@@ -187,7 +209,7 @@ interface Part {
 }
 interface Flash { x: number; y: number; r: number; maxR: number; alpha: number; hue: number }
 interface Seg { x1: number; y1: number; x2: number; y2: number }
-interface Bolt { trunk: Seg[]; branches: Seg[][]; life: number; maxLife: number; thickness: number }
+interface Bolt { trunk: Seg[]; branches: Seg[][]; life: number; maxLife: number; thickness: number; flash: boolean }
 interface Shock { x: number; y: number; r: number; maxR: number; alpha: number; thickness: number; hue: number; speed: number }
 interface SpeedBurst { x: number; y: number; lines: { angle: number; len: number }[]; life: number; maxLife: number; thickness: number; hue: number }
 interface Glitch { x: number; y: number; w: number; h: number; life: number; maxLife: number; density: number }
@@ -200,9 +222,9 @@ interface Beacon { id: string; x: number; y: number; colors: Hsl[]; pattern: "ro
 interface Orb { id: string; x: number; y: number; phase: number; color: Hsl; par: Record<string, number> }
 interface Portal { id: string; x: number; y: number; phase: number; color: Hsl; par: Record<string, number> }
 interface Aura { id: string; x: number; y: number; color: Hsl; par: Record<string, number> }
-interface Fire { id: string; x: number; y: number; x2: number; y2: number; color: Hsl; par: Record<string, number> }
+interface Fire { id: string; x: number; y: number; x2: number; y2: number; color: Hsl; par: Record<string, number>; humo: boolean }
 interface Ambient { id: string; kind: VfxKind; x: number; y: number; x2: number; y2: number; color: Hsl; par: Record<string, number> }
-interface Storm { id: string; x: number; y: number; x2: number; y2: number; par: Record<string, number>; t: number }
+interface Storm { id: string; x: number; y: number; x2: number; y2: number; par: Record<string, number>; t: number; cada: number; arriba: boolean }
 
 // Lo que el motor necesita saber de una capa. El modelo guarda algo más
 // (cuándo se ve), pero aquí solo llega lo que se dibuja.
@@ -210,6 +232,7 @@ export interface VfxNodeIn { x: number; y: number; x2: number; y2: number } // 0
 export interface VfxInput {
   id: string;
   kind: VfxKind;
+  shape: VfxShape;
   // Todos los sitios donde actúa: tres puntos de fuego son tres nodos. Un punto
   // suelto es un nodo con inicio y fin en el mismo sitio.
   nodes: VfxNodeIn[];
@@ -229,6 +252,12 @@ const AMBIENT_CONFIG: Record<string, {
   ceniza: { sizeMin: 1.5, sizeMax: 3, vxMin: -0.3, vxMax: 0.3, vyMin: -0.6, vyMax: 0.3, gravity: -0.001, drag: 0.995, maxLife: 260, renderType: "glow", blend: "lighter", sway: true, rotate: false },
   hojas: { sizeMin: 3, sizeMax: 6, vxMin: -0.3, vxMax: 0.3, vyMin: 1, vyMax: 2, gravity: 0.01, drag: 0.997, maxLife: 300, renderType: "leaf", blend: "source-over", sway: true, rotate: true },
   polvo: { sizeMin: 1, sizeMax: 2.2, vxMin: -0.2, vxMax: 0.2, vyMin: -0.5, vyMax: -0.1, gravity: 0, drag: 0.99, maxLife: 180, renderType: "glow", blend: "lighter", sway: true, rotate: false },
+  // Suben despacio y se van; el vaivén las hace parecer agua.
+  burbujas: { sizeMin: 1.5, sizeMax: 4, vxMin: -0.15, vxMax: 0.15, vyMin: -1.6, vyMax: -0.6, gravity: -0.004, drag: 0.995, maxLife: 240, renderType: "glow", blend: "lighter", sway: true, rotate: false },
+  // Papelitos: caen dando vueltas, como las hojas pero más vivos.
+  confeti: { sizeMin: 2, sizeMax: 4.5, vxMin: -0.6, vxMax: 0.6, vyMin: 1.2, vyMax: 2.6, gravity: 0.012, drag: 0.996, maxLife: 300, renderType: "leaf", blend: "source-over", sway: true, rotate: true },
+  // Casi quietas: solo están y brillan.
+  estrellas: { sizeMin: 0.8, sizeMax: 2, vxMin: -0.06, vxMax: 0.06, vyMin: -0.06, vyMax: 0.06, gravity: 0, drag: 0.99, maxLife: 200, renderType: "glow", blend: "lighter", sway: false, rotate: false },
 };
 const XMAS: Hsl[] = [
   { h: 0, s: 80, l: 55 }, { h: 140, s: 70, l: 45 }, { h: 45, s: 90, l: 60 },
@@ -320,6 +349,7 @@ export class VfxScene {
     if (objetivo <= hechos) return;
     for (let i = hechos; i < objetivo; i++) {
       this.montar(capas, i * PASO);
+      this.recolocar(capas);
       this.emitir();
       this.fisica();
     }
@@ -327,6 +357,29 @@ export class VfxScene {
   }
 
   // Da de alta y de baja las capas según su rato dentro de la toma.
+  // Recoloca los emisores vivos. Hace falta cuando la capa sigue a la toma: la
+  // cámara se mueve y la hoguera tiene que quedarse en su sitio de la imagen,
+  // no del cuadro. Lo ya soltado no se toca (el humo que subió, subió).
+  private recolocar(capas: VfxInput[]) {
+    for (const c of capas) {
+      c.nodes.forEach((n, i) => {
+        const clave = `${c.id}#${i}`;
+        const x = n.x * this.w, y = n.y * this.h;
+        const x2 = n.x2 * this.w, y2 = n.y2 * this.h;
+        for (const e of this.fires) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
+        for (const e of this.ambients) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
+        for (const e of this.auras) if (e.id === clave) { e.x = x; e.y = y; }
+        for (const e of this.orbs) if (e.id === clave) { e.x = x; e.y = y; }
+        for (const e of this.portals) if (e.id === clave) { e.x = x; e.y = y; }
+        for (const e of this.beacons) if (e.id === clave) { e.x = x; e.y = y; }
+        for (const e of this.fogs) if (e.id === clave) { e.x = x; e.y = y; }
+        for (const e of this.storms) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
+        for (const e of this.neons) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
+        for (const e of this.xmas) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
+      });
+    }
+  }
+
   private montar(capas: VfxInput[], t: number) {
     for (const c of capas) {
       const dentro = t >= c.start && t < c.end;
@@ -355,7 +408,8 @@ export class VfxScene {
       case "speedlines": return this.speedlines(x, y, col, p);
       case "glitch": return this.glitch(x, y, p);
       case "magiccircle": return this.circulo(x, y, col, p);
-      case "fuego": this.fires.push({ id: clave, x, y, x2, y2, color: col, par: p }); return;
+      case "fuego": this.fires.push({ id: clave, x, y, x2, y2, color: col, par: p, humo: false }); return;
+      case "humo": this.fires.push({ id: clave, x, y, x2, y2, color: col, par: p, humo: true }); return;
       case "aura": this.auras.push({ id: clave, x, y, color: col, par: p }); return;
       case "portal": this.portals.push({ id: clave, x, y, phase: 0, color: col, par: p }); return;
       case "luz": this.orbs.push({ id: clave, x, y, phase: 0, color: col, par: p }); return;
@@ -374,7 +428,17 @@ export class VfxScene {
         return;
       }
       case "navidad": this.xmas.push(this.guirnalda(clave, x, y, x2, y2, p)); return;
-      case "rayo": this.storms.push({ id: clave, x, y, x2, y2, par: p, t: 1e9 }); return;
+      case "rayo": {
+        // Cada rayo arranca con su propio desfase y su propio ritmo: si no,
+        // varios rayos puestos a la vez caen todos en el mismo fotograma y
+        // canta muchísimo.
+        const cada = 1 / Math.max(0.05, p.stormrate ?? 0.5);
+        this.storms.push({
+          id: clave, x, y, x2, y2, par: p,
+          t: this.r(0, cada), cada, arriba: c.shape === "arriba",
+        });
+        return;
+      }
       case "niebla": this.fogs.push({ id: clave, x, y, phase: this.rnd() * 6.28, par: p, color: col }); return;
       default:
         this.ambients.push({ id: clave, kind: c.kind, x, y, x2, y2, color: col, par: p });
@@ -518,6 +582,9 @@ export class VfxScene {
       trunk, branches, life: 0,
       maxLife: Math.round(this.r(16, 24) / (p.flicker ?? 1)),
       thickness: (p.thickness ?? 1) * this.k,
+      // El fogonazo que blanquea todo el cuadro se puede apagar: queda genial
+      // en una tormenta y estorba si el rayo es un detalle de la escena.
+      flash: (p.flash ?? 1) > 0.5,
     });
   }
 
@@ -529,6 +596,19 @@ export class VfxScene {
       for (let i = 0; i < n; i++) {
         const t = this.rnd();
         const ex = e.x + (e.x2 - e.x) * t, ey = e.y + (e.y2 - e.y) * t;
+        if (e.humo) {
+          // Columna de humo: sube más despacio, se abre y no ilumina nada.
+          this.parts.push({
+            x: ex + this.r(-6, 6) * this.k, y: ey + this.r(-3, 3) * this.k,
+            vx: this.r(-0.25, 0.25) * this.k, vy: this.r(-1.4, -0.6) * (p.speed ?? 1) * this.k,
+            size: this.r(5, 11) * (p.size ?? 1) * this.k, life: 0, maxLife: this.r(60, 110),
+            hue: e.color.h, sat: Math.min(e.color.s, 20), light: e.color.l,
+            gravity: -0.005 * this.k, drag: 0.985,
+            sway: this.r(0.2, 0.7), swayPhase: this.r(0, Math.PI * 2),
+            type: "smoke", blend: "source-over",
+          });
+          continue;
+        }
         this.parts.push({
           x: ex + this.r(-4, 4) * this.k, y: ey + this.r(-2, 2) * this.k,
           vx: this.r(-0.4, 0.4) * this.k, vy: this.r(-2.6, -1.4) * (p.speed ?? 1) * this.k,
@@ -587,6 +667,8 @@ export class VfxScene {
         const t = this.rnd();
         const ex = e.x + (e.x2 - e.x) * t, ey = e.y + (e.y2 - e.y) * t;
         const viento = (p.wind ?? 0) * this.k;
+        // El confeti es de colores: cada papelito coge el suyo.
+        const tono = e.kind === "confeti" ? this.r(0, 360) : e.color.h + this.r(-8, 8);
         this.parts.push({
           x: ex + this.r(-4, 4) * this.k, y: ey + this.r(-2, 2) * this.k,
           vx: this.r(cfg.vxMin, cfg.vxMax) * (p.speed ?? 1) * this.k + viento,
@@ -597,7 +679,10 @@ export class VfxScene {
           sway: cfg.sway ? this.r(0.3, 1.1) : 0,
           swayPhase: this.r(0, Math.PI * 2),
           life: 0, maxLife: cfg.maxLife,
-          hue: e.color.h + this.r(-8, 8), sat: e.color.s, light: e.color.l,
+          hue: tono, sat: e.kind === "confeti" ? 85 : e.color.s,
+          // Las estrellas nacen con brillo distinto cada una: así titilan en
+          // vez de encenderse todas igual.
+          light: e.kind === "estrellas" ? this.r(55, 95) : e.color.l,
           gravity: cfg.gravity * this.k, drag: cfg.drag,
           type: cfg.renderType, blend: cfg.blend,
         });
@@ -647,11 +732,21 @@ export class VfxScene {
 
     for (const s of this.storms) {
       s.t += PASO;
-      const cada = 1 / Math.max(0.05, s.par.stormrate ?? 0.5);
-      if (s.t > cada) {
-        s.t = 0;
-        // La línea marca de dónde a dónde cae; se le mete algo de azar para
-        // que no salgan dos rayos calcados.
+      if (s.t < s.cada) continue;
+      // El siguiente no cae justo al mismo ritmo: se reparte ±40 % para que dos
+      // tormentas no se acompasen nunca.
+      const base = 1 / Math.max(0.05, s.par.stormrate ?? 0.5);
+      s.cada = base * this.r(0.6, 1.4);
+      s.t = 0;
+      if (s.arriba) {
+        // Tormenta de verdad: cae del cielo, por donde le da la gana, hasta un
+        // punto cualquiera de la parte de abajo.
+        const ox = this.r(0.05, 0.95) * this.w;
+        const tx = clamp(ox + this.r(-120, 120) * this.k, 10, this.w - 10);
+        this.rayo(ox, -10 * this.k, tx, this.r(0.35, 0.95) * this.h, s.par);
+      } else {
+        // La línea marca de dónde a dónde; se le mete algo de azar para que no
+        // salgan dos rayos calcados.
         const ox = s.x + this.r(-30, 30) * this.k;
         const tx = s.x2 + this.r(-40, 40) * this.k;
         this.rayo(ox, s.y, tx, s.y2, s.par);
@@ -867,7 +962,7 @@ export class VfxScene {
   }
   private dibCielo(ctx: CanvasRenderingContext2D) {
     let max = 0;
-    for (const b of this.bolts) max = Math.max(max, this.alfaBolt(b.life, b.maxLife));
+    for (const b of this.bolts) if (b.flash) max = Math.max(max, this.alfaBolt(b.life, b.maxLife));
     if (max > 0.05) {
       ctx.globalCompositeOperation = "lighter";
       ctx.fillStyle = `rgba(255,255,255,${max * 0.12})`;

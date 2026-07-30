@@ -1,10 +1,14 @@
 "use client";
 
-import { Sparkles, Trash2, Copy, Plus } from "lucide-react";
+import { useState } from "react";
+import { Sparkles, Trash2, Copy, Plus, Search, ChevronDown, ChevronRight } from "lucide-react";
 import { nanoid } from "nanoid";
 import { Slider } from "./slider";
 import { NumberInput } from "./number-input";
-import { VFX, vfxSpec, vfxDefaults, SHAPE_LABEL, type VfxKind, type VfxShape } from "@/lib/story/vfx";
+import {
+  VFX, vfxSpec, vfxDefaults, SHAPE_LABEL, GROUP_LABEL,
+  type VfxKind, type VfxShape, type VfxGroup,
+} from "@/lib/story/vfx";
 import { newVfx, vfxWindow, defaultNode, type VfxLayer } from "@/lib/story/model";
 
 // Panel de efectos (partículas) de una toma: lluvia, fuego, explosiones…
@@ -25,6 +29,10 @@ export function VfxEditor({
   onChange: (v: VfxLayer[]) => void;
   onSelect: (id: string | null) => void;
 }) {
+  const [catalogo, setCatalogo] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [cerrados, setCerrados] = useState<Partial<Record<VfxGroup, boolean>>>({});
+
   const upd = (id: string, patch: Partial<VfxLayer>) =>
     onChange(vfx.map((v) => (v.id === id ? { ...v, ...patch } : v)));
   const updParam = (id: string, key: string, valor: number) =>
@@ -67,19 +75,63 @@ export function VfxEditor({
     <div className="mt-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="label">Efectos (partículas)</span>
-        <span className="ml-auto flex items-center gap-1">
-          <Plus className="h-3.5 w-3.5 text-accent" />
-          <select
-            className="input w-auto py-1 text-xs"
-            aria-label="Añadir efecto"
-            value=""
-            onChange={(e) => { if (e.target.value) anadir(e.target.value as VfxKind); }}
-          >
-            <option value="">Añadir efecto…</option>
-            {VFX.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
-          </select>
-        </span>
+        <button onClick={() => setCatalogo((v) => !v)} className="btn-ghost ml-auto text-xs">
+          <Plus className="h-3.5 w-3.5 text-accent" /> Añadir efecto
+        </button>
       </div>
+
+      {/* Catálogo: son muchos, así que van por secciones y con un buscador.
+          Se pliega para no comerse el panel. */}
+      {catalogo && (
+        <div className="mt-2 rounded-lg border border-accent/40 bg-accent/5 p-2">
+          <label className="flex items-center gap-2">
+            <Search className="h-3.5 w-3.5 shrink-0 text-muted" />
+            <input
+              className="input py-1 text-xs"
+              placeholder="Buscar un efecto (lluvia, fuego, neón…)"
+              aria-label="Buscar un efecto"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              autoFocus
+            />
+          </label>
+          <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
+            {GRUPOS.map((g) => {
+              const lista = VFX.filter((f) => f.group === g && coincide(f.label, busca));
+              if (!lista.length) return null;
+              const plegado = cerrados[g] && !busca;
+              return (
+                <div key={g} className="rounded border border-border/60">
+                  <button
+                    onClick={() => setCerrados((c) => ({ ...c, [g]: !c[g] }))}
+                    className="flex w-full items-center gap-1 px-2 py-1 text-left text-[11px] text-muted hover:bg-surface-2"
+                  >
+                    {plegado ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    {GROUP_LABEL[g]}
+                    <span className="ml-auto text-[10px] text-muted/70">{lista.length}</span>
+                  </button>
+                  {!plegado && (
+                    <div className="flex flex-wrap gap-1 p-1.5 pt-0">
+                      {lista.map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => { anadir(f.id); setCatalogo(false); setBusca(""); }}
+                          className="rounded-lg border border-border px-2 py-1 text-[11px] text-fg hover:border-accent hover:bg-accent/10"
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {!VFX.some((f) => coincide(f.label, busca)) && (
+              <p className="p-2 text-[11px] text-muted">Ningún efecto se llama así.</p>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="mt-2 space-y-2">
         {vfx.map((v) => {
@@ -204,6 +256,26 @@ export function VfxEditor({
                             ? "Arrastra sobre la previsualización para trazar una línea. Puedes trazar varias."
                             : "Dibuja sobre la previsualización con el dedo o el ratón."}
                     </p>
+                    {/* Pegado a la imagen: si la toma se mueve o se acerca, el
+                        efecto va con ella. Sin esto una hoguera se queda
+                        flotando y un chorro sale del aire. */}
+                    {v.shape !== "arriba" && (
+                      <label className="mt-1.5 flex items-start gap-2 text-[11px]">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={v.follow}
+                          onChange={(e) => upd(v.id, { follow: e.target.checked })}
+                        />
+                        <span>
+                          <span className="text-fg">Se mueve con la toma</span>
+                          <span className="block text-[10px] text-muted/80">
+                            Queda pegado a la imagen: si la cámara se desplaza o se acerca, el
+                            efecto la acompaña en vez de quedarse clavado en el cuadro.
+                          </span>
+                        </span>
+                      </label>
+                    )}
                     {v.shape !== "arriba" && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <span className="text-[11px] text-muted">
@@ -271,3 +343,8 @@ export function VfxEditor({
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+const GRUPOS: VfxGroup[] = ["golpes", "fuego", "clima", "ambiente", "luces"];
+// Buscar sin pelearse con tildes ni mayúsculas: "neon" encuentra "Neón".
+const limpia = (t: string) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const coincide = (label: string, q: string) => !q.trim() || limpia(label).includes(limpia(q));
