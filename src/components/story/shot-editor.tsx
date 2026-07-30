@@ -665,9 +665,13 @@ export function ShotEditor({
                     <span className="text-[11px] text-muted">
                       {o.motion === "free" ? "Posición A (inicio)" : "Posición y tamaño"}
                     </span>
-                    <Slider label="X" value={o.x} min={-1} max={1} step={0.005}
+                    {/* El recorrido llega hasta sacarlo del cuadro ENTERO por
+                        los cuatro lados: por la izquierda hay que poder llegar
+                        a −tamaño, y por la derecha con 1 ya está fuera. Si no,
+                        no hay forma de dejar asomando solo una esquina. */}
+                    <Slider label="X" value={o.x} min={fuera(o.w)} max={1} step={0.005}
                       onChange={(v) => updOverlay(o.id, { x: v })} format={pct} />
-                    <Slider label="Y" value={o.y} min={-1} max={1} step={0.005}
+                    <Slider label="Y" value={o.y} min={fuera(o.h)} max={1} step={0.005}
                       onChange={(v) => updOverlay(o.id, { y: v })} format={pct} />
                     {/* Hasta el 200 %: hay PNG pequeños que hay que agrandar
                         para que cubran de verdad. */}
@@ -692,9 +696,9 @@ export function ShotEditor({
                           ))}
                         </div>
                       </div>
-                      <Slider label="X" value={o.toX} min={-1} max={1} step={0.005}
+                      <Slider label="X" value={o.toX} min={fuera(o.toW)} max={1} step={0.005}
                         onChange={(v) => updOverlay(o.id, { toX: v })} format={pct} />
-                      <Slider label="Y" value={o.toY} min={-1} max={1} step={0.005}
+                      <Slider label="Y" value={o.toY} min={fuera(o.toH)} max={1} step={0.005}
                         onChange={(v) => updOverlay(o.id, { toY: v })} format={pct} />
                       <Slider label="Tamaño" value={o.toW} min={0.03} max={2} step={0.005}
                         onChange={(v) => updOverlay(o.id, { toW: v, toH: v })} format={pct} />
@@ -723,6 +727,11 @@ export function ShotEditor({
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+// Hasta dónde puede irse un sticker por la izquierda o por arriba: a −tamaño ya
+// está fuera del todo. Nunca menos de −1, para que con un sticker pequeño la
+// barra no se quede en un palmo y siga habiendo sitio donde moverlo.
+const fuera = (tam: number) => -Math.max(1, tam);
 
 // Volumen con pasos finos (1 %) y el valor a la vista, para poder afinar.
 function VolumeInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {

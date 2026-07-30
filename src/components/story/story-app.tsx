@@ -72,6 +72,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [selShot, setSelShot] = useState<string | null>(null);
   const [selOverlay, setSelOverlay] = useState<string | null>(null);
   const [dragScene, setDragScene] = useState<string | null>(null);
+  // Qué escena se ha agarrado POR EL ASA. La tarjeta entera no puede ser
+  // arrastrable: tocando cualquier hueco (o mientras se mueve una barra) se
+  // acababa arrastrando la escena sin querer.
+  const [agarre, setAgarre] = useState<string | null>(null);
   // Tramo que se está viendo suelto (una escena o una toma) + su miniatura flotante.
   const [section, setSection] = useState<{ start: number; end: number; label: string; shotId?: string; sceneId?: string } | null>(null);
   // Escena cuya posición se está cambiando escribiendo el número.
@@ -768,7 +772,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="tool-ui grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-4">
         {/* Previsualización: se queda fija al desplazarse para poder colocar
             stickers y ver el encuadre mientras se edita una toma larga. */}
@@ -862,13 +866,15 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             </label>
           </div>
 
-          <div className="mt-3 space-y-3">
+          {/* Soltar en cualquier sitio suelta también el asa: si no, un clic en
+              el asa que no acaba en arrastre dejaría la escena "agarrada". */}
+          <div className="mt-3 space-y-3" onPointerUp={() => setAgarre(null)}>
             {project.scenes.map((sc, si) => (
               <div
                 key={sc.id}
-                draggable={!locks[sc.id]}
+                draggable={agarre === sc.id && !locks[sc.id]}
                 onDragStart={() => setDragScene(sc.id)}
-                onDragEnd={() => setDragScene(null)}
+                onDragEnd={() => { setDragScene(null); setAgarre(null); }}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault();
@@ -878,7 +884,15 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                 className={`rounded-xl border p-3 ${openScene === sc.id ? "border-brand bg-brand/5" : "border-border"} ${dragScene === sc.id ? "opacity-50" : ""}`}
               >
                 <div className="flex flex-wrap items-center gap-3">
-                  <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted" />
+                  {/* Único sitio desde el que se arrastra la escena. */}
+                  <span
+                    onPointerDown={() => { if (!locks[sc.id]) setAgarre(sc.id); }}
+                    onPointerUp={() => setAgarre(null)}
+                    title="Arrastra desde aquí para cambiar el orden"
+                    className="shrink-0 cursor-grab text-muted"
+                  >
+                    <GripVertical className="h-4 w-4" />
+                  </span>
                   <button
                     onClick={() => { setOpenScene(openScene === sc.id ? null : sc.id); focusShot(sc.shots[0].id); }}
                     className="relative h-14 w-24 shrink-0 overflow-hidden rounded-lg border border-border bg-black"
@@ -1373,9 +1387,12 @@ function StickerBox({
     const d = drag.current; if (!d) return;
     const dx = (e.clientX - d.sx) / d.rw, dy = (e.clientY - d.sy) / d.rh;
     const cl = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-    // Se deja salir del cuadro: un sticker más grande que el video tiene que
-    // poder colocarse (para centrarlo hay que irse a negativo).
-    if (d.mode === "move") emit(cl(d.ox + dx, -1, 1), cl(d.oy + dy, -1, 1), d.ow, d.oh);
+    // Se deja salir del cuadro ENTERO por los cuatro lados: a −tamaño ya no se
+    // ve nada, y así se puede dejar asomando solo una esquina o hacerlo entrar
+    // y salir de la escena. Con uno más grande que el video hace falta de sobra.
+    if (d.mode === "move") {
+      emit(cl(d.ox + dx, -Math.max(1, d.ow), 1), cl(d.oy + dy, -Math.max(1, d.oh), 1), d.ow, d.oh);
+    }
     else {
       const w = cl(d.ow + dx, 0.03, 2);
       emit(d.ox, d.oy, w, cl(d.oh + dy, 0.03, 2));
