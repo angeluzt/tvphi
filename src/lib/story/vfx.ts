@@ -20,6 +20,7 @@
 
 const PASO = 1 / 60; // segundos por paso de simulación
 const ALTO_BASE = 480; // el motor se ajustó a esta altura; todo se escala desde aquí
+const APAGADO = 8; // fotogramas que tarda en apagarse una partícula al pasar su tope
 const MAX_PASOS = 900; // tope de puesta al día (15 s) para que un salto no cuelgue
 
 export type VfxKind =
@@ -85,11 +86,13 @@ const VIENTO = P("wind", "Viento", -3, 3, 0.1);
 // sitio marcado, para que no caigan siempre en el mismo pixel.
 const REPETIR = P("every", "Cada cuántos segundos se repite (0 = una sola vez)", 0, 8, 0.1);
 const REPARTO = P("spread", "Se reparte alrededor del sitio", 0, 1, 0.02);
-// Hasta dónde llegan las partículas antes de esfumarse. En 0 no hay tope y
-// caen (o suben) hasta salirse del cuadro; con un valor, se desvanecen al
-// cruzar esa altura — una cascada que muere en la poza, un canal, humo que
-// choca con un techo. Se mide sobre el cuadro, de arriba (0) a abajo (1).
-const LIMITE = P("limit", "Se esfuman a esta altura (0 = sin tope)", 0, 1, 0.01);
+// Cuánto aguantan las partículas antes de esfumarse, medido DESDE EL SITIO por
+// el que salen, no como una altura fija del cuadro. En 0 no se esfuman y viajan
+// hasta salirse; en 1 llegan justo al borde; en 0.4, se apagan al recorrer el
+// 40 % de lo que hay del sitio al borde. Así vale igual para un chorro que cae
+// desde arriba, uno que sale por la mitad, o humo que sube: siempre se cuenta
+// desde donde nace.
+const LIMITE = P("limit", "Se esfuman tras recorrer (0 = hasta salir del cuadro)", 0, 1, 0.01);
 
 export const VFX: VfxSpec[] = [
   { id: "explosion", label: "Explosión", group: "golpes", shapes: ["punto"], color: "#ff8a3d", continuo: false,
@@ -139,7 +142,7 @@ export const VFX: VfxSpec[] = [
   { id: "polvo", label: "Polvo mágico / luciérnagas", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffe28a", continuo: true,
     params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo"), VELOCIDAD, LIMITE] },
   { id: "niebla", label: "Niebla", group: "clima", shapes: ["punto", "linea", "arriba", "libre"], color: "#cfd6e6", continuo: true,
-    params: [P("density", "Densidad"), VELOCIDAD, TAMANO, LIMITE] },
+    params: [P("density", "Densidad"), VELOCIDAD, TAMANO] },
 
   // Añadidos aprovechando lo que el motor ya sabe hacer.
   { id: "humo", label: "Humo", group: "fuego", shapes: ["punto", "linea", "libre"], color: "#8a8a8a", continuo: true,
@@ -243,8 +246,9 @@ interface Part {
   sway?: number; swayPhase?: number; rot?: number; rotSpeed?: number;
   cx?: number; cy?: number; angle?: number; radius?: number;
   angularSpeed?: number; radialSpeed?: number;
-  // Altura (px) a la que esta partícula se esfuma, y por qué lado la cruza.
-  corte?: number; corteAbajo?: boolean;
+  // De dónde salió y cuánto puede recorrer antes de esfumarse (px), más el
+  // contador de apagado una vez pasado ese recorrido.
+  ox?: number; oy?: number; recorrido?: number; apagando?: number;
 }
 interface Flash { x: number; y: number; r: number; maxR: number; alpha: number; hue: number }
 interface Seg { x1: number; y1: number; x2: number; y2: number }
@@ -552,14 +556,15 @@ export class VfxScene {
 
   private r(a: number, b: number) { return a + this.rnd() * (b - a); }
 
-  // Dónde se esfuma una partícula que nace en `y`. El lado se decide solo: lo
-  // que nace por encima del tope muere al bajar, y lo que nace por debajo (humo,
-  // burbujas) muere al subir.
-  private corteDe(p: Record<string, number>, y: number) {
+  // Cuánto puede recorrer una partícula que sale de (x, y) yendo hacia arriba o
+  // hacia abajo. La referencia es lo que hay de ahí al borde por el que se
+  // marcha: así "0.5" siempre quiere decir "la mitad del camino", salga el
+  // chorro de donde salga.
+  private corteDe(p: Record<string, number>, x: number, y: number, vy: number) {
     const l = p.limit ?? 0;
     if (!(l > 0)) return {};
-    const corte = l * this.h;
-    return { corte, corteAbajo: y < corte };
+    const hasta = vy >= 0 ? Math.max(1, this.h - y) : Math.max(1, y);
+    return { ox: x, oy: y, recorrido: l * hasta };
   }
 
   // ---------------- golpes ----------------
@@ -749,7 +754,7 @@ export class VfxScene {
             gravity: -0.005 * this.k, drag: 0.985,
             sway: this.r(0.2, 0.7), swayPhase: this.r(0, Math.PI * 2),
             type: "smoke", blend: "source-over",
-            ...this.corteDe(p, ey),
+            ...this.corteDe(p, ex, ey, -1),
           });
           continue;
         }
@@ -759,7 +764,7 @@ export class VfxScene {
           size: this.r(2.5, 5) * (p.size ?? 1) * this.k, life: 0, maxLife: this.r(30, 55),
           hue: e.color.h + this.r(-12, 12), sat: 95, light: this.r(55, 70),
           gravity: -0.02 * this.k, drag: 0.985, type: "glow", blend: "lighter",
-          ...this.corteDe(p, ey),
+          ...this.corteDe(p, ex, ey, -1),
         });
         if (this.rnd() < 0.12) {
           this.parts.push({
@@ -833,7 +838,7 @@ export class VfxScene {
           gravity: cfg.gravity * this.k, drag: cfg.drag,
           type: cfg.renderType, blend: cfg.blend,
           trail: cfg.renderType === "spark" ? [] : undefined,
-          ...this.corteDe(p, ey),
+          ...this.corteDe(p, ex, ey, cfg.vyMin + cfg.vyMax),
         });
       }
     }
@@ -849,6 +854,7 @@ export class VfxScene {
           size: this.r(2, 4.5) * (p.size ?? 1) * this.k, life: 0, maxLife: this.r(35, 60),
           hue: e.color.h + this.r(-15, 15), sat: 80, light: this.r(55, 75),
           gravity: -0.01 * this.k, drag: 0.98, type: "glow", blend: "lighter",
+          ...this.corteDe(p, e.x, e.y, -1),
         });
       }
     }
@@ -965,10 +971,14 @@ export class VfxScene {
       if (p.type === "rain" && p.y > H + 10 * this.k) { this.parts.splice(i, 1); continue; }
       if (p.type !== "rain" && (p.y > H + m || p.y < -m || p.x < -m || p.x > W + m)) { this.parts.splice(i, 1); continue; }
       if (p.type === "spark") { p.trail!.push({ x: p.x, y: p.y }); if (p.trail!.length > 5) p.trail!.shift(); }
-      // Tope: pasada esa altura la partícula envejece ocho veces más rápido, así
-      // que se apaga en unos fotogramas en vez de desaparecer de golpe. Se
-      // aprovecha el desvanecido que ya tienen todos los dibujos.
-      if (p.corte !== undefined && (p.corteAbajo ? p.y > p.corte : p.y < p.corte)) p.life += 7;
+      // Tope: pasado su recorrido se apaga en APAGADO fotogramas. Se cuenta
+      // aparte y no tocando la edad, porque cada tipo de partícula vive lo suyo
+      // (la lluvia, 220 fotogramas) y envejecerla deprisa la hacía llegar media
+      // pantalla más allá del tope.
+      if (p.recorrido !== undefined && Math.hypot(p.x - p.ox!, p.y - p.oy!) > p.recorrido) {
+        p.apagando = (p.apagando ?? 0) + 1;
+        if (p.apagando > APAGADO) { this.parts.splice(i, 1); continue; }
+      }
       if (p.life >= p.maxLife) this.parts.splice(i, 1);
     }
     for (let i = this.flashes.length - 1; i >= 0; i--) {
@@ -1045,8 +1055,13 @@ export class VfxScene {
     }
   }
 
+  // Transparencia final: la de su edad, atenuada si ya pasó su tope.
+  private alfa(p: Part, base: number) {
+    return p.apagando ? base * Math.max(0, 1 - p.apagando / APAGADO) : base;
+  }
+
   private dibGlow(ctx: CanvasRenderingContext2D, p: Part) {
-    const a = Math.max(0, 1 - p.life / p.maxLife);
+    const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
     ctx.globalCompositeOperation = p.blend as GlobalCompositeOperation;
     const outer = p.size * 3.2;
     const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, Math.max(outer, 0.1));
@@ -1061,7 +1076,7 @@ export class VfxScene {
     }
   }
   private dibSpark(ctx: CanvasRenderingContext2D, p: Part) {
-    const a = Math.max(0, 1 - p.life / p.maxLife);
+    const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
     ctx.globalCompositeOperation = p.blend as GlobalCompositeOperation;
     ctx.strokeStyle = `hsla(${p.hue},${p.sat}%,${p.light}%,${a})`;
     ctx.lineWidth = p.size; ctx.lineCap = "round";
@@ -1071,14 +1086,14 @@ export class VfxScene {
     ctx.lineTo(p.x, p.y); ctx.stroke();
   }
   private dibRain(ctx: CanvasRenderingContext2D, p: Part) {
-    const a = Math.max(0, 0.55 * (1 - p.life / 220));
+    const a = this.alfa(p, Math.max(0, 0.55 * (1 - p.life / p.maxLife)));
     ctx.globalCompositeOperation = "source-over";
     ctx.strokeStyle = `hsla(${p.hue},${p.sat}%,${p.light}%,${a})`;
     ctx.lineWidth = p.size; ctx.lineCap = "round";
     ctx.beginPath(); ctx.moveTo(p.x - p.vx * 2, p.y - p.vy * 2); ctx.lineTo(p.x, p.y); ctx.stroke();
   }
   private dibLeaf(ctx: CanvasRenderingContext2D, p: Part) {
-    const a = Math.max(0, 1 - p.life / p.maxLife);
+    const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
     ctx.globalCompositeOperation = "source-over";
     ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot ?? 0);
     ctx.fillStyle = `hsla(${p.hue},${p.sat}%,${p.light}%,${a})`;
@@ -1133,7 +1148,7 @@ export class VfxScene {
   }
 
   private dibCorazon(ctx: CanvasRenderingContext2D, p: Part) {
-    const a = Math.max(0, 1 - p.life / p.maxLife);
+    const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
     ctx.globalCompositeOperation = "source-over";
     const s = p.size;
     ctx.save();
