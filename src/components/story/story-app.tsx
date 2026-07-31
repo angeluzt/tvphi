@@ -83,7 +83,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // arrastrable: tocando cualquier hueco (o mientras se mueve una barra) se
   // acababa arrastrando la escena sin querer.
   const [agarre, setAgarre] = useState<string | null>(null);
-  // Tramo que se está viendo suelto (una escena o una toma) + su miniatura flotante.
+  // Tramo que se está viendo suelto (una escena o una toma). El reproductor es
+  // siempre el mismo: cuando hay tramo, sus mandos se mueven dentro de él.
   const [section, setSection] = useState<{ start: number; end: number; label: string; shotId?: string; sceneId?: string } | null>(null);
   // Escena cuya posición se está cambiando escribiendo el número.
   const [movingScene, setMovingScene] = useState<{ id: string; value: string } | null>(null);
@@ -116,7 +117,6 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   const engineRef = useRef<StoryEngine | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
-  const floatRef = useRef<HTMLDivElement>(null);
   const projRef = useRef(project);
   projRef.current = project;
 
@@ -136,15 +136,6 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   }, []);
 
   useEffect(() => { engineRef.current?.update(project); }, [project]);
-
-  // El lienzo es uno solo: se muda a la miniatura flotante mientras se ve un
-  // tramo suelto, y vuelve a su sitio al cerrarla.
-  useEffect(() => {
-    const eng = engineRef.current;
-    if (!eng) return;
-    const host = section ? floatRef.current : previewRef.current;
-    if (host && eng.canvas.parentElement !== host) host.appendChild(eng.canvas);
-  }, [section]);
 
   useEffect(() => {
     const h = (e: BeforeUnloadEvent) => {
@@ -206,8 +197,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     engineRef.current?.seekToShot(shotId);
   }
 
-  // Ver solo un tramo (una escena o una toma) en la miniatura flotante, sin
-  // tener que subir hasta el reproductor de arriba.
+  // Ver solo un tramo (una escena o una toma) en el reproductor de siempre.
   async function playSection(
     start: number, end: number, label: string,
     ids: { shotId?: string; sceneId?: string },
@@ -791,12 +781,16 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   return (
     <div className="tool-ui grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-4">
-        {/* Previsualización: se queda fija al desplazarse para poder colocar
-            stickers y ver el encuadre mientras se edita una toma larga. */}
+        {/* Previsualización. En móvil va en el flujo, sin nada clavado encima:
+            lo que había antes era una ventana flotante que ocupaba 359×337 px
+            pegada arriba y se comía los toques de la lista de efectos.
+            En pantalla ancha sí se queda pegada al desplazarse, y hace falta:
+            sin eso, al bajar a editar la toma el cuadro se va a 1400 px por
+            encima de la pantalla y no hay dónde dibujar los sitios del efecto. */}
         <div className="card p-3 lg:sticky lg:top-16 lg:z-20">
           {/* Los botones van FUERA del cuadro: encima de la imagen tapaban justo
               la parte donde hace falta poner sitios. */}
-          {curVfx && !section && (
+          {curVfx && (
             <VfxTools
               layer={curVfx} activo={colocando} borrando={borrandoVfx}
               onToggle={setColocando} onBorrando={setBorrandoVfx}
@@ -836,28 +830,56 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                 Sube imágenes para empezar tu historia.
               </div>
             )}
-            {/* El lienzo está prestado a la miniatura flotante: se explica en vez
-                de dejar un recuadro negro. */}
-            {section && (
-              <div className="absolute inset-0 grid place-items-center gap-2 p-4 text-center">
-                <div>
-                  <p className="text-sm text-fg/80">Viendo <strong>{section.label}</strong> en la ventana de arriba</p>
-                  <button onClick={closeSection} className="btn-ghost mx-auto mt-2 text-xs">
-                    <X className="h-3.5 w-3.5" /> Volver al video completo
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
 
+          {/* Al ver una escena o una toma sueltas se dice aquí, en el propio
+              reproductor, en vez de abrir una ventana aparte por encima de todo. */}
+          {section && (
+            <div className="mt-3 flex items-center gap-2">
+              <span className="chip min-w-0 max-w-[60%] truncate bg-brand/15 text-brand">{section.label}</span>
+              <button
+                onClick={closeSection}
+                className="btn-ghost ml-auto shrink-0 py-1 text-xs"
+                title="Cerrar y volver al video completo"
+              >
+                <X className="h-3.5 w-3.5" /> Video completo
+              </button>
+            </div>
+          )}
+
+          {/* El mismo mando sirve para todo: si hay un tramo abierto se mueve
+              dentro de ese tramo, y si no, por el video entero. */}
           <div className="mt-3 flex items-center gap-3">
             <button onClick={togglePlay} className="btn-brand" disabled={!project.scenes.length}>
               {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
             </button>
-            <span className="text-sm tabular-nums text-muted">{fmt(playhead)} / {fmt(dur)}</span>
+            {section && (
+              <button
+                onClick={toggleLoop}
+                title={loopSection ? "Repitiendo sin parar: pulsa para que se pare al final" : "Repetir sin parar (vista previa)"}
+                className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg border ${
+                  loopSection ? "border-brand bg-brand/15 text-brand" : "border-border text-muted hover:bg-surface-2"
+                }`}
+              >
+                <Repeat className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <span className="text-sm tabular-nums text-muted">
+              {section
+                ? `${fmt(Math.max(0, playhead - section.start))} / ${fmt(section.end - section.start)}`
+                : `${fmt(playhead)} / ${fmt(dur)}`}
+            </span>
             <input
-              type="range" min={0} max={dur || 0} step={0.05} value={Math.min(playhead, dur)}
-              onChange={(e) => seek(Number(e.target.value))} className="flex-1"
+              type="range"
+              min={0}
+              max={section ? Math.max(0.1, section.end - section.start) : dur || 0}
+              step={0.05}
+              value={section
+                ? Math.max(0, Math.min(section.end - section.start, playhead - section.start))
+                : Math.min(playhead, dur)}
+              onChange={(e) => seek((section ? section.start : 0) + Number(e.target.value))}
+              className="flex-1"
+              aria-label={section ? "Avanzar dentro de este tramo" : "Avanzar en el video"}
             />
           </div>
 
@@ -1337,74 +1359,6 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         {status && <p className="text-sm text-accent">{status}</p>}
       </aside>
 
-      {/* Miniatura flotante: al ver una escena o una toma sueltas, el video viene
-          a donde estás editando en vez de tener que subir al reproductor de arriba.
-          Se mueve aquí el mismo lienzo del motor. */}
-      {section && (
-        <div className="fixed inset-x-0 top-2 z-50 mx-auto w-[min(92vw,460px)] rounded-2xl border border-brand/60 bg-bg/95 p-2 shadow-2xl backdrop-blur">
-          {/* En móvil el ancho es justo: la etiqueta se recorta y el botón de
-              cerrar nunca se queda fuera del panel. */}
-          <div className="flex items-center gap-2 px-1 pb-1">
-            <span className="chip min-w-0 max-w-[55%] truncate bg-brand/15 text-brand">{section.label}</span>
-            <span className="min-w-0 flex-1 truncate text-right text-[11px] tabular-nums text-muted">
-              {fmt(Math.max(0, playhead - section.start))} / {fmt(section.end - section.start)}
-            </span>
-            <button
-              onClick={closeSection}
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted hover:bg-surface-2 hover:text-fg"
-              title="Cerrar y volver al video completo"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          {/* Aquí también se pueden colocar los sitios: es el motivo de que exista
-              esta miniatura, no tener que subir al reproductor de arriba. */}
-          {curVfx && (
-            <VfxTools
-              layer={curVfx} activo={colocando} borrando={borrandoVfx}
-              onToggle={setColocando} onBorrando={setBorrandoVfx}
-              onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
-            />
-          )}
-          <div
-            ref={floatRef}
-            className="relative mx-auto w-full overflow-hidden rounded-xl bg-black"
-            style={{ aspectRatio: `${forma.w} / ${forma.h}`, maxWidth: `calc(46vh * ${forma.ratio})` }}
-          >
-            {curVfx && colocando && (
-              <VfxCanvas
-                layer={curVfx} borrando={borrandoVfx}
-                onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
-              />
-            )}
-          </div>
-          <div className="mt-2 flex items-center gap-2 px-1">
-            <button onClick={togglePlay} className="btn-brand py-1">
-              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-            </button>
-            <button
-              onClick={toggleLoop}
-              title={loopSection ? "Repitiendo sin parar: pulsa para que se pare al final" : "Repetir sin parar (vista previa)"}
-              className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg border ${
-                loopSection ? "border-brand bg-brand/15 text-brand" : "border-border text-muted hover:bg-surface-2"
-              }`}
-            >
-              <Repeat className="h-3.5 w-3.5" />
-            </button>
-            {/* El recorrido va solo de esta escena/toma, no de todo el video */}
-            <input
-              type="range"
-              min={0}
-              max={Math.max(0.1, section.end - section.start)}
-              step={0.05}
-              value={Math.max(0, Math.min(section.end - section.start, playhead - section.start))}
-              onChange={(e) => seek(section.start + Number(e.target.value))}
-              className="flex-1"
-              aria-label="Avanzar dentro de este tramo"
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

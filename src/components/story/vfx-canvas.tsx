@@ -13,9 +13,7 @@ import type { VfxLayer, VfxNode } from "@/lib/story/model";
 //
 // Va en dos piezas a propósito: los botones (VfxTools) van FUERA del cuadro,
 // encima, porque puestos encima de la imagen tapaban justo la zona donde hace
-// falta poner puntos; y la capa que recoge el dedo (VfxCanvas) va dentro. Las
-// dos se montan igual en el reproductor de arriba y en el de cada toma, para no
-// tener que subir a lo alto de la página cada vez.
+// falta poner puntos; y la capa que recoge el dedo (VfxCanvas) va dentro.
 
 const CERCA = 0.045; // a qué distancia se considera que le has dado a un sitio
 
