@@ -1059,6 +1059,23 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           if (r.ok) await cargarSeries();
         }}
         onBorrar={(id, nom) => deleteProject({ id, name: nom, updatedAt: "" })}
+        // Lo que escribe la IA se abre en el editor SIN guardar: es un borrador
+        // hasta que el usuario decida. Sus imágenes saldrán como faltantes.
+        onGenerado={(nom, p) => {
+          const data = migrateProject(p);
+          setProject(data);
+          setProjectId(null);
+          setName(nom);
+          const primera = data.scenes[0];
+          setOpenScene(primera?.id ?? null);
+          setSelShot(primera?.shots[0]?.id ?? null);
+          setSelOverlay(null);
+          setSection(null);
+          setDirty(true);
+          setVista("editor");
+          seek(0);
+          setStatus(`Borrador de la IA: ${data.scenes.length} escenas. Repón las imágenes y guarda.`);
+        }}
       />
     );
   }

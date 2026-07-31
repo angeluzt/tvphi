@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Plus, Folder, FolderOpen, Film, ChevronLeft, Trash2, Loader2, Users } from "lucide-react";
+import { IaPanel } from "./ia-panel";
 
 // Pantalla de entrada: primero se elige DÓNDE se va a trabajar, y solo después
 // se abre el editor.
@@ -19,7 +20,7 @@ export interface CapMeta { id: string; name: string; updatedAt: string; seriesId
 
 export function StoryHome({
   series, proyectos, busy,
-  onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar,
+  onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar, onGenerado,
 }: {
   series: SerieMeta[];
   proyectos: CapMeta[];
@@ -28,6 +29,7 @@ export function StoryHome({
   onNuevoCapitulo: (seriesId: string | null) => void;
   onNuevaSerie: () => void;
   onBorrar: (id: string, name: string) => void;
+  onGenerado: (name: string, project: unknown) => void;
 }) {
   // null = viendo las series; una cadena (o "") = dentro de esa serie.
   const [dentro, setDentro] = useState<string | null>(null);
@@ -85,6 +87,8 @@ export function StoryHome({
           <Lista items={sueltos} busy={busy} onAbrir={onAbrir} onBorrar={onBorrar}
             vacio="Nada suelto. Todo lo tuyo está dentro de una serie." />
         </div>
+
+        <IaPanel onGenerado={onGenerado} />
       </div>
     );
   }

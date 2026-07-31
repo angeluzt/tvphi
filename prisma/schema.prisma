@@ -30,6 +30,7 @@ model User {
   storyProjects  StoryProject[]
   storyCharacters StoryCharacter[]
   storySeries     StorySeries[]
+  aiCredential    AiCredential?
   chatMessages   ChatMessage[]
   pointsBalances PointsBalance[]
   pointsTx       PointsTransaction[] @relation("PointsTxUser")
@@ -183,6 +184,20 @@ model StoryProject {
 // Una serie: agrupa capítulos (proyectos) y personajes. Guarda además el estilo
 // común —modelo, semilla y prefijo de prompt— que es lo que hace que los
 // capítulos se parezcan entre sí.
+// La clave de un proveedor de IA, de cada usuario. Cifrada: aquí solo hay texto
+// ilegible, y la interfaz nunca la recibe de vuelta.
+model AiCredential {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  provider  String   // "openai"
+  encrypted String   // iv.tag.dato (AES-256-GCM)
+  hint      String   // "••••1a2b", para reconocerla
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 model StorySeries {
   id        String   @id @default(cuid())
   userId    String
