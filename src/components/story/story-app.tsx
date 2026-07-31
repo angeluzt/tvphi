@@ -90,6 +90,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // necesita ninguna, y lo que ya existe se queda "sin serie".
   const [series, setSeries] = useState<{ id: string; name: string; capitulos: number; personajes: number }[]>([]);
   const [seriesId, setSeriesId] = useState<string | null>(null);
+  // Si hay clave y modelo de voz puestos, la narración la hace OpenAI.
+  const [vozOpenAi, setVozOpenAi] = useState(false);
+  useEffect(() => {
+    fetch("/api/story/ia/clave").then((r) => r.json())
+      .then((j) => setVozOpenAi(!!j?.configurada && !!j?.models?.voz)).catch(() => {});
+  }, []);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
   // editor. Antes se caía directamente en el editor y elegir proyecto quedaba en
   // la columna de la derecha, que en un móvil acaba debajo de todo.
@@ -457,7 +463,22 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     if (voiceJobs[d.id]) return;
     setStatus(null);
     setVoiceJobs((j) => ({ ...j, [d.id]: { stage: "queued", pct: 0 } }));
-    synthesize(d.text, voice, (s) => setVoiceJobs((j) => (j[d.id] ? { ...j, [d.id]: s } : j)))
+    // Con OpenAI configurado, la voz la pone él; si no, el modelo del navegador,
+    // que suena robótico pero es gratis y no necesita conexión.
+    const hacerVoz = vozOpenAi
+      ? fetch("/api/story/ia/voz", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ texto: d.text }),
+        }).then(async (r) => {
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || "Error");
+          const bin = atob(j.audio);
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          return new Blob([arr], { type: "audio/wav" });
+        })
+      : synthesize(d.text, voice, (s) => setVoiceJobs((j) => (j[d.id] ? { ...j, [d.id]: s } : j)));
+    hacerVoz
       .then(async (blob) => {
         const audioId = nanoid(10);
         await putAsset(audioId, blob);

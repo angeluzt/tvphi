@@ -48,3 +48,8 @@ export function pareceClaveOpenAi(texto: string) {
   const t = texto.trim();
   return t.startsWith("sk-") && t.length >= 20 && !/\s/.test(t);
 }
+
+// Un modelo por tarea: no todos hacen de todo. Los modelos baratos de texto no
+// generan audio, así que tener uno solo no vale. Vacío = usar el de siempre.
+export const MODELOS_POR_DEFECTO = { texto: "", imagen: "", voz: "", vozNombre: "alloy" };
+export type Modelos = typeof MODELOS_POR_DEFECTO;
