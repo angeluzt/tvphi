@@ -20,6 +20,12 @@
 
 const PASO = 1 / 60; // segundos por paso de simulación
 const ALTO_BASE = 480; // el motor se ajustó a esta altura; todo se escala desde aquí
+// Al empezar una toma, los efectos continuos (lluvia, niebla, polvo…) tardarían
+// un rato en llenar el cuadro: al cambiar de escena se vería la lluvia
+// "apareciendo", que es el brinco que se nota. Se simulan estos pasos por
+// adelantado para que arranquen ya establecidos. Segundo y medio basta para que
+// una gota cruce la pantalla entera.
+const PRECALENTADO = 90;
 const APAGADO = 8; // fotogramas que tarda en apagarse una partícula al pasar su tope
 const MAX_PASOS = 900; // tope de puesta al día (15 s) para que un salto no cuelgue
 
@@ -420,6 +426,9 @@ export class VfxScene {
       this.t = hechos * PASO;
     }
     if (objetivo <= hechos) return;
+    // Escena recién montada: se le da un empujón para que lo continuo ya esté
+    // en marcha en el primer fotograma.
+    if (hechos === 0) this.precalentar(capas);
     for (let i = hechos; i < objetivo; i++) {
       this.montar(capas, i * PASO);
       this.recolocar(capas);
@@ -430,6 +439,23 @@ export class VfxScene {
   }
 
   // Da de alta y de baja las capas según su rato dentro de la toma.
+  // Arranca los efectos continuos "ya rodados": se simulan unos cuantos pasos
+  // antes del segundo cero para que la lluvia esté cayendo y la niebla puesta
+  // desde el primer fotograma, en vez de irse llenando a la vista.
+  //
+  // Solo lo continuo: un golpe (una explosión) tiene que saltar cuando le toca,
+  // no antes, así que se queda fuera.
+  private precalentar(capas: VfxInput[]) {
+    const continuos = capas.filter((c) => vfxSpec(c.kind).continuo);
+    if (!continuos.length) return;
+    for (let i = 0; i < PRECALENTADO; i++) {
+      this.montar(continuos, 0);
+      this.recolocar(continuos);
+      this.emitir();
+      this.fisica();
+    }
+  }
+
   // Pone al día los emisores vivos: su sitio y sus ajustes.
   //
   // El sitio, porque una capa que sigue a la toma se mueve con la cámara y la
