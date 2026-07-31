@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, KeyRound, Loader2, Check, Trash2 } from "lucide-react";
+import { Sparkles, KeyRound, Loader2, Check, Trash2, RefreshCw } from "lucide-react";
+import { CONOCIDOS, VOCES, nota, type Tarea } from "@/lib/story/modelos";
 
 // Escribir un capítulo con IA.
 //
@@ -9,6 +10,56 @@ import { Sparkles, KeyRound, Loader2, Check, Trash2 } from "lucide-react";
 // servidor) y el encargo. Lo que devuelve la IA NO se guarda solo: se enseña y
 // tú decides si lo abres. Estrenar esto escribiendo encima de lo que estás
 // editando sería la peor forma posible de empezar.
+
+// Una lista para elegir, con salida de emergencia.
+//
+// Se elige de una lista porque nadie se sabe los nombres de los modelos de
+// memoria. Pero OpenAI saca modelos nuevos cada poco, así que «Otro…» deja
+// escribir uno a mano: la lista no puede convertirse en una jaula.
+function Elegir({
+  etiqueta, valor, opciones, onCambio,
+}: {
+  etiqueta: string; valor: string; opciones: string[]; onCambio: (v: string) => void;
+}) {
+  // Si lo guardado no está en la lista (modelo nuevo, o escrito a mano), se
+  // sigue viendo: no se le puede borrar la elección al usuario por callado.
+  const suelto = !!valor && !opciones.includes(valor);
+  const [aMano, setAMano] = useState(false);
+
+  if (aMano) {
+    return (
+      <div className="mt-0.5 flex gap-2">
+        <input
+          className="input min-w-0 flex-1 text-sm"
+          value={valor}
+          onChange={(e) => onCambio(e.target.value)}
+          aria-label={etiqueta}
+          placeholder="nombre exacto, de platform.openai.com"
+          autoFocus
+        />
+        <button onClick={() => setAMano(false)} className="btn-ghost shrink-0 text-[11px]">Lista</button>
+      </div>
+    );
+  }
+  return (
+    <select
+      className="input mt-0.5 w-full text-sm"
+      value={valor}
+      aria-label={etiqueta}
+      onChange={(e) => {
+        if (e.target.value === "__otro__") { setAMano(true); return; }
+        onCambio(e.target.value);
+      }}
+    >
+      {!valor && <option value="">Elige uno…</option>}
+      {suelto && <option value={valor}>{valor} · el que tenías puesto</option>}
+      {opciones.map((o) => (
+        <option key={o} value={o}>{nota(o) ? `${o} · ${nota(o)}` : o}</option>
+      ))}
+      <option value="__otro__">Otro… (escribirlo a mano)</option>
+    </select>
+  );
+}
 
 export function IaPanel({
   onGenerado,
@@ -25,13 +76,41 @@ export function IaPanel({
   const [ocupado, setOcupado] = useState<null | "clave" | "generar">(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [abierto, setAbierto] = useState(false);
+  // Los modelos que puede usar esta cuenta. Se le preguntan a OpenAI para no
+  // enseñar una lista escrita a fuego que envejece.
+  const [lista, setLista] = useState<Record<Tarea, string[]>>(CONOCIDOS);
+  const [deLaCuenta, setDeLaCuenta] = useState(false);
+  const [cargandoLista, setCargandoLista] = useState(false);
 
   const leer = () =>
     fetch("/api/story/ia/clave").then((r) => r.json()).then((j) => {
       setEstado(j);
       if (j?.models) setMods((m) => ({ ...m, ...j.models }));
-    }).catch(() => {});
-  useEffect(() => { void leer(); }, []);
+      return j;
+    }).catch(() => null);
+
+  const leerLista = async () => {
+    setCargandoLista(true);
+    try {
+      const j = await (await fetch("/api/story/ia/modelos")).json();
+      if (j?.modelos) { setLista(j.modelos); setDeLaCuenta(!!j.deLaCuenta); }
+      return j?.modelos as Record<Tarea, string[]> | undefined;
+    } catch { return undefined; } finally { setCargandoLista(false); }
+  };
+
+  useEffect(() => { void (async () => {
+    const j = await leer();
+    const l = await leerLista();
+    // Si nunca ha elegido nada, se deja preparada la primera opción de cada
+    // tarea: así no se encuentra tres huecos vacíos sin saber qué poner. No se
+    // guarda solo; hay que darle a «Guardar modelos».
+    if (l) setMods((m) => ({
+      ...m,
+      texto: m.texto || j?.models?.texto || l.texto?.[0] || "",
+      voz: m.voz || j?.models?.voz || l.voz?.[0] || "",
+      imagen: m.imagen || j?.models?.imagen || l.imagen?.[0] || "",
+    }));
+  })(); }, []);
 
   async function guardarClave() {
     setOcupado("clave"); setAviso(null);
@@ -44,6 +123,8 @@ export function IaPanel({
       if (!r.ok) throw new Error(j.error || "Error");
       setClave("");
       await leer();
+      // Ya con clave se puede preguntar qué modelos tiene ESTA cuenta.
+      await leerLista();
       setAviso("Clave guardada ✓");
     } catch (e: any) { setAviso(e?.message ?? "No se pudo guardar"); }
     setOcupado(null);
@@ -148,34 +229,47 @@ export function IaPanel({
           {/* Un modelo por tarea. No es capricho: los modelos baratos de texto
               NO generan audio, así que uno solo para todo no funciona. */}
           <div className="rounded-lg border border-border p-3">
-            <span className="text-xs text-muted">Modelos, uno por tarea</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">Modelos, uno por tarea</span>
+              <button onClick={() => void leerLista()} disabled={cargandoLista}
+                className="btn-ghost ml-auto text-[11px] disabled:opacity-40" title="Volver a mirar qué modelos tiene tu cuenta">
+                {cargandoLista ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                Actualizar
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-muted">
+              {deLaCuenta
+                ? "Esta lista sale de tu propia cuenta de OpenAI: son los que tu clave puede usar."
+                : "Lista de referencia. En cuanto guardes tu clave se sustituye por los que tenga tu cuenta."}
+            </p>
             <div className="mt-2 space-y-2">
               {([
-                ["texto", "Escribir el capítulo", "El más barato vale: solo sigue el catálogo que se le manda."],
-                ["voz", "Narrar los diálogos", "Tiene que admitir audio; los baratos de texto no."],
+                ["texto", "Escribir el capítulo", "El más barato vale: solo tiene que seguir el catálogo que se le manda."],
+                ["voz", "Narrar los diálogos", "Tiene que admitir audio. Los de texto, por caros que sean, no narran."],
                 ["imagen", "Generar imágenes", "Aún no se usa: queda para cuando conectemos las imágenes."],
               ] as const).map(([k, etq, ayuda]) => (
                 <label key={k} className="block">
                   <span className="text-[11px] text-muted">{etq}</span>
-                  <input
-                    className="input mt-0.5 w-full text-sm"
-                    value={(mods as any)[k]}
-                    onChange={(e) => setMods((m) => ({ ...m, [k]: e.target.value }))}
-                    aria-label={etq}
-                    placeholder="cópialo de platform.openai.com"
+                  <Elegir
+                    etiqueta={etq}
+                    valor={(mods as any)[k]}
+                    opciones={lista[k] ?? []}
+                    onCambio={(v) => setMods((m) => ({ ...m, [k]: v }))}
                   />
                   <span className="mt-0.5 block text-[11px] text-muted">{ayuda}</span>
                 </label>
               ))}
               <label className="block">
                 <span className="text-[11px] text-muted">Voz</span>
-                <input
-                  className="input mt-0.5 w-full text-sm"
-                  value={mods.vozNombre}
-                  onChange={(e) => setMods((m) => ({ ...m, vozNombre: e.target.value }))}
-                  aria-label="Voz"
-                  placeholder="alloy"
+                <Elegir
+                  etiqueta="Voz"
+                  valor={mods.vozNombre}
+                  opciones={VOCES}
+                  onCambio={(v) => setMods((m) => ({ ...m, vozNombre: v }))}
                 />
+                <span className="mt-0.5 block text-[11px] text-muted">
+                  Cómo suena quien narra. Si no te convence, prueba otra.
+                </span>
               </label>
             </div>
             <button onClick={guardarModelos} disabled={!estado?.configurada || ocupado === "clave"}
