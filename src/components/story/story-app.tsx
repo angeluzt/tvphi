@@ -6,6 +6,8 @@ import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
 } from "lucide-react";
+import { MissingAssets } from "./missing-assets";
+import { faltantes, type Falta } from "@/lib/story/missing";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
@@ -36,6 +38,18 @@ function FormaVideo({ ratio }: { ratio: number }) {
       style={{ width: ratio >= 1 ? 24 : 24 * ratio, height: ratio >= 1 ? 24 / ratio : 24 }}
     />
   );
+}
+
+// Alto y ancho reales de una imagen recién elegida. Hace falta al reponerla:
+// los encuadres van en tanto por uno y es la proporción la que manda.
+function medirImagen(file: File): Promise<{ w: number; h: number } | null> {
+  return new Promise((res) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { res({ w: img.naturalWidth, h: img.naturalHeight }); URL.revokeObjectURL(url); };
+    img.onerror = () => { res(null); URL.revokeObjectURL(url); };
+    img.src = url;
+  });
 }
 
 function fmt(s: number) {
@@ -114,6 +128,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [progress, setProgress] = useState(0);
   const [dirty, setDirty] = useState(false);
 
+  // Archivos que el proyecto usa pero que no están en este navegador.
+  const [faltas, setFaltas] = useState<Falta[]>([]);
+  const [reponiendo, setReponiendo] = useState<string | null>(null);
+
   const engineRef = useRef<StoryEngine | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const floatRef = useRef<HTMLDivElement>(null);
@@ -136,6 +154,17 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   }, []);
 
   useEffect(() => { engineRef.current?.update(project); }, [project]);
+
+  // Qué archivos le faltan a este proyecto en este navegador. Se recalcula solo
+  // cuando cambia la LISTA de archivos usados, no en cada retoque, que si no
+  // sería una consulta al almacén por cada movimiento de una barra.
+  const idsUsados = projectAssets(project).join("|");
+  useEffect(() => {
+    let vivo = true;
+    faltantes(projRef.current).then((f) => { if (vivo) setFaltas(f); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsUsados]);
 
   // El lienzo es uno solo: se muda a la miniatura flotante mientras se ve un
   // tramo suelto, y vuelve a su sitio al cerrarla.
@@ -591,6 +620,77 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     }
     setBusy(null);
   }
+  // ---------- reconectar archivos perdidos ----------
+  // Se guarda con el MISMO identificador que tenía: así todo lo que apuntaba a
+  // ese archivo (una escena, un sticker, varias tomas) queda arreglado de una
+  // vez, sin tocar el proyecto.
+  async function reponer(falta: Falta, file: File) {
+    setReponiendo(falta.id);
+    try {
+      await putAsset(falta.id, file);
+      // Una imagen de escena manda en la proporción: los encuadres se guardan en
+      // tanto por uno, así que si la nueva imagen no mide igual hay que rehacer
+      // las medidas o el encuadre sale torcido.
+      if (falta.tipo === "escena" && falta.sceneIds.length) {
+        const medidas = await medirImagen(file);
+        if (medidas) {
+          mut((p) => ({
+            ...p,
+            scenes: p.scenes.map((sc) =>
+              falta.sceneIds.includes(sc.id) ? { ...sc, imgW: medidas.w, imgH: medidas.h } : sc,
+            ),
+          }));
+        }
+      }
+      setFaltas(await faltantes(projRef.current));
+      engineRef.current?.update(projRef.current);
+      setStatus(`Archivo repuesto ✓ · ${falta.donde.join(" · ")}`);
+    } catch (err: any) {
+      setStatus("No se pudo reponer: " + (err?.message ?? ""));
+    }
+    setReponiendo(null);
+  }
+
+  // ---------- el proyecto entero en un JSON ----------
+  // Viaja el montaje, no los archivos: por eso al abrirlo en otro equipo salen
+  // como faltantes y se reponen con "Buscar". Meter las imágenes dentro haría un
+  // archivo de cientos de megas.
+  function exportProject() {
+    const datos = { tvphi: "historia", version: 1, name, project: projRef.current };
+    const blob = new Blob([JSON.stringify(datos, null, 2)], { type: "application/json" });
+    download(blob, `${(name || "historia").replace(/[^\w\-]+/g, "-")}-proyecto.json`);
+    setStatus("Proyecto exportado ✓ · las imágenes no viajan, se reponen al abrirlo");
+  }
+  async function importProject(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (dirty && !confirm("Tienes cambios sin guardar. ¿Importar igualmente?")) return;
+    try {
+      const crudo = JSON.parse(await f.text());
+      // Vale tanto el archivo que saca este botón como el proyecto a pelo.
+      const data = migrateProject(crudo?.project ?? crudo);
+      if (!data.scenes.length) throw new Error("ese JSON no tiene escenas");
+      setProject(data);
+      // Es una copia nueva: si se guarda, no pisa el proyecto de donde salió.
+      setProjectId(null);
+      if (crudo?.name) setName(String(crudo.name));
+      const primera = data.scenes[0];
+      const abrible = primera && !loadLocks()[primera.id] ? primera : null;
+      setOpenScene(abrible?.id ?? null);
+      setSelShot(abrible?.shots[0]?.id ?? null);
+      setDirty(true);
+      seek(0);
+      const f2 = await faltantes(data);
+      setFaltas(f2);
+      setStatus(f2.length
+        ? `Proyecto importado ✓ · faltan ${f2.length} archivos, búscalos abajo`
+        : "Proyecto importado ✓");
+    } catch (err: any) {
+      setStatus("No se pudo importar: " + (err?.message ?? ""));
+    }
+  }
+
   async function load(id: string) {
     if (dirty && !confirm("Tienes cambios sin guardar. ¿Cargar otro proyecto igualmente?")) return;
     setBusy("load");
@@ -892,6 +992,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             </div>
           )}
         </div>
+
+        {/* Lo que falta, en cuanto falta: va justo debajo del reproductor porque
+            es lo primero que hay que resolver al abrir un proyecto de otro sitio. */}
+        <MissingAssets faltas={faltas} reponiendo={reponiendo} onReponer={reponer} />
 
         {/* Escenas */}
         <div className="card p-3">
@@ -1247,6 +1351,26 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <p className="text-[11px] text-muted">Música de fondo para todo el video. Los sonidos puntuales van dentro de cada toma.</p>
             )}
           </div>
+        </div>
+
+        {/* Llevarse el montaje a otro equipo. Los archivos no caben en un JSON,
+            así que se reponen al abrirlo con el panel de arriba. */}
+        <div className="card p-3">
+          <span className="label">El proyecto en un archivo</span>
+          <div className="mt-2 flex gap-2">
+            <button onClick={exportProject} className="btn-ghost flex-1 text-xs" disabled={!project.scenes.length}>
+              <Download className="h-4 w-4 text-accent" /> Exportar
+            </button>
+            <label className="btn-ghost flex-1 cursor-pointer justify-center text-xs">
+              <FileJson className="h-4 w-4 text-accent" /> Importar
+              <input type="file" accept="application/json,.json" className="hidden" onChange={importProject} />
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] text-muted">
+            Guarda el montaje entero —escenas, encuadres, tiempos, voces, stickers y efectos— en un
+            JSON. Las imágenes y los audios no caben ahí, así que al importarlo en otro equipo
+            salen como faltantes y se reponen una a una con «Buscar»: no hay que rehacer nada.
+          </p>
         </div>
 
         {/* Sacar los textos para corregirlos fuera (por ejemplo con una IA) y
