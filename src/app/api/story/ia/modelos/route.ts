@@ -39,13 +39,18 @@ export async function GET() {
       });
     }
     const ids: string[] = (j?.data ?? []).map((m: any) => String(m?.id ?? "")).filter(Boolean);
-    const modelos = repartir(ids);
+    // Los que ya fallaron en esta cuenta van al final y salen marcados.
+    const fallidos = ((cred.models as any)?.fallidos ?? []) as string[];
+    const modelos = repartir(ids, Array.isArray(fallidos) ? fallidos : []);
     // Si el reparto deja alguna tarea vacía (cuenta limitada, o nombres que no
     // reconozco), se completa con los conocidos para que se pueda seguir.
     for (const t of ["texto", "imagen", "voz"] as const) {
       if (!modelos[t].length) modelos[t] = CONOCIDOS[t];
     }
-    return NextResponse.json({ deLaCuenta: true, total: ids.length, modelos });
+    return NextResponse.json({
+      deLaCuenta: true, total: ids.length, modelos,
+      fallidos: Array.isArray(fallidos) ? fallidos : [],
+    });
   } catch (e: any) {
     return NextResponse.json({
       deLaCuenta: false, modelos: CONOCIDOS,

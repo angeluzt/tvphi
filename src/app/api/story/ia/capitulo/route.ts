@@ -28,7 +28,7 @@ Devuelve SOLO un objeto JSON con esta forma:
 {"name": "título", "project": {"aspect":"16:9","narrationVolume":1,"audioLayers":[],"intro":null,"outro":null,"scenes":[...]}}
 
 Cada escena es UNA imagen:
-{"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"shots":[...]}
+{"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen","shots":[...]}
 
 Cada toma es un encuadre sobre esa imagen:
 {"id":"s1a","autoDuration":true,"durationSec":6,"holdSec":0.4,"motionMode":"preset",
@@ -38,7 +38,8 @@ Cada toma es un encuadre sobre esa imagen:
  "sfx":[],"overlays":[],"audioOverrides":[],"vfx":[]}
 
 Reglas que NO puedes saltarte:
-- Los identificadores de imagen ("imageId") son inventados y descriptivos: el usuario pondrá luego sus propias imágenes. Uno distinto por escena.
+- Los identificadores de imagen ("imageId") son inventados y descriptivos: uno distinto por escena.
+- "prompt" describe la imagen de esa escena para poder dibujarla: qué se ve, encuadre, luz, ambiente y estilo. Concreto y visual, 1-3 frases, sin texto ni letras dentro de la imagen. Mantén los mismos personajes y el mismo estilo entre escenas describiéndolos igual cada vez: es lo único que las mantiene unidas.
 - "kind" de preset: fixed, left, right, up, down, in, out. Para un primer plano baja "w" (1 = imagen entera, 0.35 = primer plano).
 - Los efectos van en "vfx" y SOLO puedes usar los "id" del catálogo que se te da. Respeta las formas admitidas de cada uno y los rangos de sus ajustes.
 - Para los sitios de un efecto usa SIEMPRE "espacio":"imagen" y coordenadas 0..1 sobre la foto.

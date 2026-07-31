@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { ImageOff, Search, Loader2 } from "lucide-react";
+import { ImageOff, Search, Loader2, Sparkles } from "lucide-react";
 import { etiquetaTipo, aceptaDe, type Falta } from "@/lib/story/missing";
 
 // Lista de lo que falta, con un botón por archivo para ir a buscarlo.
@@ -13,10 +13,14 @@ export function MissingAssets({
   faltas,
   reponiendo,
   onReponer,
+  onDibujar,
 }: {
   faltas: Falta[];
   reponiendo: string | null;
   onReponer: (falta: Falta, file: File) => void;
+  // Solo si hay clave de OpenAI con modelo de imagen: si no, no se ofrece algo
+  // que no va a funcionar.
+  onDibujar?: (falta: Falta) => void;
 }) {
   if (!faltas.length) return null;
   const imagenes = faltas.filter((f) => f.tipo === "escena" || f.tipo === "sticker").length;
@@ -36,7 +40,7 @@ export function MissingAssets({
       </p>
       <div className="mt-2 space-y-1.5">
         {faltas.map((f) => (
-          <Fila key={f.id} falta={f} ocupado={reponiendo === f.id} onReponer={onReponer} />
+          <Fila key={f.id} falta={f} ocupado={reponiendo === f.id} onReponer={onReponer} onDibujar={onDibujar} />
         ))}
       </div>
     </div>
@@ -47,10 +51,12 @@ function Fila({
   falta,
   ocupado,
   onReponer,
+  onDibujar,
 }: {
   falta: Falta;
   ocupado: boolean;
   onReponer: (falta: Falta, file: File) => void;
+  onDibujar?: (falta: Falta) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   return (
@@ -63,6 +69,19 @@ function Fila({
           {falta.donde.length > 1 && ` · se arreglan ${falta.donde.length} sitios de una vez`}
         </p>
       </div>
+      {/* Dibujarla en vez de buscarla. Solo para escenas: un sonido no se
+          dibuja, y un sticker suele ser tuyo. */}
+      {onDibujar && falta.tipo === "escena" && (
+        <button
+          onClick={() => onDibujar(falta)}
+          disabled={ocupado}
+          className="btn-ghost shrink-0 text-xs disabled:opacity-40"
+          title="Dibujarla con IA a partir de su descripción"
+        >
+          <Sparkles className="h-3.5 w-3.5 text-accent" />
+          Dibujar
+        </button>
+      )}
       <button
         onClick={() => input.current?.click()}
         disabled={ocupado}

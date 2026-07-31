@@ -5,7 +5,9 @@ import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
+  Settings2, AlertTriangle, Sparkles,
 } from "lucide-react";
+import { ModelosIa } from "./modelos-ia";
 import { MissingAssets } from "./missing-assets";
 import { StoryHome, StoryBreadcrumb } from "./story-home";
 import { faltantes, referencias, type Falta } from "@/lib/story/missing";
@@ -49,7 +51,9 @@ function FormaVideo({ ratio }: { ratio: number }) {
 
 // Alto y ancho reales de una imagen recién elegida. Hace falta al reponerla:
 // los encuadres van en tanto por uno y es la proporción la que manda.
-function medirImagen(file: File): Promise<{ w: number; h: number } | null> {
+// Vale igual para un archivo elegido a mano que para una imagen recién dibujada:
+// lo único que hace falta es poder abrirla.
+function medirImagen(file: Blob): Promise<{ w: number; h: number } | null> {
   return new Promise((res) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -92,9 +96,21 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [seriesId, setSeriesId] = useState<string | null>(null);
   // Si hay clave y modelo de voz puestos, la narración la hace OpenAI.
   const [vozOpenAi, setVozOpenAi] = useState(false);
+  // Cuando la narración falla POR EL MODELO, se guarda el motivo para poder
+  // ofrecer cambiarlo sin salir del editor.
+  const [vozRota, setVozRota] = useState<string | null>(null);
+  const [verModelosVoz, setVerModelosVoz] = useState(false);
+  // Con clave y modelo de imagen se pueden dibujar las escenas que falten.
+  const [iaImagen, setIaImagen] = useState(false);
+  // La escena que se está describiendo para dibujarla.
+  const [dibujo, setDibujo] = useState<{ falta: Falta; texto: string } | null>(null);
+  const [dibujando, setDibujando] = useState(false);
   useEffect(() => {
     fetch("/api/story/ia/clave").then((r) => r.json())
-      .then((j) => setVozOpenAi(!!j?.configurada && !!j?.models?.voz)).catch(() => {});
+      .then((j) => {
+        setVozOpenAi(!!j?.configurada && !!j?.models?.voz);
+        setIaImagen(!!j?.configurada && !!j?.models?.imagen);
+      }).catch(() => {});
   }, []);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
   // editor. Antes se caía directamente en el editor y elegir proyecto quedaba en
@@ -458,9 +474,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   // No espera: encarga la voz al worker y sigue. Se puede seguir editando y
   // encolar más voces mientras tanto.
-  function genVoice(sceneId: string, shotId: string, d: Dialogue) {
-    if (!d.text.trim()) { setStatus("Escribe el texto del diálogo primero."); return; }
-    if (voiceJobs[d.id]) return;
+  // Devuelve si salió bien, para que el lote pueda pararse al primer fallo en
+  // vez de repetir el mismo error una vez por diálogo.
+  function genVoice(sceneId: string, shotId: string, d: Dialogue): Promise<boolean> {
+    if (!d.text.trim()) { setStatus("Escribe el texto del diálogo primero."); return Promise.resolve(false); }
+    if (voiceJobs[d.id]) return Promise.resolve(true);
     setStatus(null);
     setVoiceJobs((j) => ({ ...j, [d.id]: { stage: "queued", pct: 0 } }));
     // Con OpenAI configurado, la voz la pone él; si no, el modelo del navegador,
@@ -471,14 +489,20 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           body: JSON.stringify({ texto: d.text }),
         }).then(async (r) => {
           const j = await r.json();
-          if (!r.ok) throw new Error(j.error || "Error");
+          if (!r.ok) {
+            const e: any = new Error(j.error || "Error");
+            // Si el problema es el modelo elegido, se marca para poder ofrecer
+            // cambiarlo sin salir del editor.
+            e.modeloMal = !!j.modeloMal;
+            throw e;
+          }
           const bin = atob(j.audio);
           const arr = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
           return new Blob([arr], { type: "audio/wav" });
         })
       : synthesize(d.text, voice, (s) => setVoiceJobs((j) => (j[d.id] ? { ...j, [d.id]: s } : j)));
-    hacerVoz
+    return hacerVoz
       .then(async (blob) => {
         const audioId = nanoid(10);
         await putAsset(audioId, blob);
@@ -488,9 +512,14 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         // llenando el navegador de audios sueltos.
         if (d.audioId && d.audioId !== audioId) await deleteAsset(d.audioId).catch(() => {});
         setStatus("Voz generada ✓");
+        return true;
       })
       .catch((err: any) => {
         setStatus("Error generando voz: " + (err?.message ?? ""));
+        // Si el modelo es el que falla, se abre el selector aquí mismo: salir
+        // del editor a cambiarlo dejaba al usuario encerrado.
+        if (err?.modeloMal) setVozRota(err?.message ?? "Ese modelo no sirve para narrar.");
+        return false;
       })
       .finally(() => {
         setVoiceJobs((j) => {
@@ -499,24 +528,42 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         });
       });
   }
-  function genAllVoices() {
-    for (const sc of projRef.current.scenes) {
-      for (const sh of sc.shots) {
-        for (const d of sh.dialogues) {
-          if (d.text.trim() && !d.audioId) genVoice(sc.id, sh.id, d);
-        }
+
+  // Narrar en fila y PARAR al primer fallo.
+  //
+  // Antes se lanzaban todas de golpe: si el modelo no servía, se repetía el
+  // mismo error una vez por diálogo. Cada una de esas es una llamada a OpenAI.
+  async function narrarTodas(pendientes: [string, string, Dialogue][], queEran: string) {
+    if (!pendientes.length) { setStatus(`No hay ${queEran} que narrar.`); return; }
+    let hechas = 0;
+    for (const [sceneId, shotId, d] of pendientes) {
+      const bien = await genVoice(sceneId, shotId, d);
+      if (!bien) {
+        setStatus(
+          `Se paró en ${hechas} de ${pendientes.length} para no seguir gastando. ` +
+          `Arregla lo de arriba y dale otra vez.`,
+        );
+        return;
       }
+      hechas++;
     }
+    setStatus(`${hechas} ${hechas === 1 ? "voz generada" : "voces generadas"} ✓`);
+  }
+
+  function pendientesDe(filtro: (d: Dialogue) => boolean): [string, string, Dialogue][] {
+    const fuera: [string, string, Dialogue][] = [];
+    for (const sc of projRef.current.scenes)
+      for (const sh of sc.shots)
+        for (const d of sh.dialogues) if (filtro(d)) fuera.push([sc.id, sh.id, d]);
+    return fuera;
+  }
+
+  function genAllVoices() {
+    void narrarTodas(pendientesDe((d) => !!d.text.trim() && !d.audioId), "diálogos");
   }
   // Solo los que quedaron marcados porque les cambió el texto.
   function genStaleVoices() {
-    for (const sc of projRef.current.scenes) {
-      for (const sh of sc.shots) {
-        for (const d of sh.dialogues) {
-          if (d.stale && d.text.trim()) genVoice(sc.id, sh.id, d);
-        }
-      }
-    }
+    void narrarTodas(pendientesDe((d) => !!d.stale && !!d.text.trim()), "cambios");
   }
 
   // ---------- textos de la narración (exportar / importar) ----------
@@ -765,6 +812,84 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       setStatus("No se pudo reponer: " + (err?.message ?? ""));
     }
     setReponiendo(null);
+  }
+
+  // ---------- dibujar las escenas que faltan ----------
+  //
+  // La IA ya escribía el montaje entero, pero las imágenes había que ponerlas a
+  // mano una por una. Cada escena lleva su descripción («prompt»), así que se
+  // puede dibujar sin volver a escribir nada — y se puede corregir antes.
+
+  function descripcionDe(falta: Falta): string {
+    const sc = projRef.current.scenes.find((s) => falta.sceneIds.includes(s.id));
+    return sc?.prompt ?? "";
+  }
+
+  // Devuelve si salió bien, para poder parar el lote al primer fallo.
+  async function dibujarUna(falta: Falta, texto: string): Promise<boolean> {
+    const descripcion = texto.trim();
+    if (descripcion.length < 4) {
+      setStatus("Describe la imagen antes de dibujarla.");
+      return false;
+    }
+    setReponiendo(falta.id);
+    try {
+      const r = await fetch("/api/story/ia/imagen", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        // El formato del video manda: una escena apaisada pedida cuadrada se ve mal.
+        body: JSON.stringify({ prompt: descripcion, formato: projRef.current.aspect }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      const bin = atob(j.imagen);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const blob = new Blob([arr], { type: "image/png" });
+      // Se guarda con el MISMO identificador, igual que al reponerla a mano: si
+      // esa imagen se usaba en varios sitios, todos quedan arreglados de una vez.
+      await putAsset(falta.id, blob);
+      const medidas = await medirImagen(blob);
+      mut((p) => ({
+        ...p,
+        scenes: p.scenes.map((sc) =>
+          falta.sceneIds.includes(sc.id)
+            ? { ...sc, ...(medidas ? { imgW: medidas.w, imgH: medidas.h } : {}), prompt: descripcion }
+            : sc,
+        ),
+      }));
+      setFaltas(await faltantes(projRef.current));
+      engineRef.current?.update(projRef.current);
+      setStatus(`Imagen dibujada ✓ · ${falta.donde.join(" · ")}`);
+      return true;
+    } catch (err: any) {
+      setStatus("No se pudo dibujar: " + (err?.message ?? ""));
+      return false;
+    } finally {
+      setReponiendo(null);
+    }
+  }
+
+  // Todas las que falten, en fila y parando al primer fallo: cada imagen se
+  // paga, y repetir el mismo error una vez por escena sale caro para nada.
+  async function dibujarTodas() {
+    const pend = faltas.filter((f) => f.tipo === "escena" && descripcionDe(f).trim().length >= 4);
+    if (!pend.length) {
+      setStatus("No hay escenas con descripción que dibujar. Abre una y escríbele qué se ve.");
+      return;
+    }
+    setDibujando(true);
+    let hechas = 0;
+    for (const f of pend) {
+      const bien = await dibujarUna(f, descripcionDe(f));
+      if (!bien) {
+        setStatus(`Se paró en ${hechas} de ${pend.length} para no seguir gastando.`);
+        setDibujando(false);
+        return;
+      }
+      hechas++;
+    }
+    setDibujando(false);
+    setStatus(`${hechas} ${hechas === 1 ? "imagen dibujada" : "imágenes dibujadas"} ✓`);
   }
 
   // ---------- el proyecto entero en un JSON ----------
@@ -1299,7 +1424,61 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
         {/* Lo que falta, en cuanto falta: va justo debajo del reproductor porque
             es lo primero que hay que resolver al abrir un proyecto de otro sitio. */}
-        <MissingAssets faltas={faltas} reponiendo={reponiendo} onReponer={reponer} />
+        <MissingAssets
+          faltas={faltas} reponiendo={reponiendo} onReponer={reponer}
+          onDibujar={iaImagen ? (f) => setDibujo({ falta: f, texto: descripcionDe(f) }) : undefined}
+        />
+
+        {/* Dibujarlas todas de una vez: un capítulo escrito por la IA llega con
+            todas las escenas vacías, y reponerlas de una en una era el trabajo
+            que precisamente sobraba. */}
+        {iaImagen && faltas.some((f) => f.tipo === "escena") && (
+          <div className="card flex flex-wrap items-center gap-2 p-3">
+            <span className="text-xs text-muted">
+              {faltas.filter((f) => f.tipo === "escena").length} escenas sin imagen
+            </span>
+            <button onClick={() => void dibujarTodas()} disabled={dibujando}
+              className="btn-brand ml-auto text-xs disabled:opacity-40">
+              {dibujando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Dibujar las que tengan descripción
+            </button>
+          </div>
+        )}
+
+        {/* Antes de gastar, se enseña qué se va a pedir y se puede corregir. */}
+        {dibujo && (
+          <div className="card border-accent/50 p-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 shrink-0 text-accent" />
+              <span className="label">Dibujar {dibujo.falta.donde.join(" · ")}</span>
+              <button onClick={() => setDibujo(null)} className="ml-auto text-muted hover:text-fg">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <textarea
+              className="input mt-2 h-28 w-full text-sm"
+              value={dibujo.texto}
+              onChange={(e) => setDibujo((d) => (d ? { ...d, texto: e.target.value } : d))}
+              aria-label="Cómo es esta imagen"
+              placeholder="Qué se ve, encuadre, luz y ambiente. Sin letras dentro de la imagen."
+            />
+            <p className="mt-1 text-[11px] text-muted">
+              Se dibuja en {project.aspect}, el formato del video. Repite la descripción de los
+              personajes tal cual en cada escena: es lo único que hace que se parezcan entre sí.
+            </p>
+            <button
+              onClick={async () => {
+                const d = dibujo;
+                setDibujo(null);
+                await dibujarUna(d.falta, d.texto);
+              }}
+              disabled={reponiendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
+              className="btn-brand mt-2 w-full text-sm disabled:opacity-40"
+            >
+              <Sparkles className="h-4 w-4" /> Dibujarla
+            </button>
+          </div>
+        )}
 
         {/* Escenas */}
         <div className="card p-3">
@@ -1591,13 +1770,40 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         </div>
 
         <div className="card p-3">
-          <span className="label">Voz (narración)</span>
-          <label className="mt-2 block space-y-1 text-sm">
-            <span className="text-xs text-muted">Idioma / voz</span>
-            <select className="input" value={voice} onChange={(e) => setVoice(e.target.value)}>
-              {VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-            </select>
-          </label>
+          <div className="flex items-center gap-2">
+            <span className="label">Voz (narración)</span>
+            {vozOpenAi && (
+              <button onClick={() => setVerModelosVoz((v) => !v)} className="btn-ghost ml-auto text-[11px]">
+                <Settings2 className="h-3.5 w-3.5 text-accent" /> Modelo
+              </button>
+            )}
+          </div>
+          {/* El modelo se cambia AQUÍ, sin salir del capítulo. Si la narración
+              falla porque han retirado el modelo, salir a la pantalla de inicio
+              a cambiarlo dejaba al usuario encerrado y ya habiendo pagado. */}
+          {vozOpenAi && (verModelosVoz || vozRota) && (
+            <div className="mt-2 space-y-2">
+              {vozRota && (
+                <p className="flex items-start gap-1.5 rounded-lg border border-danger/40 bg-danger/10 p-2 text-[11px] text-danger">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{vozRota}</span>
+                </p>
+              )}
+              <ModelosIa
+                tareas={["voz"]}
+                titulo="Modelo para narrar"
+                onGuardado={() => { setVozRota(null); setStatus("Modelo cambiado ✓ · vuelve a darle a narrar"); }}
+              />
+            </div>
+          )}
+          {!vozOpenAi && (
+            <label className="mt-2 block space-y-1 text-sm">
+              <span className="text-xs text-muted">Idioma / voz</span>
+              <select className="input" value={voice} onChange={(e) => setVoice(e.target.value)}>
+                {VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+              </select>
+            </label>
+          )}
           <button onClick={genAllVoices} className="btn-ghost mt-2 w-full text-sm">
             <Mic className="h-4 w-4 text-accent" /> Generar la voz de los diálogos que falten
           </button>

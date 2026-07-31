@@ -269,6 +269,10 @@ export interface StoryScene {
   imgW: number; // tamaño natural de la imagen, para calcular encuadres
   imgH: number;
   shots: Shot[];
+  // Cómo es esta imagen, con palabras. Lo escribe la IA al inventar el capítulo
+  // y sirve para dibujarla luego; también vale escrito a mano. Es opcional: los
+  // proyectos de antes no lo tienen y siguen funcionando igual.
+  prompt?: string;
 }
 
 export interface AudioLayer {
@@ -1034,6 +1038,9 @@ export function migrateProject(raw: any): StoryProject {
         imgW: sc.imgW || 16,
         imgH: sc.imgH || 9,
         shots: (sc.shots ?? []).map((s: any) => normalizeShot(s, sc.imgW || 16, sc.imgH || 9)),
+        // La descripción de la imagen viaja con la escena: sin ella no se puede
+        // volver a dibujar ni saber qué había ahí.
+        ...(typeof sc.prompt === "string" && sc.prompt.trim() ? { prompt: sc.prompt.trim().slice(0, 2000) } : {}),
       })),
       audioLayers: raw.audioLayers ?? [],
       narrationVolume: typeof raw.narrationVolume === "number" ? raw.narrationVolume : 1,
