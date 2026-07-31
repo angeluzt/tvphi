@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Folder, FolderOpen, Film, ChevronLeft, Trash2, Loader2, Users } from "lucide-react";
+import { Plus, Folder, FolderOpen, Film, ChevronLeft, Trash2, Loader2, Users, FileUp } from "lucide-react";
 import { IaPanel } from "./ia-panel";
 
 // Pantalla de entrada: primero se elige DÓNDE se va a trabajar, y solo después
@@ -20,7 +20,7 @@ export interface CapMeta { id: string; name: string; updatedAt: string; seriesId
 
 export function StoryHome({
   series, proyectos, busy,
-  onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar, onGenerado,
+  onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar, onGenerado, onImportarZip,
 }: {
   series: SerieMeta[];
   proyectos: CapMeta[];
@@ -30,6 +30,7 @@ export function StoryHome({
   onNuevaSerie: () => void;
   onBorrar: (id: string, name: string) => void;
   onGenerado: (name: string, project: unknown) => void;
+  onImportarZip: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   // null = viendo las series; una cadena (o "") = dentro de esa serie.
   const [dentro, setDentro] = useState<string | null>(null);
@@ -83,6 +84,17 @@ export function StoryHome({
             <button onClick={() => onNuevoCapitulo(null)} disabled={busy} className="btn-ghost ml-auto text-xs disabled:opacity-40">
               <Plus className="h-4 w-4 text-accent" /> Video nuevo
             </button>
+            {/* Los personajes que no son de ninguna serie. */}
+            <a href="/story/personajes" className="btn-ghost text-xs">
+              <Users className="h-4 w-4 text-accent" /> Personajes
+            </a>
+            {/* Traer un capítulo entero desde un paquete. Va aquí porque hace
+                falta ANTES de tener nada abierto: es como se empieza en un
+                equipo nuevo. */}
+            <label className="btn-ghost cursor-pointer text-xs">
+              <FileUp className="h-4 w-4 text-accent" /> Importar .zip
+              <input type="file" accept=".zip,application/zip" className="hidden" onChange={onImportarZip} />
+            </label>
           </div>
           <Lista items={sueltos} busy={busy} onAbrir={onAbrir} onBorrar={onBorrar}
             vacio="Nada suelto. Todo lo tuyo está dentro de una serie." />

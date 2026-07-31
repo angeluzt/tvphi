@@ -192,6 +192,9 @@ model AiCredential {
   provider  String   // "openai"
   encrypted String   // iv.tag.dato (AES-256-GCM)
   hint      String   // "••••1a2b", para reconocerla
+  // Un modelo por tarea: no todos sirven para todo (los baratos de texto no
+  // hacen audio). { texto, imagen, voz }
+  models    Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

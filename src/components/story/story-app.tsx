@@ -8,7 +8,9 @@ import {
 } from "lucide-react";
 import { MissingAssets } from "./missing-assets";
 import { StoryHome, StoryBreadcrumb } from "./story-home";
-import { faltantes, type Falta } from "@/lib/story/missing";
+import { faltantes, referencias, type Falta } from "@/lib/story/missing";
+import { crearZip, leerZip, nombreArchivo, idDeNombre } from "@/lib/story/zip";
+import { getAsset } from "@/lib/story/store";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
@@ -88,6 +90,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // necesita ninguna, y lo que ya existe se queda "sin serie".
   const [series, setSeries] = useState<{ id: string; name: string; capitulos: number; personajes: number }[]>([]);
   const [seriesId, setSeriesId] = useState<string | null>(null);
+  // Si hay clave y modelo de voz puestos, la narración la hace OpenAI.
+  const [vozOpenAi, setVozOpenAi] = useState(false);
+  useEffect(() => {
+    fetch("/api/story/ia/clave").then((r) => r.json())
+      .then((j) => setVozOpenAi(!!j?.configurada && !!j?.models?.voz)).catch(() => {});
+  }, []);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
   // editor. Antes se caía directamente en el editor y elegir proyecto quedaba en
   // la columna de la derecha, que en un móvil acaba debajo de todo.
@@ -455,7 +463,22 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     if (voiceJobs[d.id]) return;
     setStatus(null);
     setVoiceJobs((j) => ({ ...j, [d.id]: { stage: "queued", pct: 0 } }));
-    synthesize(d.text, voice, (s) => setVoiceJobs((j) => (j[d.id] ? { ...j, [d.id]: s } : j)))
+    // Con OpenAI configurado, la voz la pone él; si no, el modelo del navegador,
+    // que suena robótico pero es gratis y no necesita conexión.
+    const hacerVoz = vozOpenAi
+      ? fetch("/api/story/ia/voz", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ texto: d.text }),
+        }).then(async (r) => {
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || "Error");
+          const bin = atob(j.audio);
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          return new Blob([arr], { type: "audio/wav" });
+        })
+      : synthesize(d.text, voice, (s) => setVoiceJobs((j) => (j[d.id] ? { ...j, [d.id]: s } : j)));
+    hacerVoz
       .then(async (blob) => {
         const audioId = nanoid(10);
         await putAsset(audioId, blob);
@@ -760,6 +783,86 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setStatus("Capítulo exportado ✓ · lleva dentro el catálogo de efectos; las imágenes no viajan");
   }
 
+  // ── el capítulo entero, con sus archivos ──
+  // El JSON solo lleva el montaje; las imágenes y los audios se quedaban fuera y
+  // había que reponerlos a mano uno a uno. Aquí van dentro del mismo archivo,
+  // con su identificador en el nombre, y al importarlo se colocan solos.
+  async function exportPaquete() {
+    setBusy("zip");
+    try {
+      const p = projRef.current;
+      const refs = referencias(p);
+      const vistos = new Set<string>();
+      const entradas: { nombre: string; datos: Uint8Array }[] = [];
+      let sinArchivo = 0;
+      for (const r of refs) {
+        if (vistos.has(r.id)) continue;
+        vistos.add(r.id);
+        const blob = await getAsset(r.id);
+        if (!blob) { sinArchivo++; continue; }
+        const ext = (blob.type.split("/")[1] || "bin").replace(/[^\w]/g, "").slice(0, 5);
+        entradas.push({
+          nombre: nombreArchivo(r.id, `${r.tipo}-${r.donde}`, "." + ext),
+          datos: new Uint8Array(await blob.arrayBuffer()),
+        });
+      }
+      let referencia: unknown = undefined;
+      try { referencia = await (await fetch("/api/story/efectos")).json(); } catch {}
+      const meta = { tvphi: "historia", version: 1, name, project: p, referencia };
+      entradas.unshift({
+        nombre: "proyecto.json",
+        datos: new TextEncoder().encode(JSON.stringify(meta, null, 2)),
+      });
+      const zip = crearZip(entradas);
+      download(zip, `${(name || "historia").replace(/[^\w\-]+/g, "-")}-completo.zip`);
+      setStatus(`Paquete descargado ✓ · ${entradas.length - 1} archivos${sinArchivo ? ` (faltaban ${sinArchivo})` : ""}`);
+    } catch (e: any) { setStatus("No se pudo empaquetar: " + (e?.message ?? "")); }
+    setBusy(null);
+  }
+
+  async function importPaquete(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (dirty && !confirm("Tienes cambios sin guardar. ¿Importar igualmente?")) return;
+    setBusy("zip");
+    try {
+      const entradas = await leerZip(f);
+      const meta = entradas.find((x) => x.nombre === "proyecto.json");
+      if (!meta) throw new Error("ese ZIP no lleva un proyecto dentro");
+      // Los archivos se guardan CON SU IDENTIFICADOR de siempre: por eso el
+      // montaje los encuentra sin que haya que reponer nada a mano.
+      let puestos = 0;
+      for (const x of entradas) {
+        const id = idDeNombre(x.nombre);
+        if (!id) continue;
+        // Se copia a un búfer propio: la porción del ZIP apunta al original.
+        await putAsset(id, new Blob([new Uint8Array(x.datos)]));
+        puestos++;
+      }
+      const crudo = JSON.parse(new TextDecoder().decode(meta.datos));
+      const data = migrateProject(crudo?.project ?? crudo);
+      if (!data.scenes.length) throw new Error("ese proyecto no tiene escenas");
+      setProject(data);
+      setProjectId(null);
+      if (crudo?.name) setName(String(crudo.name));
+      const primera = data.scenes[0];
+      setOpenScene(primera?.id ?? null);
+      setSelShot(primera?.shots[0]?.id ?? null);
+      setSelOverlay(null);
+      setSection(null);
+      setDirty(true);
+      setVista("editor");
+      seek(0);
+      const f2 = await faltantes(data);
+      setFaltas(f2);
+      setStatus(f2.length
+        ? `Paquete importado ✓ · ${puestos} archivos puestos, faltan ${f2.length}`
+        : `Paquete importado ✓ · ${puestos} archivos puestos, no falta nada`);
+    } catch (e: any) { setStatus("No se pudo importar: " + (e?.message ?? "")); }
+    setBusy(null);
+  }
+
   // ── la saga entera ──
   async function exportSaga() {
     setBusy("saga");
@@ -1059,6 +1162,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           if (r.ok) await cargarSeries();
         }}
         onBorrar={(id, nom) => deleteProject({ id, name: nom, updatedAt: "" })}
+        onImportarZip={importPaquete}
         // Lo que escribe la IA se abre en el editor SIN guardar: es un borrador
         // hasta que el usuario decida. Sus imágenes saldrán como faltantes.
         onGenerado={(nom, p) => {
@@ -1584,6 +1688,23 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             JSON, con el catálogo de efectos dentro. Las imágenes y los audios no caben ahí, así que
             al importarlo en otro equipo salen como faltantes y se reponen una a una con «Buscar».
           </p>
+          {/* Con los archivos dentro: es el respaldo de verdad. */}
+          <div className="mt-3 flex gap-2 border-t border-border pt-3">
+            <button onClick={exportPaquete} disabled={busy === "zip" || !project.scenes.length}
+              className="btn-brand flex-1 text-xs disabled:opacity-40">
+              <Download className="h-4 w-4" /> Todo (.zip)
+            </button>
+            <label className="btn-ghost flex-1 cursor-pointer justify-center text-xs">
+              <FileJson className="h-4 w-4 text-accent" /> Importar .zip
+              <input type="file" accept=".zip,application/zip" className="hidden" onChange={importPaquete} />
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] text-muted">
+            El montaje <strong>y sus archivos</strong> —imágenes, músicas, sonidos y las voces ya
+            generadas— en un solo archivo. Al importarlo se colocan solos: no hay que reponer nada
+            ni volver a generar las voces. Es lo que conviene guardar como copia.
+          </p>
+
           <div className="mt-3 flex gap-2 border-t border-border pt-3">
             <button onClick={exportSaga} disabled={busy === "saga"} className="btn-ghost flex-1 text-xs disabled:opacity-40">
               <Download className="h-4 w-4 text-accent" /> Toda la serie

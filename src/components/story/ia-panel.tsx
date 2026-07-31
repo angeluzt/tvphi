@@ -15,7 +15,10 @@ export function IaPanel({
 }: {
   onGenerado: (name: string, project: unknown) => void;
 }) {
-  const [estado, setEstado] = useState<{ configurada: boolean; pista: string | null } | null>(null);
+  const [estado, setEstado] = useState<{ configurada: boolean; pista: string | null; models?: any } | null>(null);
+  // Un modelo por tarea: no todos hacen de todo (los baratos de texto no dan
+  // audio). Se copian tal cual de platform.openai.com.
+  const [mods, setMods] = useState({ texto: "", imagen: "", voz: "", vozNombre: "alloy" });
   const [clave, setClave] = useState("");
   const [prompt, setPrompt] = useState("");
   const [escenas, setEscenas] = useState(6);
@@ -24,7 +27,10 @@ export function IaPanel({
   const [abierto, setAbierto] = useState(false);
 
   const leer = () =>
-    fetch("/api/story/ia/clave").then((r) => r.json()).then(setEstado).catch(() => {});
+    fetch("/api/story/ia/clave").then((r) => r.json()).then((j) => {
+      setEstado(j);
+      if (j?.models) setMods((m) => ({ ...m, ...j.models }));
+    }).catch(() => {});
   useEffect(() => { void leer(); }, []);
 
   async function guardarClave() {
@@ -32,7 +38,7 @@ export function IaPanel({
     try {
       const r = await fetch("/api/story/ia/clave", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: clave }),
+        body: JSON.stringify({ key: clave, models: mods }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Error");
@@ -50,12 +56,27 @@ export function IaPanel({
     setAviso("Clave quitada");
   }
 
+  async function guardarModelos() {
+    setOcupado("clave"); setAviso(null);
+    try {
+      const r = await fetch("/api/story/ia/clave", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ models: mods }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      await leer();
+      setAviso("Modelos guardados ✓");
+    } catch (e: any) { setAviso(e?.message ?? "No se pudo guardar"); }
+    setOcupado(null);
+  }
+
   async function generar() {
     setOcupado("generar"); setAviso(null);
     try {
       const r = await fetch("/api/story/ia/capitulo", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, escenas }),
+        body: JSON.stringify({ prompt, escenas, modelo: mods.texto.trim() || undefined }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Error");
@@ -123,6 +144,49 @@ export function IaPanel({
               aria-label="De qué va el capítulo"
               placeholder="Un pueblo que quedó bajo un embalse y reaparece con la sequía. Tono documental, inquietante, sin música alegre."
             />
+          </div>
+          {/* Un modelo por tarea. No es capricho: los modelos baratos de texto
+              NO generan audio, así que uno solo para todo no funciona. */}
+          <div className="rounded-lg border border-border p-3">
+            <span className="text-xs text-muted">Modelos, uno por tarea</span>
+            <div className="mt-2 space-y-2">
+              {([
+                ["texto", "Escribir el capítulo", "El más barato vale: solo sigue el catálogo que se le manda."],
+                ["voz", "Narrar los diálogos", "Tiene que admitir audio; los baratos de texto no."],
+                ["imagen", "Generar imágenes", "Aún no se usa: queda para cuando conectemos las imágenes."],
+              ] as const).map(([k, etq, ayuda]) => (
+                <label key={k} className="block">
+                  <span className="text-[11px] text-muted">{etq}</span>
+                  <input
+                    className="input mt-0.5 w-full text-sm"
+                    value={(mods as any)[k]}
+                    onChange={(e) => setMods((m) => ({ ...m, [k]: e.target.value }))}
+                    aria-label={etq}
+                    placeholder="cópialo de platform.openai.com"
+                  />
+                  <span className="mt-0.5 block text-[11px] text-muted">{ayuda}</span>
+                </label>
+              ))}
+              <label className="block">
+                <span className="text-[11px] text-muted">Voz</span>
+                <input
+                  className="input mt-0.5 w-full text-sm"
+                  value={mods.vozNombre}
+                  onChange={(e) => setMods((m) => ({ ...m, vozNombre: e.target.value }))}
+                  aria-label="Voz"
+                  placeholder="alloy"
+                />
+              </label>
+            </div>
+            <button onClick={guardarModelos} disabled={!estado?.configurada || ocupado === "clave"}
+              className="btn-ghost mt-2 w-full text-xs disabled:opacity-40">
+              <Check className="h-4 w-4 text-accent" /> Guardar modelos
+            </button>
+            {estado?.configurada && mods.voz && (
+              <p className="mt-2 text-[11px] text-accent">
+                La narración la hará OpenAI en vez del modelo del navegador.
+              </p>
+            )}
           </div>
           <label className="block">
             <span className="text-xs text-muted">Escenas: {escenas}</span>
