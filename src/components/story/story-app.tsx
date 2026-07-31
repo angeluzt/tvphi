@@ -5,7 +5,9 @@ import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
+  Settings2, AlertTriangle,
 } from "lucide-react";
+import { ModelosIa } from "./modelos-ia";
 import { MissingAssets } from "./missing-assets";
 import { StoryHome, StoryBreadcrumb } from "./story-home";
 import { faltantes, referencias, type Falta } from "@/lib/story/missing";
@@ -92,6 +94,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [seriesId, setSeriesId] = useState<string | null>(null);
   // Si hay clave y modelo de voz puestos, la narración la hace OpenAI.
   const [vozOpenAi, setVozOpenAi] = useState(false);
+  // Cuando la narración falla POR EL MODELO, se guarda el motivo para poder
+  // ofrecer cambiarlo sin salir del editor.
+  const [vozRota, setVozRota] = useState<string | null>(null);
+  const [verModelosVoz, setVerModelosVoz] = useState(false);
   useEffect(() => {
     fetch("/api/story/ia/clave").then((r) => r.json())
       .then((j) => setVozOpenAi(!!j?.configurada && !!j?.models?.voz)).catch(() => {});
@@ -458,9 +464,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   // No espera: encarga la voz al worker y sigue. Se puede seguir editando y
   // encolar más voces mientras tanto.
-  function genVoice(sceneId: string, shotId: string, d: Dialogue) {
-    if (!d.text.trim()) { setStatus("Escribe el texto del diálogo primero."); return; }
-    if (voiceJobs[d.id]) return;
+  // Devuelve si salió bien, para que el lote pueda pararse al primer fallo en
+  // vez de repetir el mismo error una vez por diálogo.
+  function genVoice(sceneId: string, shotId: string, d: Dialogue): Promise<boolean> {
+    if (!d.text.trim()) { setStatus("Escribe el texto del diálogo primero."); return Promise.resolve(false); }
+    if (voiceJobs[d.id]) return Promise.resolve(true);
     setStatus(null);
     setVoiceJobs((j) => ({ ...j, [d.id]: { stage: "queued", pct: 0 } }));
     // Con OpenAI configurado, la voz la pone él; si no, el modelo del navegador,
@@ -471,14 +479,20 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           body: JSON.stringify({ texto: d.text }),
         }).then(async (r) => {
           const j = await r.json();
-          if (!r.ok) throw new Error(j.error || "Error");
+          if (!r.ok) {
+            const e: any = new Error(j.error || "Error");
+            // Si el problema es el modelo elegido, se marca para poder ofrecer
+            // cambiarlo sin salir del editor.
+            e.modeloMal = !!j.modeloMal;
+            throw e;
+          }
           const bin = atob(j.audio);
           const arr = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
           return new Blob([arr], { type: "audio/wav" });
         })
       : synthesize(d.text, voice, (s) => setVoiceJobs((j) => (j[d.id] ? { ...j, [d.id]: s } : j)));
-    hacerVoz
+    return hacerVoz
       .then(async (blob) => {
         const audioId = nanoid(10);
         await putAsset(audioId, blob);
@@ -488,9 +502,14 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         // llenando el navegador de audios sueltos.
         if (d.audioId && d.audioId !== audioId) await deleteAsset(d.audioId).catch(() => {});
         setStatus("Voz generada ✓");
+        return true;
       })
       .catch((err: any) => {
         setStatus("Error generando voz: " + (err?.message ?? ""));
+        // Si el modelo es el que falla, se abre el selector aquí mismo: salir
+        // del editor a cambiarlo dejaba al usuario encerrado.
+        if (err?.modeloMal) setVozRota(err?.message ?? "Ese modelo no sirve para narrar.");
+        return false;
       })
       .finally(() => {
         setVoiceJobs((j) => {
@@ -499,24 +518,42 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         });
       });
   }
-  function genAllVoices() {
-    for (const sc of projRef.current.scenes) {
-      for (const sh of sc.shots) {
-        for (const d of sh.dialogues) {
-          if (d.text.trim() && !d.audioId) genVoice(sc.id, sh.id, d);
-        }
+
+  // Narrar en fila y PARAR al primer fallo.
+  //
+  // Antes se lanzaban todas de golpe: si el modelo no servía, se repetía el
+  // mismo error una vez por diálogo. Cada una de esas es una llamada a OpenAI.
+  async function narrarTodas(pendientes: [string, string, Dialogue][], queEran: string) {
+    if (!pendientes.length) { setStatus(`No hay ${queEran} que narrar.`); return; }
+    let hechas = 0;
+    for (const [sceneId, shotId, d] of pendientes) {
+      const bien = await genVoice(sceneId, shotId, d);
+      if (!bien) {
+        setStatus(
+          `Se paró en ${hechas} de ${pendientes.length} para no seguir gastando. ` +
+          `Arregla lo de arriba y dale otra vez.`,
+        );
+        return;
       }
+      hechas++;
     }
+    setStatus(`${hechas} ${hechas === 1 ? "voz generada" : "voces generadas"} ✓`);
+  }
+
+  function pendientesDe(filtro: (d: Dialogue) => boolean): [string, string, Dialogue][] {
+    const fuera: [string, string, Dialogue][] = [];
+    for (const sc of projRef.current.scenes)
+      for (const sh of sc.shots)
+        for (const d of sh.dialogues) if (filtro(d)) fuera.push([sc.id, sh.id, d]);
+    return fuera;
+  }
+
+  function genAllVoices() {
+    void narrarTodas(pendientesDe((d) => !!d.text.trim() && !d.audioId), "diálogos");
   }
   // Solo los que quedaron marcados porque les cambió el texto.
   function genStaleVoices() {
-    for (const sc of projRef.current.scenes) {
-      for (const sh of sc.shots) {
-        for (const d of sh.dialogues) {
-          if (d.stale && d.text.trim()) genVoice(sc.id, sh.id, d);
-        }
-      }
-    }
+    void narrarTodas(pendientesDe((d) => !!d.stale && !!d.text.trim()), "cambios");
   }
 
   // ---------- textos de la narración (exportar / importar) ----------
@@ -1591,13 +1628,40 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         </div>
 
         <div className="card p-3">
-          <span className="label">Voz (narración)</span>
-          <label className="mt-2 block space-y-1 text-sm">
-            <span className="text-xs text-muted">Idioma / voz</span>
-            <select className="input" value={voice} onChange={(e) => setVoice(e.target.value)}>
-              {VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-            </select>
-          </label>
+          <div className="flex items-center gap-2">
+            <span className="label">Voz (narración)</span>
+            {vozOpenAi && (
+              <button onClick={() => setVerModelosVoz((v) => !v)} className="btn-ghost ml-auto text-[11px]">
+                <Settings2 className="h-3.5 w-3.5 text-accent" /> Modelo
+              </button>
+            )}
+          </div>
+          {/* El modelo se cambia AQUÍ, sin salir del capítulo. Si la narración
+              falla porque han retirado el modelo, salir a la pantalla de inicio
+              a cambiarlo dejaba al usuario encerrado y ya habiendo pagado. */}
+          {vozOpenAi && (verModelosVoz || vozRota) && (
+            <div className="mt-2 space-y-2">
+              {vozRota && (
+                <p className="flex items-start gap-1.5 rounded-lg border border-danger/40 bg-danger/10 p-2 text-[11px] text-danger">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{vozRota}</span>
+                </p>
+              )}
+              <ModelosIa
+                tareas={["voz"]}
+                titulo="Modelo para narrar"
+                onGuardado={() => { setVozRota(null); setStatus("Modelo cambiado ✓ · vuelve a darle a narrar"); }}
+              />
+            </div>
+          )}
+          {!vozOpenAi && (
+            <label className="mt-2 block space-y-1 text-sm">
+              <span className="text-xs text-muted">Idioma / voz</span>
+              <select className="input" value={voice} onChange={(e) => setVoice(e.target.value)}>
+                {VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+              </select>
+            </label>
+          )}
           <button onClick={genAllVoices} className="btn-ghost mt-2 w-full text-sm">
             <Mic className="h-4 w-4 text-accent" /> Generar la voz de los diálogos que falten
           </button>

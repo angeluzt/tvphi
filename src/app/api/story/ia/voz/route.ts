@@ -64,13 +64,26 @@ export async function POST(req: Request) {
     let j: any = null;
     try { j = JSON.parse(texto); } catch {}
     if (!r.ok) {
-      return NextResponse.json(
-        { error: j?.error?.message || `OpenAI respondió ${r.status}` }, { status: 502 });
+      const crudo = j?.error?.message || `OpenAI respondió ${r.status}`;
+      // OpenAI retira modelos cada cierto tiempo, y entonces contesta con una
+      // jerga que no le dice nada a nadie. Si el problema es el modelo, se dice
+      // en claro y se marca, para que la interfaz pueda ofrecer cambiarlo en el
+      // sitio en vez de dejar al usuario encerrado.
+      const delModelo = /deprecat|does not exist|no longer|not found|unsupported|model/i.test(crudo);
+      return NextResponse.json({
+        error: delModelo
+          ? `El modelo «${modelo}» no sirve para narrar: ${crudo}. Elige otro aquí mismo.`
+          : crudo,
+        modeloMal: delModelo,
+        modelo,
+      }, { status: 502 });
     }
     const audio = j?.choices?.[0]?.message?.audio?.data;
     if (!audio) {
-      return NextResponse.json(
-        { error: "El modelo no devolvió audio. ¿Ese modelo admite voz?" }, { status: 502 });
+      return NextResponse.json({
+        error: `«${modelo}» contestó, pero sin audio: no sirve para narrar. Elige otro aquí mismo.`,
+        modeloMal: true, modelo,
+      }, { status: 502 });
     }
     // El audio vuelve en base64; lo guarda el navegador, igual que las imágenes.
     return NextResponse.json({ ok: true, formato: "wav", audio });
