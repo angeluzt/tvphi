@@ -13,13 +13,24 @@ import {
 // Sirve para que el personaje se parezca a sí mismo de un capítulo a otro, que
 // es donde se cae este tipo de canal.
 
-export function CharactersApp({ initial }: { initial: Character[] }) {
+export function CharactersApp({
+  initial, series, serieInicial,
+}: {
+  initial: Character[];
+  series: { id: string; name: string }[];
+  serieInicial: string | null;
+}) {
   const [chars, setChars] = useState<Character[]>(initial);
+  // Los personajes son de una serie: si estás dentro de "Crónicas", ves los
+  // suyos y los que crees nacen ahí. "Sin serie" para los que no son de ninguna
+  // (y para todo lo que había antes de que existieran las series).
+  const [serie, setSerie] = useState<string | null>(serieInicial);
   const [sel, setSel] = useState<string | null>(initial[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const actual = chars.find((c) => c.id === sel) ?? null;
+  const visibles = chars.filter((c) => (c.seriesId ?? null) === serie);
+  const actual = visibles.find((c) => c.id === sel) ?? null;
 
   function mut(id: string, fn: (c: Character) => Character) {
     setChars((prev) => prev.map((c) => (c.id === id ? fn(c) : c)));
@@ -31,11 +42,13 @@ export function CharactersApp({ initial }: { initial: Character[] }) {
       const r = await fetch("/api/story/characters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Personaje nuevo", data: emptyCharacterData() }),
+        body: JSON.stringify({ name: "Personaje nuevo", data: emptyCharacterData(), seriesId: serie }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Error");
-      const c: Character = { ...j.character, data: normalizeCharacterData(j.character.data) };
+      // Se fuerza la serie en la que estamos: si la respuesta no la trajera, el
+      // personaje recién creado desaparecería del filtro nada más nacer.
+      const c: Character = { ...j.character, seriesId: j.character.seriesId ?? serie, data: normalizeCharacterData(j.character.data) };
       setChars((prev) => [c, ...prev]);
       setSel(c.id);
       setStatus("Ficha creada ✓");
@@ -51,7 +64,7 @@ export function CharactersApp({ initial }: { initial: Character[] }) {
       const r = await fetch("/api/story/characters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: c.id, name: c.name.trim() || "Sin nombre", data: c.data }),
+        body: JSON.stringify({ id: c.id, name: c.name.trim() || "Sin nombre", data: c.data, seriesId: c.seriesId ?? null }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Error");
@@ -95,8 +108,17 @@ export function CharactersApp({ initial }: { initial: Character[] }) {
             <Plus className="h-3.5 w-3.5" /> Nuevo
           </button>
         </div>
+        {/* De qué serie son los personajes que se ven. */}
+        <select
+          className="input mt-2 w-full text-sm"
+          value={serie ?? ""}
+          onChange={(e) => { setSerie(e.target.value || null); setSel(null); }}
+        >
+          <option value="">Sin serie</option>
+          {series.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
         <div className="mt-2 space-y-1">
-          {chars.map((c) => (
+          {visibles.map((c) => (
             <button
               key={c.id}
               onClick={() => setSel(c.id)}
@@ -109,9 +131,9 @@ export function CharactersApp({ initial }: { initial: Character[] }) {
               <span className="shrink-0 text-[11px] text-muted">{c.data.images.length}</span>
             </button>
           ))}
-          {!chars.length && (
+          {!visibles.length && (
             <p className="py-3 text-center text-[11px] text-muted">
-              Aún no hay personajes. Crea uno y ve metiéndole sus imágenes base.
+              Aún no hay personajes aquí. Crea uno y ve metiéndole sus imágenes base.
             </p>
           )}
         </div>

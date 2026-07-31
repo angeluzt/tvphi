@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Folder, FolderOpen, Film, ChevronLeft, Trash2, Loader2 } from "lucide-react";
+import { Plus, Folder, FolderOpen, Film, ChevronLeft, Trash2, Loader2, Users } from "lucide-react";
 
 // Pantalla de entrada: primero se elige DÓNDE se va a trabajar, y solo después
 // se abre el editor.
@@ -99,7 +99,11 @@ export function StoryHome({
             <ChevronLeft className="h-4 w-4" /> Series
           </button>
           <span className="label ml-1 min-w-0 truncate">{serie?.name ?? "Serie"}</span>
-          <button onClick={() => onNuevoCapitulo(dentro)} disabled={busy} className="btn-brand ml-auto text-xs disabled:opacity-40">
+          {/* Los personajes son de la serie: se entra a los suyos desde aquí. */}
+          <a href={`/story/personajes?serie=${dentro}`} className="btn-ghost ml-auto text-xs">
+            <Users className="h-4 w-4 text-accent" /> Personajes
+          </a>
+          <button onClick={() => onNuevoCapitulo(dentro)} disabled={busy} className="btn-brand text-xs disabled:opacity-40">
             <Plus className="h-4 w-4" /> Capítulo nuevo
           </button>
         </div>
