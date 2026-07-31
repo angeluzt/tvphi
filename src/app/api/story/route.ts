@@ -36,6 +36,9 @@ const vfxSchema = z.object({
   id: z.string(),
   kind: z.string().max(40),
   shape: z.enum(["arriba", "punto", "linea", "libre"]).optional(),
+  // Dónde se miden los sitios: sobre el encuadre de la toma (de siempre) o
+  // sobre la imagen entera (cómodo al escribir el proyecto a mano).
+  espacio: z.enum(["encuadre", "imagen"]).optional(),
   auto: z.boolean().optional(),
   follow: z.boolean().optional(),
   nodes: z.array(z.object({

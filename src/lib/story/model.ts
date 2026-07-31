@@ -152,6 +152,14 @@ export function overlaySoundStart(o: PngOverlay, ventana: { start: number; end: 
 // Un sitio donde actúa un efecto: un punto (inicio = fin) o una línea.
 export interface VfxNode { x: number; y: number; x2: number; y2: number } // 0..1
 
+// En qué se miden los sitios de un efecto:
+//   "encuadre" (de siempre): 0..1 sobre el ENCUADRE INICIAL de la toma. Es lo
+//       que sale al colocarlos con el dedo sobre la previsualización.
+//   "imagen": 0..1 sobre la IMAGEN entera, sin importar cómo esté encuadrada.
+//       Es lo cómodo cuando el proyecto se escribe a mano o lo genera una IA:
+//       "la ventana está al 72% de ancho de la foto" y se acabó.
+export type VfxEspacio = "encuadre" | "imagen";
+
 export interface VfxLayer {
   id: string;
   kind: VfxKind;
@@ -159,6 +167,8 @@ export interface VfxLayer {
   // TODOS los sitios donde actúa: tres ramas ardiendo son tres nodos de la
   // misma capa, con los mismos ajustes y el mismo color.
   shape: VfxShape;
+  // Dónde se miden los sitios. Si falta, "encuadre" (como siempre).
+  espacio?: VfxEspacio;
   nodes: VfxNode[];
   // Si va pegado a la imagen: al moverse o acercarse la toma, el efecto se
   // mueve con ella. Es lo que hace que una hoguera no se quede flotando en el
@@ -180,6 +190,14 @@ export interface VfxLayer {
 
 // Sitio de partida para una forma, para que un efecto recién añadido ya se vea
 // sin tener que dibujar nada.
+// Efectos que se ponen en un sitio concreto de la imagen: si la cámara se
+// mueve, tienen que moverse con ella.
+const ANCLADOS = new Set<VfxKind>([
+  "explosion", "chispas", "destello", "shockwave", "escarcha", "speedlines",
+  "glitch", "magiccircle", "fuego", "aura", "portal", "luz", "baliza", "neon",
+  "navidad", "humo", "lampara", "haces", "electricidad", "salpicadura",
+]);
+
 export function defaultNode(shape: VfxShape): VfxNode {
   if (shape === "arriba") return { x: 0, y: -0.02, x2: 1, y2: -0.02 };
   if (shape === "punto") return { x: 0.5, y: 0.5, x2: 0.5, y2: 0.5 };
@@ -675,7 +693,9 @@ export function newShot(imgW: number, imgH: number, kind: MotionKind = "in"): Sh
     preset,
     from,
     to,
-    transition: "fade",
+    // De serie, corte seco: es lo que se espera al encadenar tomas de una misma
+    // escena, y el fundido se pone a mano cuando se quiere.
+    transition: "cut",
     transitionDur: DEFAULT_TRANS_DUR,
     dialogues: [],
     sfx: [],
@@ -883,24 +903,34 @@ function normalizeVfx(v: any): VfxLayer {
   const kind: VfxKind = vfxSpec(v.kind).id;
   const permitidas = vfxSpec(kind).shapes;
   const forma: VfxShape = permitidas.includes(v.shape) ? v.shape : permitidas[0];
+  const sitios: VfxNode[] = Array.isArray(v.nodes)
+    ? v.nodes.map((n: any) => ({
+        x: Number(n.x) || 0, y: Number(n.y) || 0,
+        x2: Number(n.x2) || 0, y2: Number(n.y2) || 0,
+      }))
+    // Los proyectos de antes traían un solo sitio suelto en x/y/x2/y2.
+    : [{
+        x: Number(v.x) || 0, y: Number(v.y) || 0,
+        x2: Number(v.x2) || 0, y2: Number(v.y2) || 0,
+      }];
   return {
     id: v.id ?? nanoid(6),
     kind,
     shape: forma,
+    espacio: v.espacio === "imagen" ? "imagen" : "encuadre",
     // En un proyecto de antes el sitio se puso a mano con las barras: no se
     // toca. Y como entonces nada seguía a la cámara, se respeta.
     auto: !!v.auto,
-    follow: !!v.follow,
-    // Los proyectos de antes traían un solo sitio suelto en x/y/x2/y2.
-    nodes: Array.isArray(v.nodes)
-      ? v.nodes.map((n: any) => ({
-          x: Number(n.x) || 0, y: Number(n.y) || 0,
-          x2: Number(n.x2) || 0, y2: Number(n.y2) || 0,
-        }))
-      : [{
-          x: Number(v.x) || 0, y: Number(v.y) || 0,
-          x2: Number(v.x2) || 0, y2: Number(v.y2) || 0,
-        }],
+    // Si no se dice nada, se decide por el efecto: lo que va pegado a un sitio
+    // de la foto (una hoguera, una farola) sigue a la cámara, y lo que cae
+    // sobre todo el cuadro (lluvia, nieve) no. Escrito a mano se acertaba solo
+    // por casualidad, y sin esto el fuego se queda flotando al hacer zoom.
+    follow: typeof v.follow === "boolean" ? v.follow : forma !== "arriba" && vfxSpec(kind).continuo !== undefined && ANCLADOS.has(kind),
+    // La forma "arriba" ES una franja a todo el ancho por encima del cuadro:
+    // sus sitios los pone el modelo, no quien escribe el proyecto. Un punto
+    // suelto aquí hacía que la lluvia cayera en una columna en mitad de la
+    // escena, y no avisaba nadie.
+    nodes: forma === "arriba" ? [defaultNode("arriba")] : sitios,
     colorHex: typeof v.colorHex === "string" ? v.colorHex : (vfxSpec(kind).color ?? "#ffffff"),
     params: { ...vfxDefaults(kind), ...(v.params ?? {}) },
     timing: v.timing === "range" ? "range" : "all",

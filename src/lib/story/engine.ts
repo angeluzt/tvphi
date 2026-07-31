@@ -694,14 +694,19 @@ export class StoryEngine {
     const p = moveProgress(f.shot, lt);
     const fr = f.frames;
     const iw = f.scene.imgW || 16, ih = f.scene.imgH || 9;
-    const seguir = (n: { x: number; y: number; x2: number; y2: number }) => {
+    const seguir = (n: { x: number; y: number; x2: number; y2: number }, imagen: boolean) => {
       const f0 = fr.from;
       const fa = lerpFrame(fr.from, fr.to, p);
       const h0 = frameH(f0.w, iw, ih);
       const hp = frameH(fa.w, iw, ih);
       const mapa = (x: number, y: number) => {
-        const ix = f0.cx - f0.w / 2 + x * f0.w;
-        const iy = f0.cy - h0 / 2 + y * h0;
+        // Dos formas de leer un sitio:
+        //   "encuadre": 0..1 sobre el encuadre inicial de la toma (lo que sale
+        //       al colocarlo con el dedo sobre la previsualización).
+        //   "imagen": 0..1 sobre la foto entera. Es lo cómodo al escribir el
+        //       proyecto a mano: no hay que saber cómo está encuadrada la toma.
+        const ix = imagen ? x : f0.cx - f0.w / 2 + x * f0.w;
+        const iy = imagen ? y : f0.cy - h0 / 2 + y * h0;
         return {
           x: (ix - (fa.cx - fa.w / 2)) / (fa.w || 1),
           y: (iy - (fa.cy - hp / 2)) / (hp || 1),
@@ -715,7 +720,11 @@ export class StoryEngine {
       const nodes = v.nodes ?? [];
       return {
         id: v.id, kind: v.kind, shape: v.shape,
-        nodes: v.follow ? nodes.map(seguir) : nodes,
+        // En espacio "imagen" hay que pasar por el encuadre siempre: un sitio
+        // dado sobre la foto no significa nada en pantalla hasta proyectarlo.
+        nodes: (v.follow || v.espacio === "imagen")
+          ? nodes.map((n) => seguir(n, v.espacio === "imagen"))
+          : nodes,
         colorHex: v.colorHex, params: v.params, start: w.start, end: w.end,
       };
     });
