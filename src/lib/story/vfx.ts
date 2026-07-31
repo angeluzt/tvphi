@@ -92,6 +92,10 @@ const REPARTO = P("spread", "Se reparte alrededor del sitio", 0, 1, 0.02);
 // 40 % de lo que hay del sitio al borde. Así vale igual para un chorro que cae
 // desde arriba, uno que sale por la mitad, o humo que sube: siempre se cuenta
 // desde donde nace.
+// Hacia dónde van. Negativo sube, positivo cae. Cada efecto arranca con lo
+// suyo (las burbujas suben, la lluvia cae) pero se puede dar la vuelta: hay
+// quien quiere corazones lloviendo y quien los quiere subiendo.
+const SENTIDO = P("sentido", "Sube (−1) / cae (+1)", -1, 1, 0.05);
 const LIMITE = P("limit", "Se esfuman tras recorrer (0 = hasta salir del cuadro)", 0, 1, 0.01);
 
 export const VFX: VfxSpec[] = [
@@ -134,13 +138,13 @@ export const VFX: VfxSpec[] = [
   { id: "lluvia", label: "Lluvia", group: "clima", shapes: ["arriba", "punto", "linea", "libre"], color: "#8fc4ff", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE] },
   { id: "nieve", label: "Nieve", group: "clima", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffffff", continuo: true,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE, SENTIDO] },
   { id: "ceniza", label: "Ceniza", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#caa27a", continuo: true,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD, LIMITE] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, LIMITE, SENTIDO] },
   { id: "hojas", label: "Hojas / pétalos", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#8a6a3a", continuo: true,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE, SENTIDO] },
   { id: "polvo", label: "Polvo mágico / luciérnagas", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffe28a", continuo: true,
-    params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo"), VELOCIDAD, LIMITE] },
+    params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo"), VELOCIDAD, LIMITE, SENTIDO] },
   { id: "niebla", label: "Niebla", group: "clima", shapes: ["punto", "linea", "arriba", "libre"], color: "#cfd6e6", continuo: true,
     params: [P("density", "Densidad"), VELOCIDAD, TAMANO] },
 
@@ -148,11 +152,11 @@ export const VFX: VfxSpec[] = [
   { id: "humo", label: "Humo", group: "fuego", shapes: ["punto", "linea", "libre"], color: "#8a8a8a", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, LIMITE] },
   { id: "burbujas", label: "Burbujas", group: "ambiente", shapes: ["punto", "linea", "libre", "arriba"], color: "#bfe8ff", continuo: true,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD, LIMITE] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, LIMITE, SENTIDO] },
   { id: "confeti", label: "Confeti", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#ff5fa2", continuo: true,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE, SENTIDO] },
   { id: "estrellas", label: "Estrellas / brillos", group: "luces", shapes: ["arriba", "punto", "linea", "libre"], color: "#fff3b0", continuo: true,
-    params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo")] },
+    params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo"), SENTIDO] },
 
   // Luz sin partículas: solo el resplandor. Es lo que hace falta para una
   // farola, una ventana encendida o un cartel: una mancha de luz tenue que
@@ -172,7 +176,7 @@ export const VFX: VfxSpec[] = [
   { id: "fugaces", label: "Estrellas fugaces", group: "clima", shapes: ["arriba", "punto", "linea"], color: "#dbe9ff", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, P("angulo", "Inclinación", -1, 1, 0.05), LIMITE] },
   { id: "corazones", label: "Corazones", group: "ambiente", shapes: ["punto", "linea", "libre", "arriba"], color: "#ff5f8a", continuo: true,
-    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE] },
+    params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE, SENTIDO] },
   { id: "salpicadura", label: "Salpicadura de agua", group: "golpes", shapes: ["punto", "linea"], color: "#bfe4ff", continuo: false,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, REPETIR, REPARTO] },
 ];
@@ -192,6 +196,9 @@ export function vfxDefaults(k: VfxKind): Record<string, number> {
   if (k === "rayo") { out.stormrate = 0.5; out.flash = 1; } // el fogonazo viene puesto
   if (k === "neon") out.blink = 0.5;
   if (k === "hojas") out.wind = 0.5;
+  // El sentido de serie es el natural de cada efecto: lo que flota, flota.
+  const SUBEN = ["polvo", "burbujas", "corazones", "ceniza", "estrellas"];
+  if ("sentido" in out) out.sentido = SUBEN.includes(k) ? -1 : 1;
   return out;
 }
 
@@ -240,7 +247,7 @@ interface Part {
   size: number; life: number; maxLife: number;
   hue: number; sat: number; light: number;
   gravity: number; drag: number;
-  type: "glow" | "spark" | "rain" | "leaf" | "smoke" | "portal" | "heart";
+  type: "glow" | "spark" | "rain" | "leaf" | "smoke" | "portal" | "heart" | "bubble";
   blend: string;
   trail?: { x: number; y: number }[];
   sway?: number; swayPhase?: number; rot?: number; rotSpeed?: number;
@@ -304,13 +311,13 @@ const AMBIENT_CONFIG: Record<string, {
   hojas: { sizeMin: 3, sizeMax: 6, vxMin: -0.3, vxMax: 0.3, vyMin: 1, vyMax: 2, gravity: 0.01, drag: 0.997, maxLife: 300, renderType: "leaf", blend: "source-over", sway: true, rotate: true },
   polvo: { sizeMin: 1, sizeMax: 2.2, vxMin: -0.2, vxMax: 0.2, vyMin: -0.5, vyMax: -0.1, gravity: 0, drag: 0.99, maxLife: 180, renderType: "glow", blend: "lighter", sway: true, rotate: false },
   // Suben despacio y se van; el vaivén las hace parecer agua.
-  burbujas: { sizeMin: 1.5, sizeMax: 4, vxMin: -0.15, vxMax: 0.15, vyMin: -1.6, vyMax: -0.6, gravity: -0.004, drag: 0.995, maxLife: 240, renderType: "glow", blend: "lighter", sway: true, rotate: false },
+  burbujas: { sizeMin: 3, sizeMax: 8, vxMin: -0.15, vxMax: 0.15, vyMin: -1.6, vyMax: -0.6, gravity: -0.004, drag: 0.995, maxLife: 240, renderType: "bubble", blend: "source-over", sway: true, rotate: false },
   // Papelitos: caen dando vueltas, como las hojas pero más vivos.
   confeti: { sizeMin: 2, sizeMax: 4.5, vxMin: -0.6, vxMax: 0.6, vyMin: 1.2, vyMax: 2.6, gravity: 0.012, drag: 0.996, maxLife: 300, renderType: "leaf", blend: "source-over", sway: true, rotate: true },
   // Cruzan el cuadro de largo y dejan estela.
   fugaces: { sizeMin: 1.2, sizeMax: 2.6, vxMin: 3, vxMax: 6, vyMin: 2.5, vyMax: 5, gravity: 0, drag: 1, maxLife: 90, renderType: "spark", blend: "lighter", sway: false, rotate: false },
   // Suben flotando y se balancean.
-  corazones: { sizeMin: 3, sizeMax: 7, vxMin: -0.25, vxMax: 0.25, vyMin: -1.5, vyMax: -0.6, gravity: -0.003, drag: 0.995, maxLife: 260, renderType: "heart", blend: "source-over", sway: true, rotate: false },
+  corazones: { sizeMin: 6, sizeMax: 13, vxMin: -0.25, vxMax: 0.25, vyMin: -1.5, vyMax: -0.6, gravity: -0.003, drag: 0.995, maxLife: 260, renderType: "heart", blend: "source-over", sway: true, rotate: false },
   // Casi quietas: solo están y brillan.
   estrellas: { sizeMin: 0.8, sizeMax: 2, vxMin: -0.06, vxMax: 0.06, vyMin: -0.06, vyMax: 0.06, gravity: 0, drag: 0.99, maxLife: 200, renderType: "glow", blend: "lighter", sway: false, rotate: false },
 };
@@ -349,6 +356,12 @@ export class VfxScene {
   private ambients: Ambient[] = [];
   private storms: Storm[] = [];
   private bursts: BurstEm[] = [];
+
+  // Sprites de resplandor ya dibujados. Crear un degradado radial por partícula
+  // era, de largo, lo más caro del repintado: con mil partículas son mil
+  // degradados en cada fotograma. Dibujados una vez y reutilizados, queda en un
+  // drawImage por partícula.
+  private sprites = new Map<string, HTMLCanvasElement>();
 
   private rnd: () => number = Math.random;
   private clave = "";
@@ -417,15 +430,35 @@ export class VfxScene {
   }
 
   // Da de alta y de baja las capas según su rato dentro de la toma.
-  // Recoloca los emisores vivos. Hace falta cuando la capa sigue a la toma: la
-  // cámara se mueve y la hoguera tiene que quedarse en su sitio de la imagen,
-  // no del cuadro. Lo ya soltado no se toca (el humo que subió, subió).
+  // Pone al día los emisores vivos: su sitio y sus ajustes.
+  //
+  // El sitio, porque una capa que sigue a la toma se mueve con la cámara y la
+  // hoguera tiene que quedarse donde está en la imagen, no en el cuadro.
+  //
+  // Los ajustes, porque tocar una barra NO puede rehacer la simulación: se
+  // cambian sobre la marcha en los emisores que ya están, y lo siguiente que
+  // emitan sale con el valor nuevo. Lo ya soltado no se toca — el humo que
+  // subió, subió.
   private recolocar(capas: VfxInput[]) {
     for (const c of capas) {
+      const col = hexToHsl(c.colorHex || "#ffffff");
       c.nodes.forEach((n, i) => {
         const clave = `${c.id}#${i}`;
         const x = n.x * this.w, y = n.y * this.h;
         const x2 = n.x2 * this.w, y2 = n.y2 * this.h;
+        for (const e of this.fires) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.ambients) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.auras) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.orbs) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.portals) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.beacons) if (e.id === clave) e.par = c.params;
+        for (const e of this.fogs) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.storms) if (e.id === clave) e.par = c.params;
+        for (const e of this.lamps) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.haces) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.chispazos) if (e.id === clave) e.par = c.params;
+        for (const e of this.bursts) if (e.id === clave) { e.par = c.params; e.color = col; }
+        for (const e of this.neons) if (e.id === clave) { e.color = col; e.thickness = (c.params.thickness ?? 1) * 3 * this.k; }
         for (const e of this.bursts) if (e.id === clave) { e.x = x; e.y = y; }
         for (const e of this.lamps) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.haces) if (e.id === clave) { e.x = x; e.y = y; }
@@ -821,10 +854,14 @@ export class VfxScene {
         const tono = e.kind === "confeti" ? this.r(0, 360) : e.color.h + this.r(-8, 8);
         // Las fugaces se inclinan a gusto: -1 va hacia la izquierda, 1 a la derecha.
         const inclina = e.kind === "fugaces" ? (p.angulo ?? 0) : 0;
+        // El sentido manda sobre la dirección; la config solo pone el ritmo.
+        const natural = cfg.vyMin + cfg.vyMax >= 0 ? 1 : -1;
+        const sent = p.sentido ?? natural;
+        const vy = Math.abs(this.r(cfg.vyMin, cfg.vyMax)) * sent * (p.speed ?? 1) * this.k;
         this.parts.push({
           x: ex + this.r(-4, 4) * this.k, y: ey + this.r(-2, 2) * this.k,
           vx: (this.r(cfg.vxMin, cfg.vxMax) * (inclina || 1)) * (p.speed ?? 1) * this.k + viento,
-          vy: this.r(cfg.vyMin, cfg.vyMax) * (p.speed ?? 1) * this.k,
+          vy,
           size: this.r(cfg.sizeMin, cfg.sizeMax) * (p.size ?? 1) * this.k,
           rot: cfg.rotate ? this.r(0, Math.PI * 2) : 0,
           rotSpeed: cfg.rotate ? this.r(-0.05, 0.05) : 0,
@@ -835,10 +872,12 @@ export class VfxScene {
           // Las estrellas nacen con brillo distinto cada una: así titilan en
           // vez de encenderse todas igual.
           light: e.kind === "estrellas" ? this.r(55, 95) : e.color.l,
-          gravity: cfg.gravity * this.k, drag: cfg.drag,
+          // La gravedad tira en el mismo sentido en que va: si se le da la
+          // vuelta a un efecto, no puede seguir frenando hacia el otro lado.
+          gravity: Math.abs(cfg.gravity) * sent * this.k, drag: cfg.drag,
           type: cfg.renderType, blend: cfg.blend,
           trail: cfg.renderType === "spark" ? [] : undefined,
-          ...this.corteDe(p, ex, ey, cfg.vyMin + cfg.vyMax),
+          ...this.corteDe(p, ex, ey, sent),
         });
       }
     }
@@ -1046,6 +1085,7 @@ export class VfxScene {
         else if (p.type === "rain") this.dibRain(ctx, p);
         else if (p.type === "leaf") this.dibLeaf(ctx, p);
         else if (p.type === "heart") this.dibCorazon(ctx, p);
+        else if (p.type === "bubble") this.dibBurbuja(ctx, p);
         else this.dibGlow(ctx, p);
       }
       for (const f of this.flashes) this.dibFlash(ctx, f);
@@ -1060,20 +1100,44 @@ export class VfxScene {
     return p.apagando ? base * Math.max(0, 1 - p.apagando / APAGADO) : base;
   }
 
+  // Resplandor de un color, dibujado a tamaño fijo para poder estirarlo luego.
+  // El color se redondea para que dos partículas casi iguales compartan sprite:
+  // el ojo no lo nota y la caché pasa de miles de entradas a unas pocas.
+  private sprite(hue: number, sat: number, light: number, conNucleo: boolean) {
+    const h = Math.round(hue / 8) * 8, sa = Math.round(sat / 10) * 10, l = Math.round(light / 5) * 5;
+    const clave = `${h},${sa},${l},${conNucleo ? 1 : 0}`;
+    const ya = this.sprites.get(clave);
+    if (ya) return ya;
+    const S = 64, R = S / 2;
+    const c = document.createElement("canvas");
+    c.width = S; c.height = S;
+    const x = c.getContext("2d")!;
+    const g = x.createRadialGradient(R, R, 0, R, R, R);
+    g.addColorStop(0, `hsla(${h},${sa}%,${l}%,1)`);
+    g.addColorStop(1, `hsla(${h},${sa}%,${l}%,0)`);
+    x.fillStyle = g;
+    x.beginPath(); x.arc(R, R, R, 0, Math.PI * 2); x.fill();
+    if (conNucleo) {
+      // El punto brillante del centro, en la misma proporción que tenía antes
+      // (0.55 de radio frente a 3.2 del resplandor).
+      x.fillStyle = `hsla(${h},${sa}%,${Math.min(l + 22, 96)}%,1)`;
+      x.beginPath(); x.arc(R, R, R * (0.55 / 3.2), 0, Math.PI * 2); x.fill();
+    }
+    if (this.sprites.size > 400) this.sprites.clear();
+    this.sprites.set(clave, c);
+    return c;
+  }
+
   private dibGlow(ctx: CanvasRenderingContext2D, p: Part) {
     const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
+    if (a <= 0.004) return;
     ctx.globalCompositeOperation = p.blend as GlobalCompositeOperation;
-    const outer = p.size * 3.2;
-    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, Math.max(outer, 0.1));
-    g.addColorStop(0, `hsla(${p.hue},${p.sat}%,${p.light}%,${a})`);
-    g.addColorStop(1, `hsla(${p.hue},${p.sat}%,${p.light}%,0)`);
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(outer, 0.1), 0, Math.PI * 2); ctx.fill();
-    if (p.sat > 0) {
-      ctx.beginPath();
-      ctx.fillStyle = `hsla(${p.hue},${p.sat}%,${Math.min(p.light + 22, 96)}%,${a})`;
-      ctx.arc(p.x, p.y, p.size * 0.55, 0, Math.PI * 2); ctx.fill();
-    }
+    const r = Math.max(p.size * 3.2, 0.1);
+    const sp = this.sprite(p.hue, p.sat, p.light, p.sat > 0);
+    const antes = ctx.globalAlpha;
+    ctx.globalAlpha = antes * a;
+    ctx.drawImage(sp, p.x - r, p.y - r, r * 2, r * 2);
+    ctx.globalAlpha = antes;
   }
   private dibSpark(ctx: CanvasRenderingContext2D, p: Part) {
     const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
@@ -1147,6 +1211,29 @@ export class VfxScene {
     this.esfera(ctx, e.x, e.y, e.color, 18 * this.k, a);
   }
 
+  // Una burbuja no es una mancha de luz: es casi transparente, con el borde
+  // marcado y un brillito arriba a la izquierda.
+  private dibBurbuja(ctx: CanvasRenderingContext2D, p: Part) {
+    const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
+    if (a <= 0.01) return;
+    ctx.globalCompositeOperation = "source-over";
+    const r = Math.max(p.size, 0.5);
+    // Relleno muy tenue, para que se vea lo que hay detrás.
+    const g = ctx.createRadialGradient(p.x - r * 0.3, p.y - r * 0.3, 0, p.x, p.y, r);
+    g.addColorStop(0, `hsla(${p.hue},${p.sat}%,95%,${a * 0.35})`);
+    g.addColorStop(0.7, `hsla(${p.hue},${p.sat}%,${p.light}%,${a * 0.08})`);
+    g.addColorStop(1, `hsla(${p.hue},${p.sat}%,${p.light}%,${a * 0.02})`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    // El aro, que es lo que la hace leerse como burbuja.
+    ctx.strokeStyle = `hsla(${p.hue},${p.sat}%,90%,${a * 0.75})`;
+    ctx.lineWidth = Math.max(1, r * 0.12);
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
+    // Brillo.
+    ctx.fillStyle = `hsla(0,0%,100%,${a * 0.85})`;
+    ctx.beginPath(); ctx.arc(p.x - r * 0.35, p.y - r * 0.35, Math.max(0.6, r * 0.18), 0, Math.PI * 2); ctx.fill();
+  }
+
   private dibCorazon(ctx: CanvasRenderingContext2D, p: Part) {
     const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
     ctx.globalCompositeOperation = "source-over";
@@ -1160,6 +1247,10 @@ export class VfxScene {
     ctx.bezierCurveTo(-s * 1.5, -s * 0.2, -s * 0.55, -s * 1.15, 0, -s * 0.35);
     ctx.bezierCurveTo(s * 0.55, -s * 1.15, s * 1.5, -s * 0.2, 0, s * 0.9);
     ctx.closePath(); ctx.fill();
+    // Un borde más claro: sobre un fondo oscuro un corazón plano se pierde.
+    ctx.strokeStyle = `hsla(${p.hue},${p.sat}%,${Math.min(p.light + 25, 95)}%,${a * 0.8})`;
+    ctx.lineWidth = Math.max(0.8, s * 0.12);
+    ctx.stroke();
     ctx.restore();
   }
 
