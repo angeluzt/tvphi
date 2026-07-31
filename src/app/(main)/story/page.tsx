@@ -14,9 +14,9 @@ export default async function StoryPage() {
   const rows = await prisma.storyProject.findMany({
     where: { userId: user.id },
     orderBy: { updatedAt: "desc" },
-    select: { id: true, name: true, updatedAt: true },
+    select: { id: true, name: true, seriesId: true, updatedAt: true },
   });
-  const projects = rows.map((r) => ({ id: r.id, name: r.name, updatedAt: r.updatedAt.toISOString() }));
+  const projects = rows.map((r) => ({ id: r.id, name: r.name, seriesId: r.seriesId, updatedAt: r.updatedAt.toISOString() }));
 
   return (
     <div className="space-y-4">
