@@ -108,6 +108,8 @@ const sceneSchema = z.object({
   imgW: z.number(),
   imgH: z.number(),
   shots: z.array(shotSchema).max(50),
+  // Descripción de la imagen, para poder dibujarla después.
+  prompt: z.string().max(2000).optional(),
 });
 const audioLayerSchema = z.object({
   id: z.string(),

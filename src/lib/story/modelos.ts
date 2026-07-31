@@ -26,7 +26,16 @@ export const VOCES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer", "ash"
 
 // Modelos que existen pero NO sirven para nada de lo que hace esta sección:
 // transcriben, miden parecidos, moderan o escriben código. Fuera de la lista.
-const DESCARTAR = /embedding|whisper|moderation|transcribe|codex|search|computer-use|davinci|babbage|deep-research/;
+// «preview» va aquí porque son modelos de prueba que OpenAI retira sin avisar:
+// justo los que dejan tirado a medio capítulo.
+const DESCARTAR = /embedding|whisper|moderation|transcribe|codex|search|computer-use|davinci|babbage|deep-research|preview/;
+
+// Una foto fechada («gpt-audio-mini-2025-10-06») es una versión congelada: son
+// las PRIMERAS que retiran. El nombre sin fecha apunta siempre a la versión
+// viva, así que se prefiere ese aunque los dos estén en la lista.
+export function esFechado(id: string): boolean {
+  return /-\d{4}-\d{2}-\d{2}$|-\d{4}$/.test(id);
+}
 
 export function clasificar(id: string): Tarea | null {
   const s = id.toLowerCase();
@@ -49,15 +58,19 @@ function version(id: string): number {
 // La primera opción de cada lista es la que queda preseleccionada, así que el
 // orden no es cosmético. Se aparta lo viejo (dall-e, tts-1) y lo que existe
 // pero no encaja en narrar un capítulo (realtime es para hablar en directo).
-function rango(id: string): number {
-  if (/dall-e|^tts-/.test(id)) return 2;
+function rango(id: string, fallidos: string[] = []): number {
+  // Lo que ya falló, al final del todo: es el único dato REAL de que algo no
+  // sirve. La lista de OpenAI no dice cuáles están retirados.
+  if (fallidos.includes(id)) return 4;
+  if (/dall-e|^tts-/.test(id)) return 3;
+  if (esFechado(id)) return 2;
   if (/realtime/.test(id)) return 1;
   return 0;
 }
 
-export function ordenar(ids: string[]): string[] {
+export function ordenar(ids: string[], fallidos: string[] = []): string[] {
   return [...ids].sort((a, b) => {
-    const ra = rango(a), rb = rango(b);
+    const ra = rango(a, fallidos), rb = rango(b, fallidos);
     if (ra !== rb) return ra - rb;
     const va = version(a), vb = version(b);
     if (va !== vb) return vb - va;
@@ -69,7 +82,11 @@ export function ordenar(ids: string[]): string[] {
 
 // Una nota corta al lado de cada opción, para que se entienda sin salir de la
 // página. Solo dice lo que se sabe del nombre; no promete precios.
-export function nota(id: string): string {
+export function nota(id: string, fallidos: string[] = []): string {
+  if (fallidos.includes(id)) return "te falló la última vez";
+  // El aviso de que se retira va ANTES que el de que es barato: de las dos
+  // cosas, la que te deja tirado a medio capítulo es esta.
+  if (esFechado(id)) return "versión congelada: se retira antes";
   if (/nano/.test(id)) return "el más pequeño y barato";
   if (/mini/.test(id)) return "reducido: más barato";
   if (/realtime/.test(id)) return "pensado para conversación en directo";
@@ -77,11 +94,15 @@ export function nota(id: string): string {
 }
 
 // Agrupa una lista cruda de identificadores en las tres tareas.
-export function repartir(ids: string[]): Record<Tarea, string[]> {
+export function repartir(ids: string[], fallidos: string[] = []): Record<Tarea, string[]> {
   const fuera: Record<Tarea, string[]> = { texto: [], imagen: [], voz: [] };
   for (const id of ids) {
     const t = clasificar(id);
     if (t) fuera[t].push(id);
   }
-  return { texto: ordenar(fuera.texto), imagen: ordenar(fuera.imagen), voz: ordenar(fuera.voz) };
+  return {
+    texto: ordenar(fuera.texto, fallidos),
+    imagen: ordenar(fuera.imagen, fallidos),
+    voz: ordenar(fuera.voz, fallidos),
+  };
 }

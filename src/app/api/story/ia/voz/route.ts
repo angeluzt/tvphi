@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { descifrar, MODELOS_POR_DEFECTO } from "@/lib/story/credenciales";
+import { anotarFallo } from "@/lib/story/fallidos";
 
 // Narrar un texto con la voz de OpenAI.
 //
@@ -70,6 +71,8 @@ export async function POST(req: Request) {
       // en claro y se marca, para que la interfaz pueda ofrecer cambiarlo en el
       // sitio en vez de dejar al usuario encerrado.
       const delModelo = /deprecat|does not exist|no longer|not found|unsupported|model/i.test(crudo);
+      // Se apunta para que la próxima vez salga avisado en la lista.
+      if (delModelo) await anotarFallo(user.id, modelo);
       return NextResponse.json({
         error: delModelo
           ? `El modelo «${modelo}» no sirve para narrar: ${crudo}. Elige otro aquí mismo.`
@@ -80,6 +83,7 @@ export async function POST(req: Request) {
     }
     const audio = j?.choices?.[0]?.message?.audio?.data;
     if (!audio) {
+      await anotarFallo(user.id, modelo);
       return NextResponse.json({
         error: `«${modelo}» contestó, pero sin audio: no sirve para narrar. Elige otro aquí mismo.`,
         modeloMal: true, modelo,

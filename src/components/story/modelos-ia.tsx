@@ -17,9 +17,12 @@ import { CONOCIDOS, VOCES, nota, type Tarea } from "@/lib/story/modelos";
 // memoria. Pero OpenAI saca modelos nuevos cada poco, así que «Otro…» deja
 // escribir uno a mano: la lista no puede convertirse en una jaula.
 export function Elegir({
-  etiqueta, valor, opciones, onCambio,
+  etiqueta, valor, opciones, onCambio, fallidos = [],
 }: {
-  etiqueta: string; valor: string; opciones: string[]; onCambio: (v: string) => void;
+  etiqueta: string; valor: string; opciones: string[];
+  onCambio: (v: string) => void;
+  // Los que ya fallaron en esta cuenta, para avisarlo en la propia opción.
+  fallidos?: string[];
 }) {
   // Si lo guardado no está en la lista (modelo nuevo, o escrito a mano), se
   // sigue viendo: no se le puede borrar la elección al usuario por callado.
@@ -54,7 +57,7 @@ export function Elegir({
       {!valor && <option value="">Elige uno…</option>}
       {suelto && <option value={valor}>{valor} · el que tenías puesto</option>}
       {opciones.map((o) => (
-        <option key={o} value={o}>{nota(o) ? `${o} · ${nota(o)}` : o}</option>
+        <option key={o} value={o}>{nota(o, fallidos) ? `${o} · ${nota(o, fallidos)}` : o}</option>
       ))}
       <option value="__otro__">Otro… (escribirlo a mano)</option>
     </select>
@@ -64,7 +67,7 @@ export function Elegir({
 const ETIQUETAS: Record<Tarea, [string, string]> = {
   texto: ["Escribir el capítulo", "El más barato vale: solo tiene que seguir el catálogo que se le manda."],
   voz: ["Narrar los diálogos", "Tiene que admitir audio. Los de texto, por caros que sean, no narran."],
-  imagen: ["Generar imágenes", "Aún no se usa: queda para cuando conectemos las imágenes."],
+  imagen: ["Generar imágenes", "El que dibuja las escenas que falten, desde el texto de cada una."],
 };
 
 export function ModelosIa({
@@ -83,6 +86,8 @@ export function ModelosIa({
   const [mods, setMods] = useState({ texto: "", imagen: "", voz: "", vozNombre: "alloy" });
   const [lista, setLista] = useState<Record<Tarea, string[]>>(CONOCIDOS);
   const [deLaCuenta, setDeLaCuenta] = useState(false);
+  // Los que ya fallaron en esta cuenta: salen marcados y al final.
+  const [fallidos, setFallidos] = useState<string[]>([]);
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [probando, setProbando] = useState(false);
@@ -92,7 +97,7 @@ export function ModelosIa({
     setCargando(true);
     try {
       const j = await (await fetch("/api/story/ia/modelos")).json();
-      if (j?.modelos) { setLista(j.modelos); setDeLaCuenta(!!j.deLaCuenta); }
+      if (j?.modelos) { setLista(j.modelos); setDeLaCuenta(!!j.deLaCuenta); setFallidos(j.fallidos ?? []); }
       return j?.modelos as Record<Tarea, string[]> | undefined;
     } catch { return undefined; } finally { setCargando(false); }
   };
@@ -187,6 +192,7 @@ export function ModelosIa({
               etiqueta={ETIQUETAS[k][0]}
               valor={(mods as any)[k]}
               opciones={lista[k] ?? []}
+              fallidos={fallidos}
               onCambio={(v) => setMods((m) => ({ ...m, [k]: v }))}
             />
             <span className="mt-0.5 block text-[11px] text-muted">{ETIQUETAS[k][1]}</span>

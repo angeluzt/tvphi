@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
-  Settings2, AlertTriangle,
+  Settings2, AlertTriangle, Sparkles,
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
 import { MissingAssets } from "./missing-assets";
@@ -51,7 +51,9 @@ function FormaVideo({ ratio }: { ratio: number }) {
 
 // Alto y ancho reales de una imagen recién elegida. Hace falta al reponerla:
 // los encuadres van en tanto por uno y es la proporción la que manda.
-function medirImagen(file: File): Promise<{ w: number; h: number } | null> {
+// Vale igual para un archivo elegido a mano que para una imagen recién dibujada:
+// lo único que hace falta es poder abrirla.
+function medirImagen(file: Blob): Promise<{ w: number; h: number } | null> {
   return new Promise((res) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -98,9 +100,17 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // ofrecer cambiarlo sin salir del editor.
   const [vozRota, setVozRota] = useState<string | null>(null);
   const [verModelosVoz, setVerModelosVoz] = useState(false);
+  // Con clave y modelo de imagen se pueden dibujar las escenas que falten.
+  const [iaImagen, setIaImagen] = useState(false);
+  // La escena que se está describiendo para dibujarla.
+  const [dibujo, setDibujo] = useState<{ falta: Falta; texto: string } | null>(null);
+  const [dibujando, setDibujando] = useState(false);
   useEffect(() => {
     fetch("/api/story/ia/clave").then((r) => r.json())
-      .then((j) => setVozOpenAi(!!j?.configurada && !!j?.models?.voz)).catch(() => {});
+      .then((j) => {
+        setVozOpenAi(!!j?.configurada && !!j?.models?.voz);
+        setIaImagen(!!j?.configurada && !!j?.models?.imagen);
+      }).catch(() => {});
   }, []);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
   // editor. Antes se caía directamente en el editor y elegir proyecto quedaba en
@@ -804,6 +814,84 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setReponiendo(null);
   }
 
+  // ---------- dibujar las escenas que faltan ----------
+  //
+  // La IA ya escribía el montaje entero, pero las imágenes había que ponerlas a
+  // mano una por una. Cada escena lleva su descripción («prompt»), así que se
+  // puede dibujar sin volver a escribir nada — y se puede corregir antes.
+
+  function descripcionDe(falta: Falta): string {
+    const sc = projRef.current.scenes.find((s) => falta.sceneIds.includes(s.id));
+    return sc?.prompt ?? "";
+  }
+
+  // Devuelve si salió bien, para poder parar el lote al primer fallo.
+  async function dibujarUna(falta: Falta, texto: string): Promise<boolean> {
+    const descripcion = texto.trim();
+    if (descripcion.length < 4) {
+      setStatus("Describe la imagen antes de dibujarla.");
+      return false;
+    }
+    setReponiendo(falta.id);
+    try {
+      const r = await fetch("/api/story/ia/imagen", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        // El formato del video manda: una escena apaisada pedida cuadrada se ve mal.
+        body: JSON.stringify({ prompt: descripcion, formato: projRef.current.aspect }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      const bin = atob(j.imagen);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const blob = new Blob([arr], { type: "image/png" });
+      // Se guarda con el MISMO identificador, igual que al reponerla a mano: si
+      // esa imagen se usaba en varios sitios, todos quedan arreglados de una vez.
+      await putAsset(falta.id, blob);
+      const medidas = await medirImagen(blob);
+      mut((p) => ({
+        ...p,
+        scenes: p.scenes.map((sc) =>
+          falta.sceneIds.includes(sc.id)
+            ? { ...sc, ...(medidas ? { imgW: medidas.w, imgH: medidas.h } : {}), prompt: descripcion }
+            : sc,
+        ),
+      }));
+      setFaltas(await faltantes(projRef.current));
+      engineRef.current?.update(projRef.current);
+      setStatus(`Imagen dibujada ✓ · ${falta.donde.join(" · ")}`);
+      return true;
+    } catch (err: any) {
+      setStatus("No se pudo dibujar: " + (err?.message ?? ""));
+      return false;
+    } finally {
+      setReponiendo(null);
+    }
+  }
+
+  // Todas las que falten, en fila y parando al primer fallo: cada imagen se
+  // paga, y repetir el mismo error una vez por escena sale caro para nada.
+  async function dibujarTodas() {
+    const pend = faltas.filter((f) => f.tipo === "escena" && descripcionDe(f).trim().length >= 4);
+    if (!pend.length) {
+      setStatus("No hay escenas con descripción que dibujar. Abre una y escríbele qué se ve.");
+      return;
+    }
+    setDibujando(true);
+    let hechas = 0;
+    for (const f of pend) {
+      const bien = await dibujarUna(f, descripcionDe(f));
+      if (!bien) {
+        setStatus(`Se paró en ${hechas} de ${pend.length} para no seguir gastando.`);
+        setDibujando(false);
+        return;
+      }
+      hechas++;
+    }
+    setDibujando(false);
+    setStatus(`${hechas} ${hechas === 1 ? "imagen dibujada" : "imágenes dibujadas"} ✓`);
+  }
+
   // ---------- el proyecto entero en un JSON ----------
   // Viaja el montaje, no los archivos: por eso al abrirlo en otro equipo salen
   // como faltantes y se reponen con "Buscar". Meter las imágenes dentro haría un
@@ -1336,7 +1424,61 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
         {/* Lo que falta, en cuanto falta: va justo debajo del reproductor porque
             es lo primero que hay que resolver al abrir un proyecto de otro sitio. */}
-        <MissingAssets faltas={faltas} reponiendo={reponiendo} onReponer={reponer} />
+        <MissingAssets
+          faltas={faltas} reponiendo={reponiendo} onReponer={reponer}
+          onDibujar={iaImagen ? (f) => setDibujo({ falta: f, texto: descripcionDe(f) }) : undefined}
+        />
+
+        {/* Dibujarlas todas de una vez: un capítulo escrito por la IA llega con
+            todas las escenas vacías, y reponerlas de una en una era el trabajo
+            que precisamente sobraba. */}
+        {iaImagen && faltas.some((f) => f.tipo === "escena") && (
+          <div className="card flex flex-wrap items-center gap-2 p-3">
+            <span className="text-xs text-muted">
+              {faltas.filter((f) => f.tipo === "escena").length} escenas sin imagen
+            </span>
+            <button onClick={() => void dibujarTodas()} disabled={dibujando}
+              className="btn-brand ml-auto text-xs disabled:opacity-40">
+              {dibujando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Dibujar las que tengan descripción
+            </button>
+          </div>
+        )}
+
+        {/* Antes de gastar, se enseña qué se va a pedir y se puede corregir. */}
+        {dibujo && (
+          <div className="card border-accent/50 p-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 shrink-0 text-accent" />
+              <span className="label">Dibujar {dibujo.falta.donde.join(" · ")}</span>
+              <button onClick={() => setDibujo(null)} className="ml-auto text-muted hover:text-fg">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <textarea
+              className="input mt-2 h-28 w-full text-sm"
+              value={dibujo.texto}
+              onChange={(e) => setDibujo((d) => (d ? { ...d, texto: e.target.value } : d))}
+              aria-label="Cómo es esta imagen"
+              placeholder="Qué se ve, encuadre, luz y ambiente. Sin letras dentro de la imagen."
+            />
+            <p className="mt-1 text-[11px] text-muted">
+              Se dibuja en {project.aspect}, el formato del video. Repite la descripción de los
+              personajes tal cual en cada escena: es lo único que hace que se parezcan entre sí.
+            </p>
+            <button
+              onClick={async () => {
+                const d = dibujo;
+                setDibujo(null);
+                await dibujarUna(d.falta, d.texto);
+              }}
+              disabled={reponiendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
+              className="btn-brand mt-2 w-full text-sm disabled:opacity-40"
+            >
+              <Sparkles className="h-4 w-4" /> Dibujarla
+            </button>
+          </div>
+        )}
 
         {/* Escenas */}
         <div className="card p-3">
