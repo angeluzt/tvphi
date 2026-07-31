@@ -791,9 +791,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   return (
     <div className="tool-ui grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-4">
-        {/* Previsualización: se queda fija al desplazarse para poder colocar
-            stickers y ver el encuadre mientras se edita una toma larga. */}
-        <div className="card p-3 lg:sticky lg:top-16 lg:z-20">
+        {/* Previsualización del video entero. Va en el flujo de la página y se
+            desplaza con ella: es grande, y clavada arriba estorbaba más de lo que
+            ayudaba, porque se comía media pantalla mientras editabas la toma.
+            Para editar de cerca está la ventana de la escena o la toma, que sí se
+            queda arriba pero es pequeña y lleva sus propias herramientas. */}
+        <div className="card p-3">
           {/* Los botones van FUERA del cuadro: encima de la imagen tapaban justo
               la parte donde hace falta poner sitios. */}
           {curVfx && !section && (
