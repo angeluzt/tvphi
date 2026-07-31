@@ -28,7 +28,11 @@ import { Recorder } from "@/lib/studio/recorder";
 import { convert, remux } from "@/lib/editor/ffmpeg";
 import { exportDialogues, applyDialogues } from "@/lib/story/dialogues";
 
-interface ProjMeta { id: string; name: string; updatedAt: string }
+interface ProjMeta { id: string; name: string; updatedAt: string; seriesId?: string | null }
+
+// Cuánto se espera desde el último cambio para guardar solo. Bastante corto
+// para no perder trabajo, y bastante largo para no guardar en cada tecla.
+const AUTOGUARDADO = 8000;
 
 // Rectángulo con la forma real del video, para reconocerlo de un vistazo.
 function FormaVideo({ ratio }: { ratio: number }) {
@@ -182,6 +186,21 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const host = section ? floatRef.current : previewRef.current;
     if (host && eng.canvas.parentElement !== host) host.appendChild(eng.canvas);
   }, [section]);
+
+  // ---------- guardado automático ----------
+  // Se guarda solo unos segundos después del último cambio. Antes había que
+  // acordarse de darle a Guardar, y una recarga sin querer se llevaba el
+  // trabajo por delante.
+  //
+  // Con condiciones, para no molestar: solo si hay algo que guardar, solo si el
+  // proyecto tiene escenas (si no, se llenaría la lista de proyectos vacíos), y
+  // nunca mientras se está exportando o guardando a mano.
+  const guardarRef = useRef<() => Promise<void>>();
+  useEffect(() => {
+    if (!dirty || exporting || busy || !project.scenes.length) return;
+    const t = setTimeout(() => { void guardarRef.current?.(); }, AUTOGUARDADO);
+    return () => clearTimeout(t);
+  }, [dirty, exporting, busy, project]);
 
   useEffect(() => {
     const h = (e: BeforeUnloadEvent) => {
@@ -624,6 +643,32 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     ]);
     return j.project as ProjMeta;
   }
+
+  // Igual que Guardar, pero sin tomar el mando: no bloquea la interfaz ni pisa
+  // un mensaje que el usuario esté leyendo.
+  async function autoguardar() {
+    if (!projRef.current.scenes.length) return;
+    try {
+      const res = await fetch("/api/story", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: projectId ?? undefined, name, data: projRef.current, seriesId }),
+      });
+      const j = await res.json();
+      if (!res.ok) return;
+      setProjectId(j.project.id);
+      setProjects((prev) => [
+        { id: j.project.id, name: j.project.name, updatedAt: j.project.updatedAt },
+        ...prev.filter((p) => p.id !== j.project.id),
+      ]);
+      setDirty(false);
+      setStatus(`Guardado automático ✓ · ${new Date().toLocaleTimeString()}`);
+    } catch {
+      // Sin red o sin sesión: se calla y lo intentará al siguiente cambio. El
+      // aviso al cerrar la pestaña sigue estando por si acaso.
+    }
+  }
+  guardarRef.current = autoguardar;
 
   async function save() {
     setBusy("save");
@@ -1267,7 +1312,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       <aside className="space-y-4">
         <div className="card p-3">
           <span className="label">Proyecto</span>
-          <input className="input mt-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del proyecto" />
+          <input className="input mt-2" value={name} onChange={(e) => { setName(e.target.value); setDirty(true); }} placeholder="Nombre del proyecto" />
           {/* A qué serie pertenece este capítulo. Sin serie también vale: un
               video suelto no tiene por qué estar en ninguna. */}
           <label className="mt-2 block">
