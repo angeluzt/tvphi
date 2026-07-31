@@ -19,6 +19,9 @@ export function IaPanel({
   const [clave, setClave] = useState("");
   const [prompt, setPrompt] = useState("");
   const [escenas, setEscenas] = useState(6);
+  // El identificador del modelo lo pone el usuario: OpenAI los renombra cada
+  // pocos meses y dejarlo escrito a fuego en el código lo deja obsoleto solo.
+  const [modelo, setModelo] = useState("");
   const [ocupado, setOcupado] = useState<null | "clave" | "generar">(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [abierto, setAbierto] = useState(false);
@@ -55,7 +58,7 @@ export function IaPanel({
     try {
       const r = await fetch("/api/story/ia/capitulo", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, escenas }),
+        body: JSON.stringify({ prompt, escenas, modelo: modelo.trim() || undefined }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Error");
@@ -124,6 +127,20 @@ export function IaPanel({
               placeholder="Un pueblo que quedó bajo un embalse y reaparece con la sequía. Tono documental, inquietante, sin música alegre."
             />
           </div>
+          <label className="block">
+            <span className="text-xs text-muted">Modelo</span>
+            <input
+              className="input mt-1 w-full text-sm"
+              value={modelo}
+              onChange={(e) => setModelo(e.target.value)}
+              aria-label="Modelo"
+              placeholder="gpt-4o-mini"
+            />
+            <span className="mt-0.5 block text-[11px] text-muted">
+              Cópialo tal cual de <strong>platform.openai.com</strong>. Para esto vale el más
+              barato: solo tiene que escribir un JSON siguiendo el catálogo que se le manda.
+            </span>
+          </label>
           <label className="block">
             <span className="text-xs text-muted">Escenas: {escenas}</span>
             <input type="range" min={2} max={12} step={1} value={escenas}
