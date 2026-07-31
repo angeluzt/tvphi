@@ -134,6 +134,8 @@ const dataSchema = z.object({
   outro: clipSchema.optional(),
 });
 const saveSchema = z.object({
+  // Capítulo de una serie. null lo suelta; sin el campo, se deja como esté.
+  seriesId: z.string().nullable().optional(),
   id: z.string().optional(),
   name: z.string().min(1).max(80),
   data: dataSchema,
@@ -158,7 +160,7 @@ export async function GET(req: Request) {
   const projects = await prisma.storyProject.findMany({
     where: { userId: user.id },
     orderBy: { updatedAt: "desc" },
-    select: { id: true, name: true, updatedAt: true },
+    select: { id: true, name: true, seriesId: true, updatedAt: true },
   });
   return NextResponse.json({ projects });
 }
@@ -169,22 +171,22 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const parsed = saveSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
-  const { id, name, data } = parsed.data;
+  const { id, name, data, seriesId } = parsed.data;
 
   if (id) {
     const existing = await prisma.storyProject.findFirst({ where: { id, userId: user.id }, select: { id: true } });
     if (!existing) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
     const project = await prisma.storyProject.update({
       where: { id },
-      data: { name, data: data as any },
-      select: { id: true, name: true, updatedAt: true },
+      data: { name, data: data as any, ...(seriesId !== undefined ? { seriesId } : {}) },
+      select: { id: true, name: true, seriesId: true, updatedAt: true },
     });
     return NextResponse.json({ ok: true, project });
   }
 
   const project = await prisma.storyProject.create({
-    data: { userId: user.id, name, data: data as any },
-    select: { id: true, name: true, updatedAt: true },
+    data: { userId: user.id, name, data: data as any, seriesId: seriesId ?? null },
+    select: { id: true, name: true, seriesId: true, updatedAt: true },
   });
   return NextResponse.json({ ok: true, project });
 }
