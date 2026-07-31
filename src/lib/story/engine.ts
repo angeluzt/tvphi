@@ -488,8 +488,13 @@ export class StoryEngine {
           return;
         }
         this.onTime?.(this.playhead);
+        this.render();
       }
-      this.render();
+      // En pausa NO se repinta en cada vuelta. Antes sí, y con unos cuantos
+      // efectos son más de mil partículas redibujadas sesenta veces por segundo
+      // sin que nada cambie: eso era lo que dejaba la página pastosa aunque no
+      // se estuviera reproduciendo nada. Parado, se repinta solo cuando hay
+      // motivo (mover el tiempo, tocar un ajuste, terminar de cargar una imagen).
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -686,12 +691,17 @@ export class StoryEngine {
       };
     });
     this.vfx.setSize(this.w, this.h);
-    // La clave incluye los ajustes: al tocar una barra la escena se rehace, que
-    // es lo que hace que el cambio se vea al momento sin darle al play.
-    // La clave lleva los AJUSTES, no los sitios ya proyectados: si llevara la
-    // posición del fotograma, la escena se reharía entera en cada frame
-    // mientras la cámara se mueve y no habría partículas que valieran.
-    const clave = `${f.shot.id}:${JSON.stringify(capas)}`;
+    // La clave solo lleva la ESTRUCTURA: qué efectos hay, de qué tipo, con qué
+    // forma, cuántos sitios y en qué rato. Los ajustes (color, tamaño,
+    // velocidad…) NO entran: se sincronizan en caliente sobre los emisores ya
+    // vivos. Si entraran, mover una barra cambiaría la clave y la escena se
+    // reharía desde el segundo cero en cada fotograma del arrastre — con unos
+    // pocos efectos, cientos de miles de partículas por movimiento del dedo, y
+    // era lo que dejaba la toma inservible.
+    let clave = f.shot.id;
+    for (const v of capas) {
+      clave += `|${v.id},${v.kind},${v.shape},${v.nodes.length},${v.timing},${v.startSec},${v.endSec}`;
+    }
     this.vfx.seek(clave, entradas, lt);
     this.vfx.draw(this.ctx, alpha);
   }

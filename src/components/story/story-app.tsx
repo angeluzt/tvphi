@@ -17,7 +17,7 @@ import { NumberInput } from "./number-input";
 import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
-  flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets,
+  flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets, duplicateShot,
   ASPECTS, aspectInfo, setProjectAspect, switchAspect, overlayWindow, type Aspect,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay, type Frame,
   type VfxNode,
@@ -1024,6 +1024,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onToggleLock={(v) => setLock(sh.id, v)}
                         onChange={(next) => updShot(sc.id, sh.id, next)}
                         onDelete={() => delShot(sc, sh.id, hi)}
+                        onDuplicate={() => {
+                          mut((p) => duplicateShot(p, sc.id, sh.id));
+                          setStatus("Toma duplicada ✓ · la copia va justo detrás");
+                        }}
                         onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
                         onToggle={() => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id))}
                         prevTo={frameAnterior(sh.id)}

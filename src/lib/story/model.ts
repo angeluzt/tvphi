@@ -819,6 +819,45 @@ export function reorderScene(p: StoryProject, id: string, toIndex: number): Stor
   return { ...p, scenes };
 }
 
+// Copia una toma entera con todo lo que lleva dentro: encuadre, tiempos,
+// diálogos, sonidos, stickers y efectos. Todo con identificadores nuevos, para
+// que retocar la copia no toque el original. Los archivos (imágenes, audios) se
+// comparten: se referencian por id y no se duplica nada pesado.
+export function duplicateShot(p: StoryProject, sceneId: string, shotId: string): StoryProject {
+  return {
+    ...p,
+    scenes: p.scenes.map((sc) => {
+      if (sc.id !== sceneId) return sc;
+      const i = sc.shots.findIndex((h) => h.id === shotId);
+      if (i < 0) return sc;
+      const o = sc.shots[i];
+      const copia: Shot = {
+        ...o,
+        id: nanoid(6),
+        preset: { ...o.preset },
+        from: { ...o.from }, to: { ...o.to },
+        altFrames: o.altFrames ? JSON.parse(JSON.stringify(o.altFrames)) : undefined,
+        // La voz ya generada se reaprovecha: es el mismo texto, así que no hay
+        // por qué volver a esperar a que la IA lo lea.
+        dialogues: o.dialogues.map((d) => ({ ...d, id: nanoid(6) })),
+        sfx: o.sfx.map((x) => ({ ...x, id: nanoid(6) })),
+        // Las excepciones de audio apuntan a bucles de OTRAS tomas, así que
+        // siguen valiendo tal cual.
+        audioOverrides: o.audioOverrides.map((x) => ({ ...x })),
+        overlays: o.overlays.map((x) => ({ ...x, id: nanoid(6) })),
+        vfx: (o.vfx ?? []).map((v) => ({
+          ...v, id: nanoid(6),
+          params: { ...v.params },
+          nodes: v.nodes.map((n) => ({ ...n })),
+        })),
+      };
+      const shots = [...sc.shots];
+      shots.splice(i + 1, 0, copia);
+      return { ...sc, shots };
+    }),
+  };
+}
+
 export function moveShot(p: StoryProject, sceneId: string, shotId: string, dir: -1 | 1): StoryProject {
   return {
     ...p,

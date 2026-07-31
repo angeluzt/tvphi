@@ -40,6 +40,7 @@ export function ShotEditor({
   onToggleLock,
   onChange,
   onDelete,
+  onDuplicate,
   onMove,
   onToggle,
   onPlay,
@@ -69,6 +70,7 @@ export function ShotEditor({
   onToggleLock: (v: boolean) => void;
   onChange: (s: Shot) => void;
   onDelete: () => void;
+  onDuplicate: () => void;
   onMove: (dir: -1 | 1) => void;
   onToggle: () => void;
   onPlay: () => void;
@@ -167,6 +169,11 @@ export function ShotEditor({
           {!lockedByScene && (
             <LockToggle checked={locked} onChange={onToggleLock} label="" title={locked ? "Toma bloqueada: desactiva para editar" : "Bloquear esta toma"} />
           )}
+          <button
+            onClick={onDuplicate}
+            className="text-muted hover:text-fg"
+            title="Duplicar esta toma con todo lo que lleva"
+          ><Copy className="h-4 w-4" /></button>
           <button onClick={onDelete} disabled={locked} className="text-muted hover:text-danger disabled:opacity-40" title="Borrar toma"><Trash2 className="h-4 w-4" /></button>
           <button onClick={onToggle} className="text-muted hover:text-fg" title={expanded ? "Contraer" : "Editar toma"}>
             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
