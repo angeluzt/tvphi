@@ -27,6 +27,8 @@ const dataSchema = z.object({
 });
 
 const saveSchema = z.object({
+  // Personaje de una serie. null lo suelta; sin el campo, se deja como esté.
+  seriesId: z.string().nullable().optional(),
   id: z.string().optional(),
   name: z.string().min(1).max(120),
   data: dataSchema,
@@ -43,6 +45,7 @@ export async function GET() {
   const characters = rows.map((r) => ({
     id: r.id,
     name: r.name,
+    seriesId: r.seriesId,
     data: normalizeCharacterData(r.data),
     updatedAt: r.updatedAt.toISOString(),
   }));
@@ -55,20 +58,20 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const parsed = saveSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
-  const { id, name, data } = parsed.data;
+  const { id, name, data, seriesId } = parsed.data;
 
   if (id) {
     const existing = await prisma.storyCharacter.findFirst({ where: { id, userId: user.id }, select: { id: true } });
     if (!existing) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
     const character = await prisma.storyCharacter.update({
       where: { id },
-      data: { name, data: data as any },
+      data: { name, data: data as any, ...(seriesId !== undefined ? { seriesId } : {}) },
     });
     return NextResponse.json({ ok: true, character: { id: character.id, name: character.name, data, updatedAt: character.updatedAt.toISOString() } });
   }
 
   const character = await prisma.storyCharacter.create({
-    data: { userId: user.id, name, data: data as any },
+    data: { userId: user.id, name, data: data as any, seriesId: seriesId ?? null },
   });
   return NextResponse.json({ ok: true, character: { id: character.id, name: character.name, data, updatedAt: character.updatedAt.toISOString() } });
 }

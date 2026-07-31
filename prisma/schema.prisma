@@ -29,6 +29,7 @@ model User {
   templates      Template[]
   storyProjects  StoryProject[]
   storyCharacters StoryCharacter[]
+  storySeries     StorySeries[]
   chatMessages   ChatMessage[]
   pointsBalances PointsBalance[]
   pointsTx       PointsTransaction[] @relation("PointsTxUser")
@@ -161,31 +162,58 @@ model Template {
 model StoryProject {
   id        String   @id @default(cuid())
   userId    String
+  // Capítulo de una serie. Opcional: los proyectos de antes siguen sin serie.
+  seriesId  String?
   name      String
   data      Json     // { slides[], audioLayers[], narrationVolume } serializado
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  series StorySeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([seriesId])
 }
 
 // Ficha de un personaje: sus imágenes base, cómo es, y con qué prompt se creó.
 // De momento es solo una referencia para el usuario (una "biblia de personajes"
 // de toda la vida). El prompt y los ajustes se guardan pensando en que más
 // adelante se pueda pedir a una IA "hazme a este personaje haciendo X".
+// Una serie: agrupa capítulos (proyectos) y personajes. Guarda además el estilo
+// común —modelo, semilla y prefijo de prompt— que es lo que hace que los
+// capítulos se parezcan entre sí.
+model StorySeries {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  data      Json     // { description, style, model, seed, notes }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projects   StoryProject[]
+  characters StoryCharacter[]
+
+  @@index([userId])
+}
+
 model StoryCharacter {
   id        String   @id @default(cuid())
   userId    String
+  // Opcional a propósito: los personajes de antes se quedan sin serie y se
+  // siguen viendo. Al borrar una serie no se borran, solo se sueltan.
+  seriesId  String?
   name      String
   data      Json     // { description, prompt, model, seed, params, notes, images[] }
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  series StorySeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([seriesId])
 }
 
 model StreamSession {

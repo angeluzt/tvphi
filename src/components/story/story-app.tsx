@@ -79,6 +79,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [project, setProject] = useState<StoryProject>(emptyProject());
   const [projects, setProjects] = useState<ProjMeta[]>(initialProjects);
   const [projectId, setProjectId] = useState<string | null>(null);
+  // Series: agrupan capítulos y personajes. Todo opcional — un video suelto no
+  // necesita ninguna, y lo que ya existe se queda "sin serie".
+  const [series, setSeries] = useState<{ id: string; name: string; capitulos: number; personajes: number }[]>([]);
+  const [seriesId, setSeriesId] = useState<string | null>(null);
   const [name, setName] = useState("Mi historia");
   const [voice, setVoice] = useState("es");
 
@@ -154,6 +158,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   }, []);
 
   useEffect(() => { engineRef.current?.update(project); }, [project]);
+
+  const cargarSeries = () =>
+    fetch("/api/story/series").then((r) => r.json()).then((j) => setSeries(j.series ?? [])).catch(() => {});
+  useEffect(() => { void cargarSeries(); }, []);
 
   // Qué archivos le faltan a este proyecto en este navegador. Se recalcula solo
   // cuando cambia la LISTA de archivos usados, no en cada retoque, que si no
@@ -624,11 +632,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       const res = await fetch("/api/story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: projectId ?? undefined, name, data: project }),
+        body: JSON.stringify({ id: projectId ?? undefined, name, data: project, seriesId }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || "Error");
       setProjectId(j.project.id);
+      void cargarSeries();
       setProjects((prev) => [
         { id: j.project.id, name: j.project.name, updatedAt: j.project.updatedAt },
         ...prev.filter((p) => p.id !== j.project.id),
@@ -675,11 +684,67 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // Viaja el montaje, no los archivos: por eso al abrirlo en otro equipo salen
   // como faltantes y se reponen con "Buscar". Meter las imágenes dentro haría un
   // archivo de cientos de megas.
-  function exportProject() {
-    const datos = { tvphi: "historia", version: 1, name, project: projRef.current };
+  async function exportProject() {
+    // Con la referencia dentro: qué efectos hay, cómo se comporta cada uno y las
+    // reglas del montaje. Así el archivo se explica solo y se le puede dar a una
+    // IA tal cual. Al importar se ignora entero.
+    let referencia: unknown = undefined;
+    try { referencia = await (await fetch("/api/story/efectos")).json(); } catch {}
+    const datos = { tvphi: "historia", version: 1, name, project: projRef.current, referencia };
     const blob = new Blob([JSON.stringify(datos, null, 2)], { type: "application/json" });
-    download(blob, `${(name || "historia").replace(/[^\w\-]+/g, "-")}-proyecto.json`);
-    setStatus("Proyecto exportado ✓ · las imágenes no viajan, se reponen al abrirlo");
+    download(blob, `${(name || "historia").replace(/[^\w\-]+/g, "-")}-capitulo.json`);
+    setStatus("Capítulo exportado ✓ · lleva dentro el catálogo de efectos; las imágenes no viajan");
+  }
+
+  // ── la saga entera ──
+  async function exportSaga() {
+    setBusy("saga");
+    try {
+      const r = await fetch(`/api/story/saga${seriesId ? `?id=${seriesId}` : ""}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      const nom = (j.serie?.name || "saga").replace(/[^\w\-]+/g, "-");
+      download(new Blob([JSON.stringify(j, null, 2)], { type: "application/json" }), `${nom}-saga.json`);
+      setStatus(`Saga exportada ✓ · ${j.capitulos.length} capítulos y ${j.personajes.length} personajes`);
+    } catch (e: any) { setStatus("No se pudo exportar la saga: " + (e?.message ?? "")); }
+    setBusy(null);
+  }
+  async function importSaga(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy("saga");
+    try {
+      const crudo = JSON.parse(await f.text());
+      if (!Array.isArray(crudo?.capitulos)) throw new Error("ese JSON no es una saga");
+      // La serie primero, para colgarle luego capítulos y personajes.
+      const rs = await fetch("/api/story/series", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: String(crudo.serie?.name || "Saga importada"),
+          data: { description: "", style: "", model: "", seed: "", notes: "", ...(crudo.serie?.data ?? {}) } }),
+      });
+      const js = await rs.json();
+      if (!rs.ok) throw new Error(js.error || "Error");
+      const sid = js.serie.id;
+      for (const cap of crudo.capitulos) {
+        await fetch("/api/story", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: String(cap.name || "Capítulo"), data: migrateProject(cap.project), seriesId: sid }),
+        });
+      }
+      for (const per of crudo.personajes ?? []) {
+        await fetch("/api/story/characters", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: String(per.name || "Personaje"), data: per.data, seriesId: sid }),
+        });
+      }
+      await cargarSeries();
+      setSeriesId(sid);
+      const l = await (await fetch("/api/story")).json();
+      setProjects(l.projects ?? []);
+      setStatus(`Saga importada ✓ · ${crudo.capitulos.length} capítulos. Ábrelos y repón sus imágenes.`);
+    } catch (e: any) { setStatus("No se pudo importar la saga: " + (e?.message ?? "")); }
+    setBusy(null);
   }
   async function importProject(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -1203,6 +1268,37 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         <div className="card p-3">
           <span className="label">Proyecto</span>
           <input className="input mt-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del proyecto" />
+          {/* A qué serie pertenece este capítulo. Sin serie también vale: un
+              video suelto no tiene por qué estar en ninguna. */}
+          <label className="mt-2 block">
+            <span className="text-xs text-muted">Serie</span>
+            <select
+              className="input mt-1 w-full text-sm"
+              value={seriesId ?? ""}
+              onChange={async (e) => {
+                const v = e.target.value;
+                if (v === "__nueva") {
+                  const nom = prompt("Nombre de la serie nueva");
+                  if (!nom?.trim()) return;
+                  const r = await fetch("/api/story/series", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: nom.trim(), data: { description: "", style: "", model: "", seed: "", notes: "" } }),
+                  });
+                  const j = await r.json();
+                  if (r.ok) { await cargarSeries(); setSeriesId(j.serie.id); setDirty(true); }
+                  return;
+                }
+                setSeriesId(v || null);
+                setDirty(true);
+              }}
+            >
+              <option value="">Sin serie</option>
+              {series.map((x) => (
+                <option key={x.id} value={x.id}>{x.name} · {x.capitulos} cap.</option>
+              ))}
+              <option value="__nueva">+ Serie nueva…</option>
+            </select>
+          </label>
           <div className="mt-2 flex gap-2">
             <button onClick={save} disabled={busy === "save"} className="btn-brand flex-1"><Save className="h-4 w-4" /> Guardar</button>
             <button onClick={newProject} className="btn-ghost"><Plus className="h-4 w-4" /> Nuevo</button>
@@ -1388,8 +1484,21 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           </div>
           <p className="mt-2 text-[11px] text-muted">
             Guarda el montaje entero —escenas, encuadres, tiempos, voces, stickers y efectos— en un
-            JSON. Las imágenes y los audios no caben ahí, así que al importarlo en otro equipo
-            salen como faltantes y se reponen una a una con «Buscar»: no hay que rehacer nada.
+            JSON, con el catálogo de efectos dentro. Las imágenes y los audios no caben ahí, así que
+            al importarlo en otro equipo salen como faltantes y se reponen una a una con «Buscar».
+          </p>
+          <div className="mt-3 flex gap-2 border-t border-border pt-3">
+            <button onClick={exportSaga} disabled={busy === "saga"} className="btn-ghost flex-1 text-xs disabled:opacity-40">
+              <Download className="h-4 w-4 text-accent" /> Toda la serie
+            </button>
+            <label className="btn-ghost flex-1 cursor-pointer justify-center text-xs">
+              <FileJson className="h-4 w-4 text-accent" /> Importar serie
+              <input type="file" accept="application/json,.json" className="hidden" onChange={importSaga} />
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] text-muted">
+            La serie entera —todos sus capítulos y sus personajes— en un solo archivo. Sin serie
+            seleccionada, se lleva lo que no pertenece a ninguna.
           </p>
         </div>
 
