@@ -39,9 +39,38 @@ export class StoryEngine {
   // Stickers animados (GIF) ya descompuestos en fotogramas: el lienzo solo sabe
   // dibujar imágenes quietas, así que hay que elegir el fotograma a mano.
   private anims = new Map<string, { frames: ImageBitmap[]; ends: number[]; total: number }>();
-  // Partículas. Una sola escena para todo: solo hay una toma a la vista, y así
-  // el estado se rehace al cambiar de toma en vez de acumularse.
-  private vfx = new VfxScene();
+  // Partículas: UNA ESCENA POR TOMA, no una sola compartida.
+  //
+  // Durante un fundido se dibujan dos tomas a la vez. Con una escena única, las
+  // dos se pisaban: cada una veía la clave de la otra, se reiniciaba y volvía a
+  // simular desde su segundo cero, dos veces por fotograma.
+  //
+  // Aviso honesto: se midió y esto NO era la causa del tirón al cambiar de
+  // escena (105.7 ms por fotograma antes, 103.2 ms después: lo mismo). El tirón
+  // era otra cosa — los efectos continuos arrancaban vacíos, y eso se arregla
+  // en vfx.ts. Esto se queda porque el trabajo por fotograma pasa a estar
+  // acotado en vez de depender de lo larga que sea la toma que sale, pero no
+  // hay que atribuirle una mejora que no se ha visto.
+  private vfxScenes = new Map<string, VfxScene>();
+
+  // La de esa toma, creándola si hace falta. Se guardan unas pocas: las que
+  // están a la vista y alguna más para ir y venir sin recalcular.
+  private escenaVfx(shotId: string) {
+    let e = this.vfxScenes.get(shotId);
+    if (e) {
+      // Se reinserta para que la más usada sea la última en caer.
+      this.vfxScenes.delete(shotId);
+      this.vfxScenes.set(shotId, e);
+      return e;
+    }
+    e = new VfxScene();
+    this.vfxScenes.set(shotId, e);
+    if (this.vfxScenes.size > 4) {
+      const vieja = this.vfxScenes.keys().next().value;
+      if (vieja !== undefined) this.vfxScenes.delete(vieja);
+    }
+    return e;
+  }
 
   private raf = 0;
   private running = false;
@@ -690,7 +719,8 @@ export class StoryEngine {
         colorHex: v.colorHex, params: v.params, start: w.start, end: w.end,
       };
     });
-    this.vfx.setSize(this.w, this.h);
+    const escena = this.escenaVfx(f.shot.id);
+    escena.setSize(this.w, this.h);
     // La clave solo lleva la ESTRUCTURA: qué efectos hay, de qué tipo, con qué
     // forma, cuántos sitios y en qué rato. Los ajustes (color, tamaño,
     // velocidad…) NO entran: se sincronizan en caliente sobre los emisores ya
@@ -702,8 +732,8 @@ export class StoryEngine {
     for (const v of capas) {
       clave += `|${v.id},${v.kind},${v.shape},${v.nodes.length},${v.timing},${v.startSec},${v.endSec}`;
     }
-    this.vfx.seek(clave, entradas, lt);
-    this.vfx.draw(this.ctx, alpha);
+    escena.seek(clave, entradas, lt);
+    escena.draw(this.ctx, alpha);
   }
 
   private drawOverlay(
