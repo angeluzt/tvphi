@@ -8,17 +8,21 @@ import { normalizeCharacterData } from "@/lib/story/characters";
 
 export const dynamic = "force-dynamic";
 
-export default async function CharactersPage() {
+export default async function CharactersPage({ searchParams }: { searchParams: { serie?: string } }) {
   const user = await getCurrentUser();
   if (!user) redirect("/auth/login");
 
-  const rows = await prisma.storyCharacter.findMany({
-    where: { userId: user.id },
-    orderBy: { updatedAt: "desc" },
-  });
+  const [rows, seriesRows] = await Promise.all([
+    prisma.storyCharacter.findMany({ where: { userId: user.id }, orderBy: { updatedAt: "desc" } }),
+    prisma.storySeries.findMany({ where: { userId: user.id }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+  ]);
+  // Si se llega desde una serie, se abre ya en la suya.
+  const serieInicial = searchParams?.serie && seriesRows.some((s) => s.id === searchParams.serie)
+    ? searchParams.serie : null;
   const characters = rows.map((r) => ({
     id: r.id,
     name: r.name,
+    seriesId: r.seriesId,
     data: normalizeCharacterData(r.data),
     updatedAt: r.updatedAt.toISOString(),
   }));
@@ -36,7 +40,7 @@ export default async function CharactersPage() {
           mismo de un capítulo a otro.
         </p>
       </div>
-      <CharactersApp initial={characters} />
+      <CharactersApp initial={characters} series={seriesRows} serieInicial={serieInicial} />
     </div>
   );
 }

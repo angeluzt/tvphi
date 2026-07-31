@@ -67,13 +67,13 @@ export async function POST(req: Request) {
       where: { id },
       data: { name, data: data as any, ...(seriesId !== undefined ? { seriesId } : {}) },
     });
-    return NextResponse.json({ ok: true, character: { id: character.id, name: character.name, data, updatedAt: character.updatedAt.toISOString() } });
+    return NextResponse.json({ ok: true, character: { id: character.id, name: character.name, seriesId: character.seriesId, data, updatedAt: character.updatedAt.toISOString() } });
   }
 
   const character = await prisma.storyCharacter.create({
     data: { userId: user.id, name, data: data as any, seriesId: seriesId ?? null },
   });
-  return NextResponse.json({ ok: true, character: { id: character.id, name: character.name, data, updatedAt: character.updatedAt.toISOString() } });
+  return NextResponse.json({ ok: true, character: { id: character.id, name: character.name, seriesId: character.seriesId, data, updatedAt: character.updatedAt.toISOString() } });
 }
 
 // DELETE ?id=xxx

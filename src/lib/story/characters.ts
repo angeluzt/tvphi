@@ -34,6 +34,8 @@ export type CharacterData = {
 export type Character = {
   id: string;
   name: string;
+  // De qué serie es. Sin serie (null) para los sueltos y para los de antes.
+  seriesId?: string | null;
   data: CharacterData;
   updatedAt: string;
 };

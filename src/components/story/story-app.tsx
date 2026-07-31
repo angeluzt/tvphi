@@ -7,6 +7,7 @@ import {
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
 } from "lucide-react";
 import { MissingAssets } from "./missing-assets";
+import { StoryHome, StoryBreadcrumb } from "./story-home";
 import { faltantes, type Falta } from "@/lib/story/missing";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
@@ -28,7 +29,11 @@ import { Recorder } from "@/lib/studio/recorder";
 import { convert, remux } from "@/lib/editor/ffmpeg";
 import { exportDialogues, applyDialogues } from "@/lib/story/dialogues";
 
-interface ProjMeta { id: string; name: string; updatedAt: string }
+interface ProjMeta { id: string; name: string; updatedAt: string; seriesId?: string | null }
+
+// Cuánto se espera desde el último cambio para guardar solo. Bastante corto
+// para no perder trabajo, y bastante largo para no guardar en cada tecla.
+const AUTOGUARDADO = 8000;
 
 // Rectángulo con la forma real del video, para reconocerlo de un vistazo.
 function FormaVideo({ ratio }: { ratio: number }) {
@@ -83,6 +88,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // necesita ninguna, y lo que ya existe se queda "sin serie".
   const [series, setSeries] = useState<{ id: string; name: string; capitulos: number; personajes: number }[]>([]);
   const [seriesId, setSeriesId] = useState<string | null>(null);
+  // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
+  // editor. Antes se caía directamente en el editor y elegir proyecto quedaba en
+  // la columna de la derecha, que en un móvil acaba debajo de todo.
+  const [vista, setVista] = useState<"inicio" | "editor">("inicio");
   const [name, setName] = useState("Mi historia");
   const [voice, setVoice] = useState("es");
 
@@ -159,6 +168,20 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   useEffect(() => { engineRef.current?.update(project); }, [project]);
 
+  // El lienzo se cuelga del editor en cuanto el editor existe. Al arrancar en la
+  // pantalla de inicio ese hueco todavía no está, y si solo se hiciera al montar
+  // el motor, al entrar a un capítulo no habría video.
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng || vista !== "editor") return;
+    const host = previewRef.current;
+    if (host && eng.canvas.parentElement !== host) {
+      eng.canvas.className = "h-full w-full object-contain";
+      host.appendChild(eng.canvas);
+      eng.update(projRef.current);
+    }
+  }, [vista, project]);
+
   const cargarSeries = () =>
     fetch("/api/story/series").then((r) => r.json()).then((j) => setSeries(j.series ?? [])).catch(() => {});
   useEffect(() => { void cargarSeries(); }, []);
@@ -182,6 +205,21 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const host = section ? floatRef.current : previewRef.current;
     if (host && eng.canvas.parentElement !== host) host.appendChild(eng.canvas);
   }, [section]);
+
+  // ---------- guardado automático ----------
+  // Se guarda solo unos segundos después del último cambio. Antes había que
+  // acordarse de darle a Guardar, y una recarga sin querer se llevaba el
+  // trabajo por delante.
+  //
+  // Con condiciones, para no molestar: solo si hay algo que guardar, solo si el
+  // proyecto tiene escenas (si no, se llenaría la lista de proyectos vacíos), y
+  // nunca mientras se está exportando o guardando a mano.
+  const guardarRef = useRef<() => Promise<void>>();
+  useEffect(() => {
+    if (!dirty || exporting || busy || !project.scenes.length) return;
+    const t = setTimeout(() => { void guardarRef.current?.(); }, AUTOGUARDADO);
+    return () => clearTimeout(t);
+  }, [dirty, exporting, busy, project]);
 
   useEffect(() => {
     const h = (e: BeforeUnloadEvent) => {
@@ -625,6 +663,32 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     return j.project as ProjMeta;
   }
 
+  // Igual que Guardar, pero sin tomar el mando: no bloquea la interfaz ni pisa
+  // un mensaje que el usuario esté leyendo.
+  async function autoguardar() {
+    if (!projRef.current.scenes.length) return;
+    try {
+      const res = await fetch("/api/story", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: projectId ?? undefined, name, data: projRef.current, seriesId }),
+      });
+      const j = await res.json();
+      if (!res.ok) return;
+      setProjectId(j.project.id);
+      setProjects((prev) => [
+        { id: j.project.id, name: j.project.name, seriesId: j.project.seriesId ?? null, updatedAt: j.project.updatedAt },
+        ...prev.filter((p) => p.id !== j.project.id),
+      ]);
+      setDirty(false);
+      setStatus(`Guardado automático ✓ · ${new Date().toLocaleTimeString()}`);
+    } catch {
+      // Sin red o sin sesión: se calla y lo intentará al siguiente cambio. El
+      // aviso al cerrar la pestaña sigue estando por si acaso.
+    }
+  }
+  guardarRef.current = autoguardar;
+
   async function save() {
     setBusy("save");
     setStatus(null);
@@ -639,7 +703,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       setProjectId(j.project.id);
       void cargarSeries();
       setProjects((prev) => [
-        { id: j.project.id, name: j.project.name, updatedAt: j.project.updatedAt },
+        { id: j.project.id, name: j.project.name, seriesId: j.project.seriesId ?? null, updatedAt: j.project.updatedAt },
         ...prev.filter((p) => p.id !== j.project.id),
       ]);
       setDirty(false);
@@ -793,6 +857,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       setProject(data);
       setProjectId(j.project.id);
       setName(j.project.name);
+      setSeriesId(j.project.seriesId ?? null);
+      setVista("editor");
       // Si la primera escena está bloqueada, se respeta y no se abre sola.
       const primera = data.scenes[0];
       const abrible = primera && !loadLocks()[primera.id] ? primera : null;
@@ -877,6 +943,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setSection(null);
     setDirty(false);
     setCreando(false);
+    setVista("editor");
     seek(0);
     setStatus(`Proyecto nuevo en ${aspectInfo(a).label} (${aspectInfo(a).w}×${aspectInfo(a).h})`);
   }
@@ -973,9 +1040,40 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setExporting(false);
   }
 
+  if (vista === "inicio") {
+    return (
+      <StoryHome
+        series={series}
+        proyectos={projects}
+        busy={busy === "load" || busy === "delete"}
+        onAbrir={(id) => void load(id)}
+        // Se entra al editor y ahí se pregunta la forma del video.
+        onNuevoCapitulo={(sid) => { setSeriesId(sid); setVista("editor"); newProject(); }}
+        onNuevaSerie={async () => {
+          const nom = prompt("Nombre de la serie nueva");
+          if (!nom?.trim()) return;
+          const r = await fetch("/api/story/series", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: nom.trim(), data: { description: "", style: "", model: "", seed: "", notes: "" } }),
+          });
+          if (r.ok) await cargarSeries();
+        }}
+        onBorrar={(id, nom) => deleteProject({ id, name: nom, updatedAt: "" })}
+      />
+    );
+  }
+
   return (
     <div className="tool-ui grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-4">
+        {/* Dónde estás y cómo salir: sin esto, entrar al editor era un viaje sin
+            vuelta y no se sabía de qué serie era el capítulo. */}
+        <StoryBreadcrumb
+          serie={series.find((x) => x.id === seriesId)?.name ?? null}
+          capitulo={name}
+          onVolver={() => { void cargarSeries(); setVista("inicio"); }}
+        />
+
         {/* Previsualización del video entero. Va en el flujo de la página y se
             desplaza con ella: es grande, y clavada arriba estorbaba más de lo que
             ayudaba, porque se comía media pantalla mientras editabas la toma.
@@ -1267,7 +1365,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       <aside className="space-y-4">
         <div className="card p-3">
           <span className="label">Proyecto</span>
-          <input className="input mt-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del proyecto" />
+          <input className="input mt-2" value={name} onChange={(e) => { setName(e.target.value); setDirty(true); }} placeholder="Nombre del proyecto" />
           {/* A qué serie pertenece este capítulo. Sin serie también vale: un
               video suelto no tiene por qué estar en ninguna. */}
           <label className="mt-2 block">
@@ -1303,28 +1401,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
             <button onClick={save} disabled={busy === "save"} className="btn-brand flex-1"><Save className="h-4 w-4" /> Guardar</button>
             <button onClick={newProject} className="btn-ghost"><Plus className="h-4 w-4" /> Nuevo</button>
           </div>
-          {projects.length > 0 && (
-            <div className="mt-2">
-              <span className="text-xs text-muted">Tus proyectos</span>
-              <div className="mt-1 space-y-1">
-                {projects.map((p) => (
-                  <div key={p.id}
-                    className={`flex w-full items-center gap-1 rounded-lg border px-2 py-1 text-sm ${projectId === p.id ? "border-brand bg-brand/10" : "border-border hover:bg-surface-2"}`}>
-                    <button onClick={() => load(p.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                      <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted" />
-                      <span className="truncate">{p.name}</span>
-                    </button>
-                    <button
-                      onClick={() => deleteProject(p)}
-                      disabled={busy === "delete"}
-                      className="shrink-0 text-muted hover:text-danger disabled:opacity-40"
-                      title={`Borrar "${p.name}"`}
-                    ><Trash2 className="h-3.5 w-3.5" /></button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* La lista de proyectos ya no vive aquí: está en la pantalla de
+              inicio, agrupada por serie. */}
           {creando && (
             <div className="mt-3 rounded-xl border border-brand/60 bg-brand/5 p-2">
               <p className="text-xs font-medium text-fg">¿Cómo será este video?</p>
@@ -1345,7 +1423,9 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                   </button>
                 ))}
               </div>
-              <button onClick={() => setCreando(false)} className="btn-ghost mt-2 w-full text-[11px]">
+              <button // Si se echa atrás sin nada abierto, se vuelve al inicio en vez de
+                // dejarle un editor vacío delante.
+                onClick={() => { setCreando(false); if (!projectId && !projRef.current.scenes.length) setVista("inicio"); }} className="btn-ghost mt-2 w-full text-[11px]">
                 Cancelar
               </button>
             </div>
