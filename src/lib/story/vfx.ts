@@ -270,7 +270,7 @@ interface Shock { x: number; y: number; r: number; maxR: number; alpha: number; 
 interface SpeedBurst { x: number; y: number; lines: { angle: number; len: number }[]; life: number; maxLife: number; thickness: number; hue: number }
 interface Glitch { x: number; y: number; w: number; h: number; life: number; maxLife: number; density: number }
 interface Circle { x: number; y: number; life: number; maxLife: number; angle: number; rotSpeed: number; size: number; color: Hsl }
-interface Fog { id: string; x: number; y: number; phase: number; par: Record<string, number>; color: Hsl }
+interface Fog { id: string; x: number; y: number; x2: number; y2: number; phase: number; par: Record<string, number>; color: Hsl }
 interface Neon { id: string; mode: "point" | "line"; x: number; y: number; x2: number; y2: number; thickness: number; color: Hsl; dim: boolean; dimTimer: number; flickerRate: number }
 interface Bulb { t: number; colorIdx: number; phase: number }
 interface Xmas { id: string; x: number; y: number; x2: number; y2: number; bulbs: Bulb[]; size: number; blink: number }
@@ -495,7 +495,7 @@ export class VfxScene {
         for (const e of this.orbs) if (e.id === clave) { e.x = x; e.y = y; }
         for (const e of this.portals) if (e.id === clave) { e.x = x; e.y = y; }
         for (const e of this.beacons) if (e.id === clave) { e.x = x; e.y = y; }
-        for (const e of this.fogs) if (e.id === clave) { e.x = x; e.y = y; }
+        for (const e of this.fogs) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.storms) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.neons) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.xmas) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
@@ -587,7 +587,7 @@ export class VfxScene {
         });
         return;
       }
-      case "niebla": this.fogs.push({ id: clave, x, y, phase: this.rnd() * 6.28, par: p, color: col }); return;
+      case "niebla": this.fogs.push({ id: clave, x, y, x2, y2, phase: this.rnd() * 6.28, par: p, color: col }); return;
       default:
         this.ambients.push({ id: clave, kind: c.kind, x, y, x2, y2, color: col, par: p });
     }
@@ -884,8 +884,15 @@ export class VfxScene {
         const natural = cfg.vyMin + cfg.vyMax >= 0 ? 1 : -1;
         const sent = p.sentido ?? natural;
         const vy = Math.abs(this.r(cfg.vyMin, cfg.vyMax)) * sent * (p.speed ?? 1) * this.k;
+        // Lo que apenas se mueve en vertical no llega a bajar del borde: si en
+        // toda su vida no puede cruzar ni medio cuadro, se reparte por el alto.
+        // Así "desde arriba" quiere decir que llena la escena, no que se queda
+        // en una tira pegada al canto.
+        const alcance = Math.abs(vy) * cfg.maxLife;
+        const bandaArriba = e.y <= 0 && e.y2 <= 0;
+        const ey2 = (bandaArriba && alcance < this.h * 0.6) ? this.rnd() * this.h : ey;
         this.parts.push({
-          x: ex + this.r(-4, 4) * this.k, y: ey + this.r(-2, 2) * this.k,
+          x: ex + this.r(-4, 4) * this.k, y: ey2 + this.r(-2, 2) * this.k,
           vx: (this.r(cfg.vxMin, cfg.vxMax) * (inclina || 1)) * (p.speed ?? 1) * this.k + viento,
           vy,
           size: this.r(cfg.sizeMin, cfg.sizeMax) * (p.size ?? 1) * this.k,
@@ -903,7 +910,7 @@ export class VfxScene {
           gravity: Math.abs(cfg.gravity) * sent * this.k, drag: cfg.drag,
           type: cfg.renderType, blend: cfg.blend,
           trail: cfg.renderType === "spark" ? [] : undefined,
-          ...this.corteDe(p, ex, ey, sent),
+          ...this.corteDe(p, ex, ey2, sent),
         });
       }
     }
@@ -972,8 +979,12 @@ export class VfxScene {
       // tormenta, es un cable pelado.
       const largo = 40 * (e.par.size ?? 1) * this.k;
       const a = this.r(0, Math.PI * 2);
-      const ox = e.x + this.r(-largo, largo) * 0.3;
-      const oy = e.y + this.r(-largo, largo) * 0.3;
+      // Un punto cualquiera del tramo: con una línea, los chispazos recorren el
+      // cable entero en vez de amontonarse en la punta.
+      const q = this.rnd();
+      const bx = e.x + (e.x2 - e.x) * q, by = e.y + (e.y2 - e.y) * q;
+      const ox = bx + this.r(-largo, largo) * 0.3;
+      const oy = by + this.r(-largo, largo) * 0.3;
       this.rayo(ox, oy, ox + Math.cos(a) * largo, oy + Math.sin(a) * largo,
         { thickness: 0.5 * (e.par.size ?? 1), branch: e.par.branch ?? 1, flicker: 2, flash: e.par.flash ?? 0 });
     }
@@ -1442,12 +1453,27 @@ export class VfxScene {
   private dibFog(ctx: CanvasRenderingContext2D, f: Fog) {
     const p = f.par;
     const base = f.color;
+    const r = Math.max(90 * (p.size ?? 1) * this.k, 1);
+    // Las manchas se reparten A LO LARGO DEL TRAMO del efecto, no todas en su
+    // punto de origen: si no, una niebla trazada de lado a lado salía como un
+    // borrón en un extremo. Cuanto más largo el tramo, más manchas.
+    const largo = Math.hypot(f.x2 - f.x, f.y2 - f.y);
+    const n = Math.max(3, Math.min(14, Math.round(3 + largo / (r * 0.9))));
     ctx.globalCompositeOperation = "source-over";
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < n; i++) {
       const off = f.phase + i * 2.1;
-      const x = ((f.x + Math.sin(off) * 60 * this.k + off * 10 * (p.speed ?? 1) * this.k) % (this.w + 300 * this.k)) - 150 * this.k;
-      const y = f.y + Math.cos(off * 0.7) * 20 * this.k;
-      const r = Math.max(90 * (p.size ?? 1) * this.k, 1);
+      const t = n === 1 ? 0.5 : i / (n - 1);
+      const bx = f.x + (f.x2 - f.x) * t;
+      const by = f.y + (f.y2 - f.y) * t;
+      const x = bx + Math.sin(off) * 60 * this.k + Math.sin(off * 0.31) * 24 * this.k * (p.speed ?? 1);
+      // La niebla tiene grosor: se sube y se baja un poco alrededor del tramo.
+      let y = by + Math.cos(off * 0.7) * 20 * this.k + Math.sin(off * 1.7) * r * 0.35;
+      // Un tramo puesto por encima del borde (la forma "arriba" nace en
+      // y = -0.02) dejaba la niebla fuera de vista. En ese caso "desde arriba"
+      // quiere decir que llena la escena, así que se reparte por todo el alto;
+      // en cualquier otro sitio solo se mete dentro del cuadro.
+      if (f.y <= 0 && f.y2 <= 0) y = this.h * (0.12 + 0.76 * ((i + 0.5) / n + Math.sin(off * 0.53) * 0.18) % 1);
+      y = Math.max(r * 0.35, Math.min(this.h - r * 0.15, y));
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
       g.addColorStop(0, `hsla(${base.h},${base.s}%,${base.l}%,${0.18 * (p.density ?? 1)})`);
       g.addColorStop(1, "transparent");

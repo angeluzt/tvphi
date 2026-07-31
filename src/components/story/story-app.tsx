@@ -232,7 +232,27 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   function focusShot(shotId: string) {
     setSelShot(shotId);
     setSelOverlay(null);
-    engineRef.current?.seekToShot(shotId);
+    const eng = engineRef.current;
+    if (!eng) return;
+    // Si hay un tramo abierto (se está viendo una escena o una toma sueltas), el
+    // reproductor se muda a ESTA toma: parado y justo en su primer fotograma.
+    // Así al dar al play empieza por aquí, que es lo que se espera al abrir una
+    // toma para trabajarla; antes se quedaba en el tramo anterior.
+    if (section) {
+      const f = flat.find((x) => x.shot.id === shotId);
+      const sc = project.scenes.find((x) => x.shots.some((h) => h.id === shotId));
+      if (f && sc) {
+        const si = project.scenes.indexOf(sc);
+        const hi = sc.shots.findIndex((h) => h.id === shotId);
+        const fin = f.start + f.dur;
+        eng.pause();
+        setSection({ start: f.start, end: fin, label: `Escena ${si + 1} · toma ${hi + 1}`, shotId, sceneId: sc.id });
+        eng.setRange(f.start, fin, loopSection);
+        eng.seek(f.start);
+        return;
+      }
+    }
+    eng.seekToShot(shotId);
   }
 
   // Ver solo un tramo (una escena o una toma) en la miniatura flotante, sin
