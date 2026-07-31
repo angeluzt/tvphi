@@ -28,6 +28,7 @@ model User {
   channel        Channel?
   templates      Template[]
   storyProjects  StoryProject[]
+  storyCharacters StoryCharacter[]
   chatMessages   ChatMessage[]
   pointsBalances PointsBalance[]
   pointsTx       PointsTransaction[] @relation("PointsTxUser")
@@ -162,6 +163,23 @@ model StoryProject {
   userId    String
   name      String
   data      Json     // { slides[], audioLayers[], narrationVolume } serializado
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Ficha de un personaje: sus imágenes base, cómo es, y con qué prompt se creó.
+// De momento es solo una referencia para el usuario (una "biblia de personajes"
+// de toda la vida). El prompt y los ajustes se guardan pensando en que más
+// adelante se pueda pedir a una IA "hazme a este personaje haciendo X".
+model StoryCharacter {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  data      Json     // { description, prompt, model, seed, params, notes, images[] }
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
