@@ -312,6 +312,19 @@ export function ShotEditor({
                   )}
                   {voiceJobs[d.id] ? voiceLabel(voiceJobs[d.id]) : d.audioId ? "Regenerar voz" : "Generar voz"}
                 </button>
+                {/* Quién habla. Vacío = el narrador, que es lo normal. Poner un
+                    nombre hace que esa frase suene con la voz de ese personaje,
+                    que se elige una sola vez para todo el capítulo. */}
+                <label className="flex items-center gap-1 text-[11px] text-muted">
+                  Quién
+                  <input
+                    className="input w-28 py-0.5 text-[11px]"
+                    value={d.quien ?? ""}
+                    placeholder="narrador"
+                    aria-label="Quién habla"
+                    onChange={(e) => updDialogue(d.id, { quien: e.target.value.trim() || undefined })}
+                  />
+                </label>
                 <GapInput
                   value={d.gapSec}
                   onChange={(v) => updDialogue(d.id, { gapSec: v })}

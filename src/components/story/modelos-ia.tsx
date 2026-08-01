@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Check, RefreshCw, Play, AlertTriangle } from "lucide-react";
-import { CONOCIDOS, VOCES, nota, type Tarea } from "@/lib/story/modelos";
+import { Loader2, RefreshCw, Play, AlertTriangle } from "lucide-react";
+import { CONOCIDOS, VOCES, nota, comoSuena, type Tarea } from "@/lib/story/modelos";
 
 // Elegir qué modelo hace cada cosa.
 //
@@ -17,12 +17,14 @@ import { CONOCIDOS, VOCES, nota, type Tarea } from "@/lib/story/modelos";
 // memoria. Pero OpenAI saca modelos nuevos cada poco, así que «Otro…» deja
 // escribir uno a mano: la lista no puede convertirse en una jaula.
 export function Elegir({
-  etiqueta, valor, opciones, onCambio, fallidos = [],
+  etiqueta, valor, opciones, onCambio, fallidos = [], describe,
 }: {
   etiqueta: string; valor: string; opciones: string[];
   onCambio: (v: string) => void;
   // Los que ya fallaron en esta cuenta, para avisarlo en la propia opción.
   fallidos?: string[];
+  // Qué decir de cada opción. Para las voces, cómo suenan.
+  describe?: (id: string) => string;
 }) {
   // Si lo guardado no está en la lista (modelo nuevo, o escrito a mano), se
   // sigue viendo: no se le puede borrar la elección al usuario por callado.
@@ -57,7 +59,9 @@ export function Elegir({
       {!valor && <option value="">Elige uno…</option>}
       {suelto && <option value={valor}>{valor} · el que tenías puesto</option>}
       {opciones.map((o) => (
-        <option key={o} value={o}>{nota(o, fallidos) ? `${o} · ${nota(o, fallidos)}` : o}</option>
+        <option key={o} value={o}>
+          {(() => { const n = describe ? describe(o) : nota(o, fallidos); return n ? `${o} · ${n}` : o; })()}
+        </option>
       ))}
       <option value="__otro__">Otro… (escribirlo a mano)</option>
     </select>
@@ -113,8 +117,27 @@ export function ModelosIa({
     }));
   })(); }, []);
 
-  async function guardar() {
-    setAviso(null);
+  // Se guarda solo.
+  //
+  // Antes había que darle a «Guardar modelos» después de cada cambio, y elegir
+  // otra voz sin pulsarlo no hacía nada: parecía roto. Elegir de una lista YA
+  // es la confirmación; pedir otra encima sobra.
+  // Solo se guarda lo que el usuario TOCA. Cargar la pantalla no es un cambio:
+  // guardar entonces mandaba un aviso de «guardado» que no venía de nadie y
+  // llegó a cerrar el panel de rescate justo al abrirse.
+  const tocado = useRef(false);
+  useEffect(() => {
+    if (!tocado.current) return;
+    const t = setTimeout(() => { void guardar(true); }, 600);  // sin ir a cada tecla
+    return () => clearTimeout(t);
+  }, [mods]);
+  const cambiar = (patch: Partial<typeof mods>) => {
+    tocado.current = true;
+    setMods((m) => ({ ...m, ...patch }));
+  };
+
+  async function guardar(callado = false) {
+    if (!callado) setAviso(null);
     try {
       const r = await fetch("/api/story/ia/clave", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -122,9 +145,13 @@ export function ModelosIa({
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Error");
-      setAviso("Guardado ✓");
+      if (!callado) setAviso("Guardado ✓");
       onGuardado?.(mods);
-    } catch (e: any) { setAviso(e?.message ?? "No se pudo guardar"); }
+    } catch (e: any) {
+      // Un fallo al guardar SÍ se dice, aunque el guardado fuera automático:
+      // callarlo dejaría al usuario creyendo que cambió algo que no cambió.
+      setAviso(e?.message ?? "No se pudo guardar");
+    }
   }
 
   // Probar la voz ANTES de narrar el capítulo entero.
@@ -193,7 +220,7 @@ export function ModelosIa({
               valor={(mods as any)[k]}
               opciones={lista[k] ?? []}
               fallidos={fallidos}
-              onCambio={(v) => setMods((m) => ({ ...m, [k]: v }))}
+              onCambio={(v) => cambiar({ [k]: v } as any)}
             />
             <span className="mt-0.5 block text-[11px] text-muted">{ETIQUETAS[k][1]}</span>
           </label>
@@ -205,25 +232,24 @@ export function ModelosIa({
               etiqueta="Voz"
               valor={mods.vozNombre}
               opciones={VOCES}
-              onCambio={(v) => setMods((m) => ({ ...m, vozNombre: v }))}
+              describe={comoSuena}
+              onCambio={(v) => cambiar({ vozNombre: v })}
             />
+            <span className="mt-0.5 block text-[11px] text-muted">
+              {comoSuena(mods.vozNombre) || "Cómo suena quien narra."}
+            </span>
           </label>
         )}
       </div>
 
-      <div className="mt-2 flex gap-2">
-        <button onClick={() => void guardar()} className="btn-ghost flex-1 text-xs">
-          <Check className="h-4 w-4 text-accent" /> Guardar
+      {tareas.includes("voz") && (
+        <button onClick={() => void probarVoz()} disabled={probando || !mods.voz}
+          className="btn-ghost mt-2 w-full text-xs disabled:opacity-40"
+          title="Narra tres palabras para ver si ese modelo sirve">
+          {probando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 text-accent" />}
+          Probar la voz
         </button>
-        {tareas.includes("voz") && (
-          <button onClick={() => void probarVoz()} disabled={probando || !mods.voz}
-            className="btn-ghost flex-1 text-xs disabled:opacity-40"
-            title="Narra tres palabras para ver si ese modelo sirve">
-            {probando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 text-accent" />}
-            Probar la voz
-          </button>
-        )}
-      </div>
+      )}
       {tareas.includes("voz") && (
         <p className="mt-1 text-[11px] text-muted">
           Pruébala antes de narrar el capítulo entero: son tres palabras y te ahorra descubrir
