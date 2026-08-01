@@ -53,3 +53,17 @@ export function pareceClaveOpenAi(texto: string) {
 // generan audio, así que tener uno solo no vale. Vacío = usar el de siempre.
 export const MODELOS_POR_DEFECTO = { texto: "", imagen: "", voz: "", vozNombre: "alloy" };
 export type Modelos = typeof MODELOS_POR_DEFECTO;
+
+// A dónde se llama. Es api.openai.com salvo que se diga otra cosa.
+//
+// Existe por dos razones: poder probar de verdad estas rutas contra un servidor
+// falso (las llamadas salen del servidor, así que el navegador no puede
+// interceptarlas y no había forma de comprobarlas), y por si alguien pone la
+// app detrás de una pasarela compatible. Sin la variable, se comporta igual que
+// antes.
+// OJO con la forma de leerla: Next sustituye `process.env.ALGO` por su valor
+// EN EL MOMENTO DE COMPILAR, así que escrito con punto quedaba clavado al valor
+// por defecto y la variable no servía de nada. Con corchetes se lee de verdad
+// al ejecutar.
+export const OPENAI = (ruta: string) =>
+  `${(process.env["OPENAI_BASE_URL"] || "https://api.openai.com").replace(/\/+$/, "")}${ruta}`;

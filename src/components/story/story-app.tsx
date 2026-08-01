@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
-  Settings2, AlertTriangle, Sparkles, Check,
+  Settings2, AlertTriangle, Sparkles, Check, RefreshCw,
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
 import { VOCES_INFO } from "@/lib/story/modelos";
@@ -103,6 +103,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [verModelosVoz, setVerModelosVoz] = useState(false);
   // Con clave y modelo de imagen se pueden dibujar las escenas que falten.
   const [iaImagen, setIaImagen] = useState(false);
+  // Con clave puesta se puede pedir otra versión de una frase.
+  const [iaTexto, setIaTexto] = useState(false);
   // La escena que se está describiendo para dibujarla.
   const [dibujo, setDibujo] = useState<{ falta: Falta; texto: string } | null>(null);
   const [dibujando, setDibujando] = useState(false);
@@ -111,11 +113,14 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     { fase: "dibujando" | "narrando" | "listo" | "parado"; hechas: number; total: number; detalle: string } | null
   >(null);
   const [montarAlEntrar, setMontarAlEntrar] = useState(false);
+  // Qué pieza se está rehaciendo ahora mismo.
+  const [rehaciendo, setRehaciendo] = useState<string | null>(null);
   useEffect(() => {
     fetch("/api/story/ia/clave").then((r) => r.json())
       .then((j) => {
         setVozOpenAi(!!j?.configurada && !!j?.models?.voz);
         setIaImagen(!!j?.configurada && !!j?.models?.imagen);
+        setIaTexto(!!j?.configurada);
       }).catch(() => {});
   }, []);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
@@ -901,6 +906,64 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setStatus(`${hechas} ${hechas === 1 ? "imagen dibujada" : "imágenes dibujadas"} ✓`);
   }
 
+  // ---------- rehacer un trozo que no convence ----------
+  //
+  // Regenerar el capítulo entero porque una frase no gusta es tirar el resto
+  // del trabajo y volver a pagarlo. Aquí se rehace solo la pieza, mandándole el
+  // contexto de alrededor para que lo nuevo encaje con lo que ya hay.
+
+  // Lo que se dice justo antes y justo después, en todo el capítulo. Sin esto
+  // la frase nueva puede repetir lo anterior o contradecir lo siguiente.
+  function vecinos(dId: string): { antes?: string; despues?: string } {
+    const todos: Dialogue[] = [];
+    for (const sc of projRef.current.scenes)
+      for (const sh of sc.shots) todos.push(...sh.dialogues);
+    const i = todos.findIndex((x) => x.id === dId);
+    if (i < 0) return {};
+    return { antes: todos[i - 1]?.text, despues: todos[i + 1]?.text };
+  }
+
+  async function rehacerTexto(sceneId: string, shotId: string, d: Dialogue) {
+    if (!d.text.trim()) { setStatus("No hay nada que rehacer."); return; }
+    setRehaciendo(d.id);
+    try {
+      const sc = projRef.current.scenes.find((x) => x.id === sceneId);
+      const r = await fetch("/api/story/ia/rehacer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          que: "texto", actual: d.text,
+          contexto: { titulo: name, escena: sc?.prompt, quien: d.quien, ...vecinos(d.id) },
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      if (j.igual) { setStatus("Ha devuelto lo mismo. Prueba otra vez o cámbialo a mano."); return; }
+      // La voz que había ya no corresponde al texto: se marca para regenerarla.
+      patchDialogue(sceneId, shotId, d.id, { text: j.texto, ...(d.audioId ? { stale: true } : {}) });
+      setStatus(d.audioId ? "Otra versión ✓ · vuelve a generar su voz" : "Otra versión ✓");
+    } catch (e: any) {
+      setStatus("No se pudo rehacer: " + (e?.message ?? ""));
+    } finally { setRehaciendo(null); }
+  }
+
+  // Otra descripción para la misma escena: mismo sitio y mismos personajes,
+  // otro encuadre o otra luz.
+  async function rehacerDescripcion(falta: Falta, texto: string) {
+    setRehaciendo(falta.id);
+    try {
+      const r = await fetch("/api/story/ia/rehacer", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ que: "imagen", actual: texto, contexto: { titulo: name } }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      setDibujo((v) => (v ? { ...v, texto: j.texto } : v));
+      setStatus(j.igual ? "Ha devuelto lo mismo." : "Otra descripción ✓ · revísala y dibújala");
+    } catch (e: any) {
+      setStatus("No se pudo rehacer: " + (e?.message ?? ""));
+    } finally { setRehaciendo(null); }
+  }
+
   // ---------- montar el capítulo entero, a la vista ----------
   //
   // Antes, al escribir un capítulo con IA, salía un borrador con todas las
@@ -1598,17 +1661,32 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               Se dibuja en {project.aspect}, el formato del video. Repite la descripción de los
               personajes tal cual en cada escena: es lo único que hace que se parezcan entre sí.
             </p>
-            <button
-              onClick={async () => {
-                const d = dibujo;
-                setDibujo(null);
-                await dibujarUna(d.falta, d.texto);
-              }}
-              disabled={reponiendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
-              className="btn-brand mt-2 w-full text-sm disabled:opacity-40"
-            >
-              <Sparkles className="h-4 w-4" /> Dibujarla
-            </button>
+            <div className="mt-2 flex gap-2">
+              {/* Otra descripción de la MISMA escena, por si la que escribió la
+                  IA no convence. Sale más barato que rehacer el capítulo. */}
+              <button
+                onClick={() => void rehacerDescripcion(dibujo.falta, dibujo.texto)}
+                disabled={rehaciendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
+                className="btn-ghost flex-1 text-xs disabled:opacity-40"
+                title="Otra forma de describir la misma escena"
+              >
+                {rehaciendo === dibujo.falta.id
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <RefreshCw className="h-4 w-4 text-accent" />}
+                Otra descripción
+              </button>
+              <button
+                onClick={async () => {
+                  const d = dibujo;
+                  setDibujo(null);
+                  await dibujarUna(d.falta, d.texto);
+                }}
+                disabled={reponiendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
+                className="btn-brand flex-1 text-sm disabled:opacity-40"
+              >
+                <Sparkles className="h-4 w-4" /> Dibujarla
+              </button>
+            </div>
           </div>
         )}
 
@@ -1756,6 +1834,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onPlay={() => playShot(sc, sh.id, si, hi)}
                         onPreview={() => previewShot(sh.id)}
                         onGenVoice={(d) => genVoice(sc.id, sh.id, d)}
+                        onRehacerTexto={iaTexto ? (d) => void rehacerTexto(sc.id, sh.id, d) : undefined}
+                        rehaciendo={rehaciendo}
                         onAddSfx={(e) => addSfx(sc.id, sh, e)}
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
                         onAddOverlaySound={(id, e) => addOverlaySound(sc.id, sh, id, e)}

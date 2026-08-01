@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { descifrar, MODELOS_POR_DEFECTO } from "@/lib/story/credenciales";
+import { descifrar, MODELOS_POR_DEFECTO, OPENAI } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
 
 // Narrar un texto con la voz de OpenAI.
@@ -45,22 +45,62 @@ export async function POST(req: Request) {
       { error: "No has elegido modelo de voz. Cópialo de platform.openai.com." }, { status: 400 });
   }
 
+  // Un modelo de CHAT no deja de ser un chat aunque le pidas que solo lea.
+  //
+  // Esto salió de un fallo real: las narraciones acababan con cosas como
+  // «¿te gustó cómo quedó?». No es que el modelo desobedeciera un poco; es que
+  // se le estaba pidiendo a un conversador que no conversara. Insistirle en el
+  // prompt reduce la probabilidad, no la elimina.
+  //
+  // El endpoint de voz (/v1/audio/speech) no puede hacer eso: no responde, lee
+  // lo que se le da. Es la diferencia entre pedirlo y que sea imposible.
+  const deVoz = /tts/i.test(modelo);
+
   try {
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model: modelo,
-        modalities: ["text", "audio"],
-        audio: { voice: voz, format: "wav" },
-        messages: [
-          // Se le pide LEER, no responder: si no, contesta al texto en vez de
-          // narrarlo.
-          { role: "system", content: "Lee en voz alta EXACTAMENTE el texto del usuario, con tono de narrador. No añadas nada, no comentes, no respondas: solo léelo." },
-          { role: "user", content: parsed.data.texto },
-        ],
-      }),
-    });
+    const r = deVoz
+      ? await fetch(OPENAI("/v1/audio/speech"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify({ model: modelo, input: parsed.data.texto, voice: voz, response_format: "wav" }),
+        })
+      : await fetch(OPENAI("/v1/chat/completions"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            model: modelo,
+            modalities: ["text", "audio"],
+            audio: { voice: voz, format: "wav" },
+            messages: [
+              // Camino de respaldo, para modelos de audio que no son de voz.
+              // El aviso va en mayúsculas y repetido a propósito: aquí no hay
+              // garantía, solo insistencia.
+              { role: "system", content:
+                "Eres un LECTOR, no un asistente. Tu única salida es la lectura en voz alta del texto del usuario, palabra por palabra, con tono de narrador.\n" +
+                "PROHIBIDO: saludar, despedirse, comentar el texto, preguntar nada, decir si te gusta, ofrecer ayuda, añadir introducción o cierre.\n" +
+                "Si el texto es una sola palabra, lees esa palabra y callas. No existe ninguna razón para decir nada que no esté escrito." },
+              { role: "user", content: parsed.data.texto },
+            ],
+          }),
+        });
+
+    // El endpoint de voz devuelve el audio en crudo, no un JSON.
+    if (deVoz) {
+      if (!r.ok) {
+        const crudo = await r.text();
+        let e: any = null;
+        try { e = JSON.parse(crudo); } catch {}
+        const msg = e?.error?.message || `OpenAI respondió ${r.status}`;
+        const delModelo = /deprecat|does not exist|no longer|not found|unsupported|model/i.test(msg);
+        if (delModelo) await anotarFallo(user.id, modelo);
+        return NextResponse.json({
+          error: delModelo ? `El modelo «${modelo}» no sirve para narrar: ${msg}. Elige otro aquí mismo.` : msg,
+          modeloMal: delModelo, modelo,
+        }, { status: 502 });
+      }
+      const wav = Buffer.from(await r.arrayBuffer()).toString("base64");
+      return NextResponse.json({ ok: true, formato: "wav", audio: wav, via: "voz" });
+    }
+
     const texto = await r.text();
     let j: any = null;
     try { j = JSON.parse(texto); } catch {}
@@ -90,7 +130,9 @@ export async function POST(req: Request) {
       }, { status: 502 });
     }
     // El audio vuelve en base64; lo guarda el navegador, igual que las imágenes.
-    return NextResponse.json({ ok: true, formato: "wav", audio });
+    // Se avisa de por dónde ha ido: por el camino de chat no hay garantía de que
+    // no añada nada de su cosecha.
+    return NextResponse.json({ ok: true, formato: "wav", audio, via: "chat" });
   } catch (e: any) {
     return NextResponse.json({ error: "No se pudo hablar con OpenAI: " + (e?.message ?? "") }, { status: 502 });
   }

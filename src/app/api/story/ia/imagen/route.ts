@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { descifrar, MODELOS_POR_DEFECTO } from "@/lib/story/credenciales";
+import { descifrar, MODELOS_POR_DEFECTO, OPENAI } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
 
 // Generar la imagen de una escena.
@@ -53,7 +53,7 @@ export async function POST(req: Request) {
   const size = TAMANOS[parsed.data.formato ?? "16:9"] ?? TAMANOS["16:9"];
 
   try {
-    const r = await fetch("https://api.openai.com/v1/images/generations", {
+    const r = await fetch(OPENAI("/v1/images/generations"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       // No se manda "response_format": los modelos nuevos de imagen no lo
