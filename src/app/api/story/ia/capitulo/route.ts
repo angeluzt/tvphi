@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { descifrar } from "@/lib/story/credenciales";
-import { referenciaParaIA } from "@/lib/story/catalogo";
+import { referenciaCompacta } from "@/lib/story/catalogo";
 import { migrateProject } from "@/lib/story/model";
 
 // Escribir un capítulo con IA a partir de un texto del usuario.
@@ -67,7 +67,9 @@ export async function POST(req: Request) {
       { error: "La clave guardada no se puede leer. Vuelve a ponerla." }, { status: 400 });
   }
 
-  const ref = referenciaParaIA();
+  // La compacta: dice lo mismo con muchos menos tokens, y los paga el usuario
+  // en cada generación.
+  const ref = referenciaCompacta();
   let bruto: string;
   try {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {

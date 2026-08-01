@@ -187,6 +187,19 @@ export const VFX: VfxSpec[] = [
     params: [INTENSIDAD, TAMANO, VELOCIDAD, REPETIR, REPARTO] },
 ];
 
+// Movimiento propio.
+//
+// Un efecto podía quedarse quieto o seguir a la cámara ("follow"), pero no
+// MOVERSE por su cuenta. Y hace falta: una antorcha que alguien lleva, una
+// bruma que entra por un lado, un orbe que cruza la escena. Se mide en anchos
+// de cuadro por segundo, así que 0.1 cruza la escena en diez segundos.
+//
+// Se añade a lo continuo y nada más: un golpe dura dos décimas, no le da tiempo
+// a ir a ningún sitio.
+const DERIVA_X = P("derivaX", "Se mueve solo: hacia los lados (anchos por segundo)", -0.5, 0.5, 0.01);
+const DERIVA_Y = P("derivaY", "Se mueve solo: arriba/abajo (altos por segundo)", -0.5, 0.5, 0.01);
+for (const v of VFX) if (v.continuo) v.params = [...v.params, DERIVA_X, DERIVA_Y];
+
 export const vfxSpec = (k: VfxKind) => VFX.find((v) => v.id === k) ?? VFX[0];
 
 export function vfxDefaults(k: VfxKind): Record<string, number> {
@@ -196,11 +209,20 @@ export function vfxDefaults(k: VfxKind): Record<string, number> {
     // Los interruptores (0/1) empiezan apagados; "cada cuánto", "reparto" y
     // "viento" empiezan en cero (un golpe suelto, centrado y sin viento); el
     // resto, a la mitad natural.
-    const enCero = p.key === "wind" || p.key === "every" || p.key === "spread";
+    // La deriva TIENE que nacer en cero. Con el valor de en medio, cada efecto
+    // continuo se iría solo de la pantalla en cuanto se pusiera: un fuego que
+    // se va andando. Es exactamente el fallo que salió al añadirla.
+    const enCero = p.key === "wind" || p.key === "every" || p.key === "spread" ||
+      p.key === "derivaX" || p.key === "derivaY";
     out[p.key] = p.step === 1 ? p.min : (enCero ? 0 : 1);
   }
   if (k === "rayo") { out.stormrate = 0.5; out.flash = 1; } // el fogonazo viene puesto
   if (k === "neon") out.blink = 0.5;
+  // Una guirnalda tiene que VERSE: de serie salían bombillas de un pixel.
+  if (k === "navidad") { out.size = 1.8; out.spacing = 1.4; }
+  // Un chispazo cada segundo, durando seis fotogramas, no se ve nunca: se mira
+  // la pantalla y no pasa nada. Saltan más a menudo.
+  if (k === "electricidad") out.stormrate = 3;
   if (k === "hojas") out.wind = 0.5;
   // El sentido de serie es el natural de cada efecto: lo que flota, flota.
   const SUBEN = ["polvo", "burbujas", "corazones", "ceniza", "estrellas"];
@@ -257,6 +279,11 @@ interface Part {
   blend: string;
   trail?: { x: number; y: number }[];
   sway?: number; swayPhase?: number; rot?: number; rotSpeed?: number;
+  // Cuánto engorda por fotograma. Lo usa el humo: un penacho se abre al subir,
+  // y sin esto salía una mancha del mismo tamaño de arriba abajo.
+  crece?: number;
+  // Cuántos puntos guarda la estela. Solo lo usan las chispas rápidas.
+  estela?: number;
   cx?: number; cy?: number; angle?: number; radius?: number;
   angularSpeed?: number; radialSpeed?: number;
   // De dónde salió y cuánto puede recorrer antes de esfumarse (px), más el
@@ -312,20 +339,29 @@ const AMBIENT_CONFIG: Record<string, {
   sway: boolean; rotate: boolean;
 }> = {
   lluvia: { sizeMin: 0.8, sizeMax: 1.6, vxMin: -0.3, vxMax: 0.3, vyMin: 6, vyMax: 10, gravity: 0.08, drag: 0.999, maxLife: 220, renderType: "rain", blend: "source-over", sway: false, rotate: false },
-  nieve: { sizeMin: 1.5, sizeMax: 3.5, vxMin: -0.2, vxMax: 0.2, vyMin: 0.6, vyMax: 1.6, gravity: 0.002, drag: 0.999, maxLife: 400, renderType: "glow", blend: "source-over", sway: true, rotate: false },
+  nieve: { sizeMin: 0.7, sizeMax: 2.0, vxMin: -0.2, vxMax: 0.2, vyMin: 0.6, vyMax: 1.6, gravity: 0.002, drag: 0.999, maxLife: 400, renderType: "glow", blend: "source-over", sway: true, rotate: false },
   ceniza: { sizeMin: 1.5, sizeMax: 3, vxMin: -0.3, vxMax: 0.3, vyMin: -0.6, vyMax: 0.3, gravity: -0.001, drag: 0.995, maxLife: 260, renderType: "glow", blend: "lighter", sway: true, rotate: false },
   hojas: { sizeMin: 3, sizeMax: 6, vxMin: -0.3, vxMax: 0.3, vyMin: 1, vyMax: 2, gravity: 0.01, drag: 0.997, maxLife: 300, renderType: "leaf", blend: "source-over", sway: true, rotate: true },
   polvo: { sizeMin: 1, sizeMax: 2.2, vxMin: -0.2, vxMax: 0.2, vyMin: -0.5, vyMax: -0.1, gravity: 0, drag: 0.99, maxLife: 180, renderType: "glow", blend: "lighter", sway: true, rotate: false },
   // Suben despacio y se van; el vaivén las hace parecer agua.
-  burbujas: { sizeMin: 3, sizeMax: 8, vxMin: -0.15, vxMax: 0.15, vyMin: -1.6, vyMax: -0.6, gravity: -0.004, drag: 0.995, maxLife: 240, renderType: "bubble", blend: "source-over", sway: true, rotate: false },
+  burbujas: { sizeMin: 2.5, sizeMax: 7, vxMin: -0.15, vxMax: 0.15, vyMin: -1.6, vyMax: -0.6, gravity: -0.004, drag: 0.995, maxLife: 240, renderType: "bubble", blend: "source-over", sway: true, rotate: false },
   // Papelitos: caen dando vueltas, como las hojas pero más vivos.
   confeti: { sizeMin: 2, sizeMax: 4.5, vxMin: -0.6, vxMax: 0.6, vyMin: 1.2, vyMax: 2.6, gravity: 0.012, drag: 0.996, maxLife: 300, renderType: "leaf", blend: "source-over", sway: true, rotate: true },
   // Cruzan el cuadro de largo y dejan estela.
-  fugaces: { sizeMin: 1.2, sizeMax: 2.6, vxMin: 3, vxMax: 6, vyMin: 2.5, vyMax: 5, gravity: 0, drag: 1, maxLife: 90, renderType: "spark", blend: "lighter", sway: false, rotate: false },
+  fugaces: { sizeMin: 2.4, sizeMax: 4.5, vxMin: 7, vxMax: 12, vyMin: 4, vyMax: 8, gravity: 0, drag: 1, maxLife: 55, renderType: "spark", blend: "lighter", sway: false, rotate: false },
   // Suben flotando y se balancean.
   corazones: { sizeMin: 6, sizeMax: 13, vxMin: -0.25, vxMax: 0.25, vyMin: -1.5, vyMax: -0.6, gravity: -0.003, drag: 0.995, maxLife: 260, renderType: "heart", blend: "source-over", sway: true, rotate: false },
   // Casi quietas: solo están y brillan.
   estrellas: { sizeMin: 0.8, sizeMax: 2, vxMin: -0.06, vxMax: 0.06, vyMin: -0.06, vyMax: 0.06, gravity: 0, drag: 0.99, maxLife: 200, renderType: "glow", blend: "lighter", sway: false, rotate: false },
+};
+// Cuántas partículas por fotograma respecto a lo normal. 1 = el ritmo de
+// siempre. Se afinó MIRANDO cada efecto sobre una escena, no a ojo.
+const RITMO_AMBIENTE: Record<string, number> = {
+  fugaces: 0.012,   // una cada segundo y pico: si no, es lluvia diagonal
+  corazones: 0.22,  // flotan sueltos, no en chorro
+  burbujas: 0.45,
+  nieve: 0.7,
+  estrellas: 0.8,
 };
 const XMAS: Hsl[] = [
   { h: 0, s: 80, l: 55 }, { h: 140, s: 70, l: 45 }, { h: 45, s: 90, l: 60 },
@@ -369,6 +405,10 @@ export class VfxScene {
   // drawImage por partícula.
   private sprites = new Map<string, HTMLCanvasElement>();
 
+  // Segundo que se está simulando AHORA. No vale this.t: ese solo se actualiza
+  // al terminar el seek, así que dentro del bucle va un paso por detrás —y en
+  // la primera pasada vale cero, que dejaba la deriva clavada.
+  private tPaso = 0;
   private rnd: () => number = Math.random;
   private clave = "";
   private t = 0;
@@ -430,6 +470,7 @@ export class VfxScene {
     // en marcha en el primer fotograma.
     if (hechos === 0) this.precalentar(capas);
     for (let i = hechos; i < objetivo; i++) {
+      this.tPaso = i * PASO;
       this.montar(capas, i * PASO);
       this.recolocar(capas);
       this.emitir();
@@ -448,6 +489,9 @@ export class VfxScene {
   private precalentar(capas: VfxInput[]) {
     const continuos = capas.filter((c) => vfxSpec(c.kind).continuo);
     if (!continuos.length) return;
+    // El precalentado ocurre ANTES del segundo cero, así que la deriva todavía
+    // no ha movido nada: si no se fija, hereda el reloj del seek anterior.
+    this.tPaso = 0;
     for (let i = 0; i < PRECALENTADO; i++) {
       this.montar(continuos, 0);
       this.recolocar(continuos);
@@ -465,13 +509,24 @@ export class VfxScene {
   // cambian sobre la marcha en los emisores que ya están, y lo siguiente que
   // emitan sale con el valor nuevo. Lo ya soltado no se toca — el humo que
   // subió, subió.
+  // Cuánto se ha desplazado un efecto por su cuenta, en pixeles.
+  private deriva(p: Record<string, number>): [number, number] {
+    const dx = p.derivaX ?? 0, dy = p.derivaY ?? 0;
+    if (!dx && !dy) return [0, 0];
+    return [dx * this.w * this.tPaso, dy * this.h * this.tPaso];
+  }
+
   private recolocar(capas: VfxInput[]) {
     for (const c of capas) {
       const col = hexToHsl(c.colorHex || "#ffffff");
       c.nodes.forEach((n, i) => {
         const clave = `${c.id}#${i}`;
-        const x = n.x * this.w, y = n.y * this.h;
-        const x2 = n.x2 * this.w, y2 = n.y2 * this.h;
+        // El sitio, más lo que el efecto se haya movido por su cuenta. Va aquí
+        // porque es por donde pasan TODOS los efectos cada fotograma: así vale
+        // para cualquiera sin tocarlos uno a uno.
+        const [ddx, ddy] = this.deriva(c.params);
+        const x = n.x * this.w + ddx, y = n.y * this.h + ddy;
+        const x2 = n.x2 * this.w + ddx, y2 = n.y2 * this.h + ddy;
         for (const e of this.fires) if (e.id === clave) { e.par = c.params; e.color = col; }
         for (const e of this.ambients) if (e.id === clave) { e.par = c.params; e.color = col; }
         for (const e of this.auras) if (e.id === clave) { e.par = c.params; e.color = col; }
@@ -627,19 +682,56 @@ export class VfxScene {
   }
 
   // ---------------- golpes ----------------
+  // Una explosión no son cien puntitos naranjas separándose.
+  //
+  // Lo que la hace explosión son tres cosas a la vez: un núcleo BLANCO que
+  // ciega el primer instante, una bola de fuego densa que se abre, y humo que
+  // se queda cuando el fuego ya se ha ido. Sin lo tercero, a los 0,4 s no
+  // queda más que confeti de brasas.
   private explosion(x: number, y: number, base: Hsl, p: Record<string, number>) {
-    const n = Math.round(90 * (p.intensity ?? 1));
+    const inten = p.intensity ?? 1;
+    const tam = p.size ?? 1;
+    const vel = p.speed ?? 1;
+
+    // 1. Bola de fuego: mucha en el centro y poca fuera, no repartida por igual.
+    const n = Math.round(90 * inten);
     for (let i = 0; i < n; i++) {
       const ang = this.r(0, Math.PI * 2);
-      const v = this.r(1.5, 8) * (p.speed ?? 1) * this.k;
+      // El cuadrado del azar concentra el grueso cerca: así hay núcleo.
+      const u = this.rnd() * this.rnd();
+      const v = (0.8 + u * 8) * vel * this.k;
+      const centro = u < 0.25;
       this.parts.push({
         x, y, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v,
-        size: this.r(1.8, 4.2) * (p.size ?? 1) * this.k, life: 0, maxLife: this.r(35, 65),
-        hue: base.h + this.r(-18, 18), sat: 85, light: this.r(45, 68),
+        size: this.r(2.2, 5.5) * tam * this.k * (centro ? 1.5 : 1),
+        life: 0, maxLife: this.r(28, 60),
+        hue: base.h + this.r(-14, 14),
+        sat: centro ? 55 : 90,                    // el corazón tira a blanco
+        light: centro ? this.r(78, 95) : this.r(45, 68),
         gravity: 0.11 * this.k, drag: 0.985, type: "glow", blend: "lighter",
       });
     }
-    this.flashes.push({ x, y, r: 6 * this.k, maxR: 70 * (p.size ?? 1) * this.k, alpha: 1, hue: base.h });
+
+    // 2. Humo: sale más lento, dura mucho más y NO ilumina. Es lo que deja
+    // rastro cuando el fuego se apaga.
+    const nh = Math.round(26 * inten);
+    for (let i = 0; i < nh; i++) {
+      const ang = this.r(0, Math.PI * 2);
+      const v = this.r(0.4, 2.6) * vel * this.k;
+      this.parts.push({
+        x, y, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v - 0.35 * this.k,
+        size: this.r(7, 16) * tam * this.k, life: 0, maxLife: this.r(70, 130),
+        hue: base.h, sat: 12, light: this.r(14, 30),
+        gravity: -0.006 * this.k, drag: 0.955,
+        sway: this.r(0.2, 0.6), swayPhase: this.r(0, Math.PI * 2),
+        type: "smoke", blend: "source-over",
+      });
+    }
+
+    // 3. El fogonazo y la onda que sale disparada del punto cero.
+    this.flashes.push({ x, y, r: 6 * this.k, maxR: 95 * tam * this.k, alpha: 1, hue: base.h });
+    this.shocks.push({ x, y, r: 4 * this.k, maxR: 150 * tam * this.k, alpha: 0.7,
+      speed: 7 * vel * this.k, thickness: 2.2 * this.k, hue: base.h });
   }
   private chispas(x: number, y: number, base: Hsl, p: Record<string, number>) {
     const n = Math.round(70 * (p.intensity ?? 1));
@@ -805,13 +897,18 @@ export class VfxScene {
         const ex = e.x + (e.x2 - e.x) * t, ey = e.y + (e.y2 - e.y) * t;
         if (e.humo) {
           // Columna de humo: sube más despacio, se abre y no ilumina nada.
+          // El humo se ABRE al subir y se apaga: nace pequeño y compacto y
+          // acaba ancho y translúcido. Antes salía del mismo tamaño siempre y
+          // se leía como un óvalo gris pegado al sitio.
           this.parts.push({
-            x: ex + this.r(-6, 6) * this.k, y: ey + this.r(-3, 3) * this.k,
-            vx: this.r(-0.25, 0.25) * this.k, vy: this.r(-1.4, -0.6) * (p.speed ?? 1) * this.k,
-            size: this.r(5, 11) * (p.size ?? 1) * this.k, life: 0, maxLife: this.r(60, 110),
-            hue: e.color.h, sat: Math.min(e.color.s, 20), light: e.color.l,
-            gravity: -0.005 * this.k, drag: 0.985,
-            sway: this.r(0.2, 0.7), swayPhase: this.r(0, Math.PI * 2),
+            x: ex + this.r(-4, 4) * this.k, y: ey + this.r(-2, 2) * this.k,
+            vx: this.r(-0.18, 0.18) * this.k, vy: this.r(-1.6, -0.7) * (p.speed ?? 1) * this.k,
+            size: this.r(2.5, 5.5) * (p.size ?? 1) * this.k, life: 0, maxLife: this.r(90, 160),
+            hue: e.color.h, sat: Math.min(e.color.s, 14), light: e.color.l,
+            gravity: -0.004 * this.k, drag: 0.99,
+            // Se ensancha con la edad: es lo que convierte la mancha en penacho.
+            crece: this.r(0.06, 0.13) * (p.size ?? 1) * this.k,
+            sway: this.r(0.5, 1.3), swayPhase: this.r(0, Math.PI * 2),
             type: "smoke", blend: "source-over",
             ...this.corteDe(p, ex, ey, -1),
           });
@@ -869,7 +966,16 @@ export class VfxScene {
 
     for (const e of this.ambients) {
       const p = e.par;
-      const n = Math.max(1, Math.round(1.5 * (p.intensity ?? p.density ?? 1)));
+      // Cuántas salen por fotograma. No todas quieren el mismo ritmo: una
+      // estrella fugaz cada segundo es un cielo bonito; noventa por segundo es
+      // lluvia diagonal. Y un chorro macizo de corazones no se lee como
+      // corazones, se lee como una mancha rosa.
+      const ritmo = RITMO_AMBIENTE[e.kind] ?? 1;
+      const bruto = 1.5 * (p.intensity ?? p.density ?? 1) * ritmo;
+      // Por debajo de una por fotograma se sortea: es la única forma de que
+      // salga una cada tantos segundos en vez de un chorro.
+      const n = bruto >= 1 ? Math.round(bruto) : (this.rnd() < bruto ? 1 : 0);
+      if (n <= 0) continue;
       const cfg = AMBIENT_CONFIG[e.kind];
       if (!cfg) continue;
       for (let i = 0; i < n; i++) {
@@ -910,6 +1016,8 @@ export class VfxScene {
           gravity: Math.abs(cfg.gravity) * sent * this.k, drag: cfg.drag,
           type: cfg.renderType, blend: cfg.blend,
           trail: cfg.renderType === "spark" ? [] : undefined,
+          // Una estrella fugaz es sobre todo su rastro.
+          estela: e.kind === "fugaces" ? 26 : undefined,
           ...this.corteDe(p, ex, ey2, sent),
         });
       }
@@ -977,7 +1085,9 @@ export class VfxScene {
       e.t = 0;
       // Chispazo corto y desordenado alrededor del sitio: no es un rayo de
       // tormenta, es un cable pelado.
-      const largo = 40 * (e.par.size ?? 1) * this.k;
+      // Eran de 40 px: sobre una imagen no se leían como nada. Un chispazo
+      // tiene que verse en el fotograma en que salta, que es el único que hay.
+      const largo = 85 * (e.par.size ?? 1) * this.k;
       const a = this.r(0, Math.PI * 2);
       // Un punto cualquiera del tramo: con una línea, los chispazos recorren el
       // cable entero en vez de amontonarse en la punta.
@@ -986,7 +1096,12 @@ export class VfxScene {
       const ox = bx + this.r(-largo, largo) * 0.3;
       const oy = by + this.r(-largo, largo) * 0.3;
       this.rayo(ox, oy, ox + Math.cos(a) * largo, oy + Math.sin(a) * largo,
-        { thickness: 0.5 * (e.par.size ?? 1), branch: e.par.branch ?? 1, flicker: 2, flash: e.par.flash ?? 0 });
+        { thickness: 1.1 * (e.par.size ?? 1), branch: e.par.branch ?? 1, flicker: 2, flash: e.par.flash ?? 0 });
+      // Un fogonazo pequeño donde nace el chispazo. Una línea sola, por muy
+      // brillante que sea, casi no ocupa pixeles: el ojo se la pierde. Esto es
+      // lo que hace que se note que ha SALTADO algo.
+      this.flashes.push({ x: ox, y: oy, r: 3 * this.k,
+        maxR: 30 * (e.par.size ?? 1) * this.k, alpha: 0.75, hue: 200 });
     }
 
     for (const b of this.bursts) {
@@ -1038,6 +1153,7 @@ export class VfxScene {
         if (p.radius! < 2 || p.life >= p.maxLife) this.parts.splice(i, 1);
         continue;
       }
+      if (p.crece) p.size += p.crece;
       p.vy += p.gravity;
       p.vx *= p.drag; p.vy *= p.drag;
       p.x += p.vx; p.y += p.vy;
@@ -1046,7 +1162,13 @@ export class VfxScene {
       const m = 40 * this.k;
       if (p.type === "rain" && p.y > H + 10 * this.k) { this.parts.splice(i, 1); continue; }
       if (p.type !== "rain" && (p.y > H + m || p.y < -m || p.x < -m || p.x > W + m)) { this.parts.splice(i, 1); continue; }
-      if (p.type === "spark") { p.trail!.push({ x: p.x, y: p.y }); if (p.trail!.length > 5) p.trail!.shift(); }
+      if (p.type === "spark") {
+        p.trail!.push({ x: p.x, y: p.y });
+        // Cuanto más rápida, más larga la estela: una estrella fugaz es casi
+        // toda estela, y con cinco puntos se quedaba en una rayita.
+        const tope = p.estela ?? 5;
+        if (p.trail!.length > tope) p.trail!.shift();
+      }
       // Tope: pasado su recorrido se apaga en APAGADO fotogramas. Se cuenta
       // aparte y no tocando la edad, porque cada tipo de partícula vive lo suyo
       // (la lluvia, 220 fotogramas) y envejecerla deprisa la hacía llegar media
@@ -1105,11 +1227,7 @@ export class VfxScene {
           (26 + 8 * Math.sin(e.phase * 0.05 * (p.blink ?? 1))) * (p.size ?? 1) * this.k, 0.85);
       }
       for (const e of this.beacons) this.dibBaliza(ctx, e);
-      for (const e of this.portals) {
-        const p = e.par;
-        this.esfera(ctx, e.x, e.y, e.color, (40 + 10 * Math.sin(e.phase)) * (p.size ?? 1) * this.k,
-          0.25 * (p.intensity ?? 1));
-      }
+      for (const e of this.portals) this.dibPortal(ctx, e);
       for (const n of this.neons) this.dibNeon(ctx, n);
       for (const s of this.xmas) this.dibXmas(ctx, s);
       for (const s of this.shocks) this.dibShock(ctx, s);
@@ -1187,11 +1305,21 @@ export class VfxScene {
     ctx.lineTo(p.x, p.y); ctx.stroke();
   }
   private dibRain(ctx: CanvasRenderingContext2D, p: Part) {
-    const a = this.alfa(p, Math.max(0, 0.55 * (1 - p.life / p.maxLife)));
+    // La lluvia de verdad tiene PROFUNDIDAD: las gotas de delante son largas y
+    // claras, las del fondo cortas y casi invisibles. Todas iguales se leen
+    // como arañazos sobre la imagen. El tamaño ya viene variado, así que sirve
+    // de "qué tan cerca está" sin guardar nada nuevo.
+    const cerca = Math.min(1, Math.max(0, (p.size / this.k - 0.8) / 0.9));
+    const a = this.alfa(p, Math.max(0, (0.22 + 0.5 * cerca) * (1 - p.life / p.maxLife)));
+    if (a <= 0.004) return;
     ctx.globalCompositeOperation = "source-over";
     ctx.strokeStyle = `hsla(${p.hue},${p.sat}%,${p.light}%,${a})`;
-    ctx.lineWidth = p.size; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(p.x - p.vx * 2, p.y - p.vy * 2); ctx.lineTo(p.x, p.y); ctx.stroke();
+    ctx.lineWidth = p.size * (0.7 + 0.6 * cerca); ctx.lineCap = "round";
+    const largo = 1.4 + 2.4 * cerca;
+    ctx.beginPath();
+    ctx.moveTo(p.x - p.vx * largo, p.y - p.vy * largo);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
   }
   private dibLeaf(ctx: CanvasRenderingContext2D, p: Part) {
     const a = this.alfa(p, Math.max(0, 1 - p.life / p.maxLife));
@@ -1423,10 +1551,16 @@ export class VfxScene {
   private dibNeon(ctx: CanvasRenderingContext2D, n: Neon) {
     const flick = n.dim ? 0.22 : 1;
     ctx.globalCompositeOperation = "lighter";
-    const pasadas: [number, number][] = [[n.thickness * 6, 0.14], [n.thickness * 3, 0.32], [n.thickness, 0.95]];
-    for (const [w, a] of pasadas) {
+    // Cinco pasadas en vez de tres, y el corazón casi blanco: un tubo de neón
+    // no es una raya de color, es un filamento blanco dentro de una nube de su
+    // color. Sin esa nube se leía como una línea pintada.
+    const pasadas: [number, number, number][] = [
+      [n.thickness * 14, 0.05, 62], [n.thickness * 8, 0.10, 64], [n.thickness * 4, 0.24, 66],
+      [n.thickness * 1.9, 0.55, 72], [n.thickness * 0.8, 1, 94],
+    ];
+    for (const [w, a, luz] of pasadas) {
       ctx.lineWidth = w; ctx.lineCap = "round";
-      ctx.strokeStyle = `hsla(${n.color.h},90%,65%,${a * flick})`;
+      ctx.strokeStyle = `hsla(${n.color.h},${luz > 90 ? 60 : 95}%,${luz}%,${a * flick})`;
       ctx.beginPath();
       if (n.mode === "point") { ctx.arc(n.x, n.y, w / 2, 0, Math.PI * 2); ctx.stroke(); }
       else { ctx.moveTo(n.x, n.y); ctx.lineTo(n.x2, n.y2); ctx.stroke(); }
@@ -1450,15 +1584,78 @@ export class VfxScene {
       ctx.arc(x, y, Math.max(s.size * 0.6, 0.1), 0, Math.PI * 2); ctx.fill();
     }
   }
+  // Un portal es un AGUJERO, no un resplandor.
+  //
+  // Antes era una esfera tenue con partículas encima: sobre la imagen se leía
+  // como un montoncito de puntos, no como un sitio por el que se pasa. Lo que
+  // lo hace reconocible es el contraste: un centro OSCURO —el otro lado— con
+  // un borde encendido, y dentro un remolino que gira.
+  private dibPortal(ctx: CanvasRenderingContext2D, e: Portal) {
+    const p = e.par;
+    const c = e.color;
+    const R = Math.max(38 * (p.size ?? 1) * this.k, 4);
+    const lat = 1 + 0.06 * Math.sin(e.phase * 0.9);   // late despacio
+    const rx = R * lat, ry = R * 1.18 * lat;          // de pie: un vano, no un charco
+    const inten = p.intensity ?? 1;
+
+    ctx.save();
+    ctx.translate(e.x, e.y);
+
+    // 1. El halo que tiñe lo que hay alrededor.
+    ctx.globalCompositeOperation = "lighter";
+    const halo = ctx.createRadialGradient(0, 0, ry * 0.6, 0, 0, ry * 2.1);
+    halo.addColorStop(0, `hsla(${c.h},${c.s}%,${c.l}%,${0.3 * inten})`);
+    halo.addColorStop(1, "transparent");
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.ellipse(0, 0, rx * 2.1, ry * 2.1, 0, 0, Math.PI * 2); ctx.fill();
+
+    // 2. El otro lado: oscuro de verdad, para que se lea como un hueco.
+    ctx.globalCompositeOperation = "source-over";
+    const hueco = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
+    hueco.addColorStop(0, `hsla(${c.h},${Math.min(c.s, 60)}%,4%,0.95)`);
+    hueco.addColorStop(0.7, `hsla(${c.h},${c.s}%,8%,0.75)`);
+    hueco.addColorStop(1, "transparent");
+    ctx.fillStyle = hueco;
+    ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+
+    // 3. El remolino: brazos que giran hacia dentro.
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineCap = "round";
+    for (let b = 0; b < 3; b++) {
+      const giro = e.phase * (0.5 + b * 0.16) + (b * Math.PI * 2) / 3;
+      ctx.beginPath();
+      for (let s = 0; s <= 16; s++) {
+        const u = s / 16;
+        const ang = giro + u * 2.4;
+        const rr = ry * (0.92 - u * 0.72);
+        const px = Math.cos(ang) * rr * (rx / ry), py = Math.sin(ang) * rr;
+        s === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = `hsla(${c.h},${c.s}%,${Math.min(c.l + 12, 85)}%,${0.4 * inten})`;
+      ctx.lineWidth = 2.2 * this.k;
+      ctx.stroke();
+    }
+
+    // 4. El borde encendido, que es lo que dibuja la silueta.
+    ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = `hsla(${c.h},${c.s}%,${Math.min(c.l + 25, 92)}%,${0.9 * inten})`;
+    ctx.lineWidth = 2.6 * this.k; ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(0, 0, rx * 1.06, ry * 1.06, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = `hsla(${c.h},${c.s}%,${c.l}%,${0.35 * inten})`;
+    ctx.lineWidth = 6 * this.k; ctx.stroke();
+    ctx.restore();
+  }
+
   private dibFog(ctx: CanvasRenderingContext2D, f: Fog) {
     const p = f.par;
     const base = f.color;
-    const r = Math.max(90 * (p.size ?? 1) * this.k, 1);
+    // Más grande y más ancha que alta: la niebla se tumba, no se apelotona.
+    const r = Math.max(150 * (p.size ?? 1) * this.k, 1);
     // Las manchas se reparten A LO LARGO DEL TRAMO del efecto, no todas en su
     // punto de origen: si no, una niebla trazada de lado a lado salía como un
     // borrón en un extremo. Cuanto más largo el tramo, más manchas.
     const largo = Math.hypot(f.x2 - f.x, f.y2 - f.y);
-    const n = Math.max(3, Math.min(14, Math.round(3 + largo / (r * 0.9))));
+    const n = Math.max(6, Math.min(22, Math.round(6 + largo / (r * 0.5))));
     ctx.globalCompositeOperation = "source-over";
     for (let i = 0; i < n; i++) {
       const off = f.phase + i * 2.1;
@@ -1474,10 +1671,23 @@ export class VfxScene {
       // en cualquier otro sitio solo se mete dentro del cuadro.
       if (f.y <= 0 && f.y2 <= 0) y = this.h * (0.12 + 0.76 * ((i + 0.5) / n + Math.sin(off * 0.53) * 0.18) % 1);
       y = Math.max(r * 0.35, Math.min(this.h - r * 0.15, y));
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, `hsla(${base.h},${base.s}%,${base.l}%,${0.18 * (p.density ?? 1)})`);
+      // Cada mancha con su tamaño y su transparencia: todas iguales se leían
+      // como dos borrones, no como niebla.
+      const esc = 0.6 + 0.7 * ((Math.sin(off * 1.7) + 1) / 2);
+      const rx = r * esc * 1.6, ry = r * esc * 0.62;
+      // El degradado se crea DESPUÉS de mover y estirar el lienzo: hecho antes,
+      // su centro se queda en otro sitio y la mancha sale casi transparente.
+      const R = Math.max(rx, ry);
+      const op = 0.3 * (p.density ?? 1) * (0.6 + 0.4 * ((Math.sin(off * 0.9) + 1) / 2));
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(rx / R, ry / R);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+      g.addColorStop(0, `hsla(${base.h},${base.s}%,${base.l}%,${op})`);
+      g.addColorStop(0.5, `hsla(${base.h},${base.s}%,${base.l}%,${op * 0.55})`);
       g.addColorStop(1, "transparent");
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
     }
   }
 }
