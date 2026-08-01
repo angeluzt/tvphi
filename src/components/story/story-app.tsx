@@ -5,9 +5,10 @@ import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
-  Settings2, AlertTriangle, Sparkles,
+  Settings2, AlertTriangle, Sparkles, Check,
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
+import { VOCES_INFO } from "@/lib/story/modelos";
 import { MissingAssets } from "./missing-assets";
 import { StoryHome, StoryBreadcrumb } from "./story-home";
 import { faltantes, referencias, type Falta } from "@/lib/story/missing";
@@ -25,7 +26,7 @@ import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets, duplicateShot,
-  ASPECTS, aspectInfo, setProjectAspect, switchAspect, overlayWindow, type Aspect,
+  ASPECTS, aspectInfo, setProjectAspect, switchAspect, overlayWindow, vozDe, quienesHablan, NARRADOR, type Aspect,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay, type Frame,
   type VfxNode,
 } from "@/lib/story/model";
@@ -105,6 +106,11 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // La escena que se está describiendo para dibujarla.
   const [dibujo, setDibujo] = useState<{ falta: Falta; texto: string } | null>(null);
   const [dibujando, setDibujando] = useState(false);
+  // Por dónde va el montaje automático, para poder enseñarlo.
+  const [montaje, setMontaje] = useState<
+    { fase: "dibujando" | "narrando" | "listo" | "parado"; hechas: number; total: number; detalle: string } | null
+  >(null);
+  const [montarAlEntrar, setMontarAlEntrar] = useState(false);
   useEffect(() => {
     fetch("/api/story/ia/clave").then((r) => r.json())
       .then((j) => {
@@ -486,7 +492,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     const hacerVoz = vozOpenAi
       ? fetch("/api/story/ia/voz", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ texto: d.text }),
+          // Cada quien con su voz: el narrador y cada personaje pueden sonar
+          // distinto. Sin esto, un diálogo entre dos personas no se distingue
+          // de la narración.
+          body: JSON.stringify({ texto: d.text, voz: vozDe(projRef.current, d, "") || undefined }),
         }).then(async (r) => {
           const j = await r.json();
           if (!r.ok) {
@@ -891,6 +900,55 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     setDibujando(false);
     setStatus(`${hechas} ${hechas === 1 ? "imagen dibujada" : "imágenes dibujadas"} ✓`);
   }
+
+  // ---------- montar el capítulo entero, a la vista ----------
+  //
+  // Antes, al escribir un capítulo con IA, salía un borrador con todas las
+  // escenas vacías y te tocaba ir pieza a pieza. Ahora se dibuja y se narra
+  // solo, y se ve por dónde va: es la diferencia entre esperar mirando una
+  // barra y ver cómo se construye tu historia.
+  async function montarTodo() {
+    const dibujos = iaImagen;
+    let fs = await faltantes(projRef.current);
+    setFaltas(fs);
+
+    if (dibujos) {
+      const pend = fs.filter((f) => f.tipo === "escena" && descripcionDe(f).trim().length >= 4);
+      for (let i = 0; i < pend.length; i++) {
+        setMontaje({ fase: "dibujando", hechas: i, total: pend.length, detalle: pend[i].donde.join(" · ") });
+        if (!(await dibujarUna(pend[i], descripcionDe(pend[i])))) {
+          setMontaje({ fase: "parado", hechas: i, total: pend.length, detalle: "dibujando las imágenes" });
+          return;
+        }
+      }
+    }
+
+    const voces = pendientesDe((d) => !!d.text.trim() && !d.audioId);
+    for (let i = 0; i < voces.length; i++) {
+      const [sceneId, shotId, d] = voces[i];
+      setMontaje({
+        fase: "narrando", hechas: i, total: voces.length,
+        detalle: (d.quien || "narrador") + ": " + d.text.slice(0, 40),
+      });
+      if (!(await genVoice(sceneId, shotId, d))) {
+        setMontaje({ fase: "parado", hechas: i, total: voces.length, detalle: "generando las voces" });
+        return;
+      }
+    }
+
+    setFaltas(await faltantes(projRef.current));
+    setMontaje({ fase: "listo", hechas: voces.length, total: voces.length, detalle: "" });
+    setStatus("Capítulo montado ✓ · revísalo y guarda");
+  }
+
+  // Arranca en cuanto la IA entrega el borrador, no antes: hace falta que el
+  // proyecto nuevo ya esté puesto para poder recorrerlo.
+  useEffect(() => {
+    if (!montarAlEntrar) return;
+    setMontarAlEntrar(false);
+    void montarTodo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [montarAlEntrar]);
 
   // ---------- el proyecto entero en un JSON ----------
   // Viaja el montaje, no los archivos: por eso al abrirlo en otro equipo salen
@@ -1303,7 +1361,10 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           setDirty(true);
           setVista("editor");
           seek(0);
-          setStatus(`Borrador de la IA: ${data.scenes.length} escenas. Repón las imágenes y guarda.`);
+          setStatus(`Borrador de la IA: ${data.scenes.length} escenas. Montando…`);
+          // Sin esperar a que el usuario pida nada: se dibuja y se narra solo,
+          // y él lo va viendo aparecer.
+          setMontarAlEntrar(true);
         }}
       />
     );
@@ -1424,6 +1485,77 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
         {/* Lo que falta, en cuanto falta: va justo debajo del reproductor porque
             es lo primero que hay que resolver al abrir un proyecto de otro sitio. */}
+        {/* Ver cómo se construye, en vez de esperar mirando una barra. */}
+        {montaje && (
+          <div className={`card p-3 ${montaje.fase === "parado" ? "border-danger/50" : "border-accent/50"}`}>
+            <div className="flex items-center gap-2">
+              {montaje.fase === "listo" ? <Check className="h-4 w-4 shrink-0 text-accent" />
+                : montaje.fase === "parado" ? <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
+                : <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" />}
+              <span className="label">
+                {montaje.fase === "dibujando" && `Dibujando las escenas · ${montaje.hechas + 1} de ${montaje.total}`}
+                {montaje.fase === "narrando" && `Grabando las voces · ${montaje.hechas + 1} de ${montaje.total}`}
+                {montaje.fase === "listo" && "Capítulo montado"}
+                {montaje.fase === "parado" && `Se paró ${montaje.detalle}`}
+              </span>
+              <button onClick={() => setMontaje(null)} className="ml-auto text-muted hover:text-fg">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {montaje.fase !== "listo" && montaje.fase !== "parado" && (
+              <>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div className="h-full bg-accent transition-all"
+                    style={{ width: `${Math.round((montaje.hechas / Math.max(1, montaje.total)) * 100)}%` }} />
+                </div>
+                <p className="mt-1 truncate text-[11px] text-muted">{montaje.detalle}</p>
+                <p className="mt-1 text-[11px] text-muted">
+                  Puedes seguir tocando el capítulo mientras tanto. Se para solo si algo falla,
+                  para no gastar de más.
+                </p>
+              </>
+            )}
+            {montaje.fase === "parado" && (
+              <button onClick={() => void montarTodo()} className="btn-ghost mt-2 w-full text-xs">
+                <Sparkles className="h-4 w-4 text-accent" /> Seguir desde donde se quedó
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Quién habla con qué voz. Se elige una vez y vale para todo el
+            capítulo: cambiar la voz del narrador frase a frase sería absurdo. */}
+        {vozOpenAi && quienesHablan(project).length > 1 && (
+          <div className="card p-3">
+            <span className="label">Voces del capítulo</span>
+            <p className="mt-1 text-[11px] text-muted">
+              Cada quien puede sonar distinto. Al cambiar una voz, las frases ya grabadas se
+              quedan como están: vuelve a generarlas para oírlas con la nueva.
+            </p>
+            <div className="mt-2 space-y-2">
+              {quienesHablan(project).map((quien) => (
+                <label key={quien || "narrador"} className="block">
+                  <span className="text-[11px] text-muted">{quien || "Narrador"}</span>
+                  <select
+                    className="input mt-0.5 w-full text-sm"
+                    aria-label={`Voz de ${quien || "narrador"}`}
+                    value={project.voices?.[quien] ?? ""}
+                    onChange={(e) => mut((p) => ({
+                      ...p,
+                      voices: { ...(p.voices ?? {}), [quien]: e.target.value },
+                    }))}
+                  >
+                    <option value="">La de siempre</option>
+                    {VOCES_INFO.map((v) => (
+                      <option key={v.id} value={v.id}>{v.id} · {v.que}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         <MissingAssets
           faltas={faltas} reponiendo={reponiendo} onReponer={reponer}
           onDibujar={iaImagen ? (f) => setDibujo({ falta: f, texto: descripcionDe(f) }) : undefined}

@@ -31,11 +31,10 @@ export default async function HomePage() {
           <div className="mt-6 flex flex-wrap gap-3">
             {user ? (
               <>
-                <Link href="/studio" className="btn-brand">
-                  <Clapperboard className="h-4 w-4" /> Abrir el Studio
-                </Link>
-                <Link href="/story" className="btn-ghost">
-                  <Mic className="h-4 w-4 text-accent" /> Historias narradas
+                {/* Lo que hace esta app es contar historias: es lo primero y
+                    lo único que se ofrece al entrar. */}
+                <Link href="/story" className="btn-brand">
+                  <Mic className="h-4 w-4" /> Historias narradas
                 </Link>
               </>
             ) : (

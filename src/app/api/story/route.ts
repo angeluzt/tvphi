@@ -62,6 +62,9 @@ const dialogueSchema = z.object({
   pitch: z.number().optional(),
   // El texto cambió y la voz aún es la antigua.
   stale: z.boolean().optional(),
+  // Quién habla y con qué voz. Vacío = narrador.
+  quien: z.string().max(60).optional(),
+  voz: z.string().max(40).optional(),
 });
 const shotSfxSchema = z.object({
   id: z.string(),
@@ -132,6 +135,8 @@ const dataSchema = z.object({
   scenes: z.array(sceneSchema).max(200),
   audioLayers: z.array(audioLayerSchema).max(30),
   narrationVolume: z.number(),
+  // Qué voz usa el narrador y cada personaje.
+  voices: z.record(z.string(), z.string().max(40)).optional(),
   intro: clipSchema.optional(),
   outro: clipSchema.optional(),
 });

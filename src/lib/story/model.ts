@@ -84,6 +84,16 @@ export interface Dialogue {
   // pausa en vez de un instante absoluto para que el orden siga teniendo sentido
   // aunque la voz todavía no se haya generado (y por tanto no se sepa cuánto dura).
   gapSec: number;
+  // Quién habla. El narrador y cada personaje pueden sonar distinto: con una
+  // sola voz para todo, un diálogo entre dos personas no se distingue de la
+  // narración. Vacío = narrador, que es el caso normal.
+  //
+  // "quien" es el nombre del personaje; la voz sale de project.voices, así que
+  // cambiarla una vez cambia todas las frases de ese personaje.
+  quien?: string;
+  // Voz solo para esta frase, por encima de la de su personaje. Para el caso
+  // suelto en el que una frase concreta tiene que sonar de otra manera.
+  voz?: string;
 }
 
 export interface ShotSfx {
@@ -300,6 +310,28 @@ export interface StoryProject {
   narrationVolume: number; // 0..1
   intro: ClipVideo | null; // se pega al principio
   outro: ClipVideo | null; // se pega al final
+  // Qué voz usa cada quien. La clave "" es el narrador; las demás son nombres
+  // de personaje. Se guarda en el proyecto y no en cada frase para poder
+  // cambiar de golpe cómo suena alguien en todo el capítulo.
+  voices?: Record<string, string>;
+}
+
+// El narrador no tiene nombre: es el que habla cuando nadie más lo hace.
+export const NARRADOR = "";
+
+// Qué voz le toca a una frase: la suya propia, si no la de su personaje, y si
+// no la del narrador.
+export function vozDe(p: StoryProject, d: Dialogue, porDefecto: string): string {
+  return d.voz || p.voices?.[d.quien ?? NARRADOR] || p.voices?.[NARRADOR] || porDefecto;
+}
+
+// Todos los que hablan en el capítulo, el narrador primero.
+export function quienesHablan(p: StoryProject): string[] {
+  const vistos = new Set<string>([NARRADOR]);
+  for (const sc of p.scenes)
+    for (const sh of sc.shots)
+      for (const d of sh.dialogues) if (d.quien) vistos.add(d.quien);
+  return [...vistos];
 }
 
 export const MIN_SHOT = 2; // duración mínima de una toma sin diálogos
@@ -1006,7 +1038,7 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     to: hasFrames ? s.to : base.to,
     transition: s.transition ?? base.transition,
     transitionDur: s.transitionDur ?? base.transitionDur,
-    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", speed: Number(d.speed) || 1, pitch: Number(d.pitch) || 1, stale: !!d.stale }))),
+    dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", speed: Number(d.speed) || 1, pitch: Number(d.pitch) || 1, stale: !!d.stale, ...(typeof d.quien === "string" && d.quien.trim() ? { quien: d.quien.trim().slice(0, 60) } : {}), ...(typeof d.voz === "string" && d.voz.trim() ? { voz: d.voz.trim().slice(0, 40) } : {}) }))),
     sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
@@ -1044,6 +1076,9 @@ export function migrateProject(raw: any): StoryProject {
       })),
       audioLayers: raw.audioLayers ?? [],
       narrationVolume: typeof raw.narrationVolume === "number" ? raw.narrationVolume : 1,
+      // Qué voz usa cada quien. Viaja con el proyecto: si no, al abrirlo en otro
+      // sitio todos volverían a sonar igual.
+      ...(raw.voices && typeof raw.voices === "object" ? { voices: raw.voices as Record<string, string> } : {}),
       intro: normalizeClip(raw.intro),
       outro: normalizeClip(raw.outro),
     };

@@ -34,7 +34,7 @@ Cada toma es un encuadre sobre esa imagen:
 {"id":"s1a","autoDuration":true,"durationSec":6,"holdSec":0.4,"motionMode":"preset",
  "preset":{"kind":"in","cx":0.5,"cy":0.5,"w":1,"distance":0.25},
  "transition":"fade","transitionDur":1,
- "dialogues":[{"id":"d1","text":"...","dur":0,"gapSec":0.5,"effect":"none","speed":1,"pitch":1,"stale":false}],
+ "dialogues":[{"id":"d1","text":"...","quien":"","dur":0,"gapSec":0.5,"effect":"none","speed":1,"pitch":1,"stale":false}],
  "sfx":[],"overlays":[],"audioOverrides":[],"vfx":[]}
 
 Reglas que NO puedes saltarte:
@@ -44,6 +44,7 @@ Reglas que NO puedes saltarte:
 - Los efectos van en "vfx" y SOLO puedes usar los "id" del catálogo que se te da. Respeta las formas admitidas de cada uno y los rangos de sus ajustes.
 - Para los sitios de un efecto usa SIEMPRE "espacio":"imagen" y coordenadas 0..1 sobre la foto.
 - Escribe los diálogos en el idioma del encargo del usuario, con frases que se puedan narrar en voz alta.
+- "quien" dice quién habla: cadena vacía para el narrador, y el nombre del personaje cuando habla él. Usa el mismo nombre siempre para el mismo personaje: es lo que permite darle su propia voz.
 - Varias tomas por escena quedan mejor que una: un plano abierto y un primer plano sobre la misma imagen.
 
 Devuelve el JSON y nada más: sin explicaciones ni vallas de código.`;

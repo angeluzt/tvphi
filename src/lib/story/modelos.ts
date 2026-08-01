@@ -20,9 +20,26 @@ export const CONOCIDOS: Record<Tarea, string[]> = {
   imagen: ["gpt-image-2", "gpt-image-1"],
 };
 
-// Las voces no dependen de la cuenta: las fija OpenAI. Si alguna deja de valer,
-// el error de OpenAI lo dirá y se puede escribir otra a mano.
-export const VOCES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer", "ash", "ballad", "coral", "sage", "verse"];
+// Las voces no dependen de la cuenta: las fija OpenAI. Cada una suena distinta,
+// y el nombre no dice nada, así que va con su descripción: elegir «onyx» a
+// ciegas para un narrador de cuentos es perder una generación.
+export const VOCES_INFO: { id: string; que: string }[] = [
+  { id: "alloy", que: "Neutra y equilibrada" },
+  { id: "ash", que: "Calmada y seria" },
+  { id: "ballad", que: "Suave, narrativa" },
+  { id: "coral", que: "Enérgica y brillante" },
+  { id: "echo", que: "Conversacional y cálida" },
+  { id: "fable", que: "Ideal para contar historias" },
+  { id: "onyx", que: "Grave, profunda, autoritaria" },
+  { id: "nova", que: "Amigable y juvenil" },
+  { id: "sage", que: "Sabia y reflexiva" },
+  { id: "shimmer", que: "Dulce y delicada" },
+  { id: "verse", que: "Expresiva, con ritmo" },
+  { id: "marin", que: "Muy natural, de las mejores" },
+  { id: "cedar", que: "Natural y profesional, de las mejores" },
+];
+export const VOCES = VOCES_INFO.map((v) => v.id);
+export const comoSuena = (id: string) => VOCES_INFO.find((v) => v.id === id)?.que ?? "";
 
 // Modelos que existen pero NO sirven para nada de lo que hace esta sección:
 // transcriben, miden parecidos, moderan o escriben código. Fuera de la lista.
