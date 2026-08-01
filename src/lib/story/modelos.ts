@@ -16,7 +16,8 @@ export type Tarea = "texto" | "imagen" | "voz";
 // verdad los traerá; estos solo evitan una lista vacía.
 export const CONOCIDOS: Record<Tarea, string[]> = {
   texto: ["gpt-5.6-luna", "gpt-5.6", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini"],
-  voz: ["gpt-audio-1.5", "gpt-realtime-2.1"],
+  // Los de voz primero: son los que no pueden salirse del guion.
+  voz: ["gpt-4o-mini-tts", "tts-1", "gpt-audio-1.5", "gpt-realtime-2.1"],
   imagen: ["gpt-image-2", "gpt-image-1"],
 };
 
@@ -75,14 +76,21 @@ function version(id: string): number {
 // La primera opción de cada lista es la que queda preseleccionada, así que el
 // orden no es cosmético. Se aparta lo viejo (dall-e, tts-1) y lo que existe
 // pero no encaja en narrar un capítulo (realtime es para hablar en directo).
+// Los modelos de voz (tts) LEEN el texto: no pueden comentar, ni preguntar, ni
+// despedirse. Los de chat con audio sí, y lo hacen —narraciones acabadas en
+// «¿te gustó cómo quedó?»—. Por eso los de voz van los primeros: no es que
+// suenen mejor, es que son los únicos que no se salen del guion.
+export const esDeVoz = (id: string) => /tts/i.test(id);
+
 function rango(id: string, fallidos: string[] = []): number {
   // Lo que ya falló, al final del todo: es el único dato REAL de que algo no
   // sirve. La lista de OpenAI no dice cuáles están retirados.
-  if (fallidos.includes(id)) return 4;
-  if (/dall-e|^tts-/.test(id)) return 3;
-  if (esFechado(id)) return 2;
-  if (/realtime/.test(id)) return 1;
-  return 0;
+  if (fallidos.includes(id)) return 5;
+  if (/dall-e/.test(id)) return 4;
+  if (esDeVoz(id)) return 0;          // los seguros, delante de todo
+  if (esFechado(id)) return 3;
+  if (/realtime/.test(id)) return 2;
+  return 1;
 }
 
 export function ordenar(ids: string[], fallidos: string[] = []): string[] {
@@ -101,6 +109,7 @@ export function ordenar(ids: string[], fallidos: string[] = []): string[] {
 // página. Solo dice lo que se sabe del nombre; no promete precios.
 export function nota(id: string, fallidos: string[] = []): string {
   if (fallidos.includes(id)) return "te falló la última vez";
+  if (esDeVoz(id)) return "lee el texto tal cual, sin añadir nada";
   // El aviso de que se retira va ANTES que el de que es barato: de las dos
   // cosas, la que te deja tirado a medio capítulo es esta.
   if (esFechado(id)) return "versión congelada: se retira antes";

@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { descifrar } from "@/lib/story/credenciales";
+import { descifrar, OPENAI } from "@/lib/story/credenciales";
 import { referenciaCompacta } from "@/lib/story/catalogo";
 import { migrateProject } from "@/lib/story/model";
+import { limpiarCapitulo } from "@/lib/story/guion";
 
 // Escribir un capítulo con IA a partir de un texto del usuario.
 //
@@ -47,6 +48,14 @@ Reglas que NO puedes saltarte:
 - "quien" dice quién habla: cadena vacía para el narrador, y el nombre del personaje cuando habla él. Usa el mismo nombre siempre para el mismo personaje: es lo que permite darle su propia voz.
 - Varias tomas por escena quedan mejor que una: un plano abierto y un primer plano sobre la misma imagen.
 
+LO QUE SE NARRA (esto es lo que más se rompe, léelo dos veces):
+- El campo "text" de cada diálogo es EXACTAMENTE lo que se va a oír en el video. Se lee tal cual, palabra por palabra.
+- Escribe SOLO la historia. Nada de presentar, resumir, saludar, despedirse, preguntar ni comentar.
+- PROHIBIDO, en cualquier idioma y en cualquier sitio: "en esta historia", "hoy te voy a contar", "bienvenidos", "espero que te haya gustado", "¿te gustó?", "no olvides suscribirte", "hasta la próxima", "fin", "y colorín colorado".
+- Nada de acotaciones ni notas: ni "(susurrando)", ni "Narrador:", ni "Escena 1". Solo la frase que se dice.
+- La primera frase del capítulo entra directamente en la historia, como si el video ya llevara un rato.
+- La última frase cierra la historia por dentro. No se despide de nadie.
+
 Devuelve el JSON y nada más: sin explicaciones ni vallas de código.`;
 
 export async function POST(req: Request) {
@@ -72,7 +81,7 @@ export async function POST(req: Request) {
   const ref = referenciaCompacta();
   let bruto: string;
   try {
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    const r = await fetch(OPENAI("/v1/chat/completions"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
@@ -117,8 +126,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "La IA no devolvió ninguna escena" }, { status: 502 });
   }
 
+  // Red de seguridad: el prompt PIDE que no meta frases de presentador, pero
+  // pedir no es garantizar. Lo que se cuela aquí se acabaría oyendo en el vídeo
+  // («¿te gustó cómo quedó?»), y para entonces ya está pagado.
+  const { quitadas } = limpiarCapitulo(project);
+
   return NextResponse.json({
     ok: true,
+    // Se dice lo que se ha quitado en vez de hacerlo a escondidas.
+    quitadas,
     name: typeof crudo?.name === "string" ? crudo.name : "Capítulo generado",
     project,
     // Para que la interfaz pueda decir cuántas imágenes va a pedir.

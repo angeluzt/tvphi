@@ -2,7 +2,7 @@
 
 import {
   Plus, Trash2, Wand2, Volume2, Sticker, Image as ImageIcon, ChevronUp, ChevronDown, Clock,
-  Loader2, Repeat, Play, Pause, Copy,
+  Loader2, Repeat, Play, Pause, Copy, RefreshCw,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import type { VoiceStatus } from "@/lib/story/tts";
@@ -46,6 +46,8 @@ export function ShotEditor({
   onPlay,
   onPreview,
   onGenVoice,
+  onRehacerTexto,
+  rehaciendo,
   onAddSfx,
   onAddSticker,
   onAddOverlaySound,
@@ -76,6 +78,9 @@ export function ShotEditor({
   onPlay: () => void;
   onPreview: () => void;
   onGenVoice: (d: Dialogue) => void;
+  // Pedirle a la IA otra forma de decir lo mismo. Solo si hay clave puesta.
+  onRehacerTexto?: (d: Dialogue) => void;
+  rehaciendo?: string | null;
   onAddSfx: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddSticker: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddOverlaySound: (overlayId: string, e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -325,6 +330,18 @@ export function ShotEditor({
                     onChange={(e) => updDialogue(d.id, { quien: e.target.value.trim() || undefined })}
                   />
                 </label>
+                {/* Otra forma de decir lo mismo, con el contexto del capítulo
+                    alrededor. No cambia lo que pasa: cambia cómo se dice. */}
+                {onRehacerTexto && (
+                  <button onClick={() => onRehacerTexto(d)} disabled={rehaciendo === d.id || !d.text.trim()}
+                    className="btn-ghost text-xs disabled:opacity-40"
+                    title="Otra forma de decir lo mismo, sin cambiar la historia">
+                    {rehaciendo === d.id
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                      : <RefreshCw className="h-3.5 w-3.5 text-accent" />}
+                    Decirlo de otra forma
+                  </button>
+                )}
                 <GapInput
                   value={d.gapSec}
                   onChange={(v) => updDialogue(d.id, { gapSec: v })}

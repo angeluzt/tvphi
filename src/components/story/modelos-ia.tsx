@@ -70,7 +70,7 @@ export function Elegir({
 
 const ETIQUETAS: Record<Tarea, [string, string]> = {
   texto: ["Escribir el capítulo", "El más barato vale: solo tiene que seguir el catálogo que se le manda."],
-  voz: ["Narrar los diálogos", "Tiene que admitir audio. Los de texto, por caros que sean, no narran."],
+  voz: ["Narrar los diálogos", "Elige uno de voz (lleva «tts» en el nombre): LEE el texto y no puede añadir nada. Los de chat con audio a veces rematan con un «¿te gustó?»."],
   imagen: ["Generar imágenes", "El que dibuja las escenas que falten, desde el texto de cada una."],
 };
 

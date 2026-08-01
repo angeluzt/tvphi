@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { descifrar } from "@/lib/story/credenciales";
+import { descifrar, OPENAI } from "@/lib/story/credenciales";
 import { repartir, CONOCIDOS } from "@/lib/story/modelos";
 
 // Qué modelos puede usar ESTA cuenta.
@@ -24,7 +24,7 @@ export async function GET() {
   if (!key) return NextResponse.json({ deLaCuenta: false, modelos: CONOCIDOS });
 
   try {
-    const r = await fetch("https://api.openai.com/v1/models", {
+    const r = await fetch(OPENAI("/v1/models"), {
       headers: { Authorization: `Bearer ${key}` },
     });
     const texto = await r.text();
