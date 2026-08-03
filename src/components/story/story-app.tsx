@@ -208,14 +208,16 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // el motor, al entrar a un capítulo no habría video.
   useEffect(() => {
     const eng = engineRef.current;
-    if (!eng || vista !== "editor") return;
+    // Si se edita una toma suelta, el canvas está en la ventana flotante.
+    // No recolocarlo aquí o se queda negra al dibujar/mover efectos.
+    if (!eng || vista !== "editor" || section) return;
     const host = previewRef.current;
     if (host && eng.canvas.parentElement !== host) {
       eng.canvas.className = "h-full w-full object-contain";
       host.appendChild(eng.canvas);
       eng.update(projRef.current);
     }
-  }, [vista, project]);
+  }, [vista, project, section]);
 
   const cargarSeries = () =>
     fetch("/api/story/series").then((r) => r.json()).then((j) => setSeries(j.series ?? [])).catch(() => {});

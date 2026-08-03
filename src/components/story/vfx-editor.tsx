@@ -254,8 +254,8 @@ export function VfxEditor({
                         ? "Entra por todo lo alto del cuadro, como si cayera del cielo."
                         : v.shape === "punto"
                           ? "Toca la previsualización para ir poniendo sitios. Puedes poner varios."
-                          : v.shape === "linea"
-                            ? "Arrastra sobre la previsualización para trazar una línea. Puedes trazar varias."
+                          : v.shape === "linea" || v.shape === "libre"
+                            ? "Arrastra sobre la previsualización para trazar una línea. El efecto sale uniforme a lo largo. Puedes trazar varias; al salir de «Colocando» la guía desaparece."
                             : "Dibuja sobre la previsualización con el dedo o el ratón."}
                     </p>
                     {/* Pegado a la imagen: si la toma se mueve o se acerca, el
@@ -308,8 +308,11 @@ export function VfxEditor({
                   {/* Ajustes propios del efecto */}
                   <div className="rounded-lg border border-accent/40 p-2">
                     <span className="text-[11px] text-muted">Ajustes</span>
-                    {spec.params.map((p) => (
-                      p.step === 1 ? (
+                    {spec.params.map((p) => {
+                      // Solo 0/1 con paso 1 es interruptor. «Cuántos rayos» (1–12)
+                      // también tiene step 1, pero es un número, no un checkbox.
+                      const interruptor = p.step === 1 && p.min === 0 && p.max === 1;
+                      return interruptor ? (
                         <label key={p.key} className="mt-1 flex items-center gap-2 text-[11px]">
                           <input
                             type="checkbox"
@@ -324,10 +327,10 @@ export function VfxEditor({
                           value={v.params[p.key] ?? 1}
                           min={p.min} max={p.max} step={p.step}
                           onChange={(n) => updParam(v.id, p.key, n)}
-                          format={(n) => n.toFixed(2)}
+                          format={(n) => (p.step === 1 ? String(Math.round(n)) : n.toFixed(2))}
                         />
-                      )
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

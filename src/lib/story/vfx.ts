@@ -43,7 +43,7 @@ export type VfxKind =
 //   · "arriba": una franja a lo ancho por arriba (lluvia cayendo del cielo)
 //   · "punto":  un sitio suelto (una hoguera, un chorro, una explosión)
 //   · "linea":  de un punto a otro (una rama, un tubo de neón, un rayo)
-//   · "libre":  un trazo a mano alzada, que por dentro son muchas líneas
+//   · "libre":  trazo a mano alzada = una línea A→B; el efecto sale uniforme
 export type VfxShape = "arriba" | "punto" | "linea" | "libre";
 
 export const SHAPE_LABEL: Record<VfxShape, string> = {
@@ -116,7 +116,9 @@ export const VFX: VfxSpec[] = [
   { id: "escarcha", label: "Escarcha / hielo", group: "golpes", shapes: ["punto"], color: "#bff2ff", continuo: false,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, REPETIR, REPARTO] },
   { id: "speedlines", label: "Líneas de velocidad", group: "golpes", shapes: ["punto"], color: "#ffffff", continuo: false,
-    params: [INTENSIDAD, P("thickness", "Grosor"), P("length", "Largo"), REPETIR, REPARTO] },
+    params: [INTENSIDAD, P("thickness", "Grosor"), P("length", "Largo"),
+             P("hueco", "Hueco del centro (0 = desde el medio, 1 ≈ toda la pantalla)", 0, 1, 0.01),
+             REPETIR, REPARTO] },
   { id: "glitch", label: "Glitch digital", group: "golpes", shapes: ["punto"], color: null, continuo: false,
     params: [INTENSIDAD, TAMANO, P("duration", "Cuánto aguanta"), REPETIR, REPARTO] },
   { id: "magiccircle", label: "Círculo mágico", group: "fuego", shapes: ["punto"], color: "#b98bff", continuo: false,
@@ -129,16 +131,16 @@ export const VFX: VfxSpec[] = [
   { id: "portal", label: "Portal", group: "fuego", shapes: ["punto"], color: "#7ee8ff", continuo: true,
     params: [TAMANO, VELOCIDAD, INTENSIDAD, P("dir", "Hacia dentro (0) / fuera (1)", 0, 1, 1)] },
   { id: "luz", label: "Luz (esfera)", group: "luces", shapes: ["punto"], color: "#a0c8ff", continuo: true,
-    params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo")] },
+    params: [INTENSIDAD, TAMANO, P("blink", "Velocidad del parpadeo (más = más rápido)")] },
   { id: "baliza", label: "Baliza (policía / ambulancia)", group: "luces", shapes: ["punto"], color: null, continuo: true,
-    params: [TAMANO, P("blink", "Parpadeo"), INTENSIDAD, P("preset", "Policía (0) / ambulancia (1)", 0, 1, 1)] },
+    params: [TAMANO, P("blink", "Velocidad del parpadeo (más = más rápido)"), INTENSIDAD, P("preset", "Policía (0) / ambulancia (1)", 0, 1, 1)] },
   { id: "neon", label: "Neón", group: "luces", shapes: ["linea", "libre", "punto"], color: "#ff2fd6", continuo: true,
-    params: [P("thickness", "Grosor"), INTENSIDAD, P("blink", "Parpadeo")] },
+    params: [P("thickness", "Grosor"), INTENSIDAD, P("blink", "Velocidad del parpadeo (más = más a menudo; 0 = apagado)")] },
   { id: "navidad", label: "Luces navideñas", group: "luces", shapes: ["linea", "libre"], color: null, continuo: true,
-    params: [TAMANO, P("spacing", "Separación"), P("blink", "Parpadeo")] },
+    params: [TAMANO, P("spacing", "Separación"), P("blink", "Velocidad del parpadeo (más = más rápido)")] },
   { id: "rayo", label: "Rayo", group: "clima", shapes: ["arriba", "linea", "punto"], color: null, continuo: true,
-    params: [P("thickness", "Grosor"), P("branch", "Ramas"), P("flicker", "Parpadeo"),
-             P("stormrate", "Cada cuánto cae", 0.05, 3, 0.05),
+    params: [P("thickness", "Grosor"), P("branch", "Ramas"), P("flicker", "Parpadeo del trazo (más = más vivo)"),
+             P("stormrate", "Segundos entre rayos (menos = más a menudo)", 0.05, 3, 0.05),
              P("flash", "Fogonazo en toda la pantalla", 0, 1, 1)] },
 
   { id: "lluvia", label: "Lluvia", group: "clima", shapes: ["arriba", "punto", "linea", "libre"], color: "#8fc4ff", continuo: true,
@@ -150,7 +152,7 @@ export const VFX: VfxSpec[] = [
   { id: "hojas", label: "Hojas / pétalos", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#8a6a3a", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE, SENTIDO] },
   { id: "polvo", label: "Polvo mágico / luciérnagas", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#ffe28a", continuo: true,
-    params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo"), VELOCIDAD, LIMITE, SENTIDO] },
+    params: [INTENSIDAD, TAMANO, P("blink", "Velocidad del parpadeo (más = más rápido)"), VELOCIDAD, LIMITE, SENTIDO] },
   { id: "niebla", label: "Niebla", group: "clima", shapes: ["punto", "linea", "arriba", "libre"], color: "#cfd6e6", continuo: true,
     params: [P("density", "Densidad"), VELOCIDAD, TAMANO] },
 
@@ -162,7 +164,7 @@ export const VFX: VfxSpec[] = [
   { id: "confeti", label: "Confeti", group: "ambiente", shapes: ["arriba", "punto", "linea", "libre"], color: "#ff5fa2", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, VIENTO, LIMITE, SENTIDO] },
   { id: "estrellas", label: "Estrellas / brillos", group: "luces", shapes: ["arriba", "punto", "linea", "libre"], color: "#fff3b0", continuo: true,
-    params: [INTENSIDAD, TAMANO, P("blink", "Parpadeo"), SENTIDO] },
+    params: [INTENSIDAD, TAMANO, P("blink", "Velocidad del parpadeo (más = más rápido)"), SENTIDO] },
 
   // Luz sin partículas: solo el resplandor. Es lo que hace falta para una
   // farola, una ventana encendida o un cartel: una mancha de luz tenue que
@@ -170,13 +172,15 @@ export const VFX: VfxSpec[] = [
   { id: "lampara", label: "Luz suave (lámpara)", group: "luces", shapes: ["punto", "linea", "libre"], color: "#ffd9a0", continuo: true,
     params: [TAMANO, P("ancho", "Alargada (óvalo)", 0.2, 4, 0.05),
              P("intensity", "Tenuidad", 0.05, 1.5, 0.05),
-             P("blink", "Velocidad del parpadeo", 0, 3, 0.05),
+             P("blink", "Velocidad del parpadeo (más = más rápido; 0 = fijo)", 0, 3, 0.05),
              P("nervio", "Parpadeo nervioso (0 = latido suave)", 0, 1, 1)] },
   { id: "haces", label: "Rayos de luz (haces)", group: "luces", shapes: ["punto"], color: "#ffe9b8", continuo: true,
     params: [P("rayos", "Cuántos rayos", 1, 12, 1), P("length", "Largo"),
              P("intensity", "Tenuidad", 0.05, 1.2, 0.05), P("speed", "Velocidad del giro", 0, 3, 0.05)] },
   { id: "electricidad", label: "Chispazos eléctricos", group: "luces", shapes: ["punto", "linea"], color: null, continuo: true,
-    params: [TAMANO, P("branch", "Ramas"), P("stormrate", "Cada cuánto salta", 0.2, 8, 0.1),
+    params: [TAMANO, P("branch", "Ramas"),
+             P("hueco", "Hueco del centro (0 = desde el medio, 1 ≈ más lejos)", 0, 1, 0.01),
+             P("stormrate", "Segundos entre chispazos (menos = más a menudo)", 0.05, 8, 0.05),
              P("flash", "Fogonazo en toda la pantalla", 0, 1, 1)] },
 
   { id: "fugaces", label: "Estrellas fugaces", group: "clima", shapes: ["arriba", "punto", "linea"], color: "#dbe9ff", continuo: true,
@@ -216,14 +220,17 @@ export function vfxDefaults(k: VfxKind): Record<string, number> {
       p.key === "derivaX" || p.key === "derivaY";
     out[p.key] = p.step === 1 ? p.min : (enCero ? 0 : 1);
   }
-  if (k === "rayo") { out.stormrate = 0.5; out.flash = 1; } // el fogonazo viene puesto
+  if (k === "rayo") { out.stormrate = 1.2; out.flash = 1; } // ~un rayo por segundo y pico
   if (k === "neon") out.blink = 0.5;
   // Una guirnalda tiene que VERSE: de serie salían bombillas de un pixel.
   if (k === "navidad") { out.size = 1.8; out.spacing = 1.4; }
   // Un chispazo cada segundo, durando seis fotogramas, no se ve nunca: se mira
   // la pantalla y no pasa nada. Saltan más a menudo.
-  if (k === "electricidad") out.stormrate = 3;
+  if (k === "electricidad") { out.stormrate = 0.35; out.hueco = 0; }
+  if (k === "haces") out.rayos = 5;
   if (k === "hojas") out.wind = 0.5;
+  // Un poco de hueco de serie: cabe un sujeto mediano sin taparlo del todo.
+  if (k === "speedlines") out.hueco = 0.25;
   // El sentido de serie es el natural de cada efecto: lo que flota, flota.
   const SUBEN = ["polvo", "burbujas", "corazones", "ceniza", "estrellas"];
   if ("sentido" in out) out.sentido = SUBEN.includes(k) ? -1 : 1;
@@ -294,10 +301,14 @@ interface Flash { x: number; y: number; r: number; maxR: number; alpha: number; 
 interface Seg { x1: number; y1: number; x2: number; y2: number }
 interface Bolt { trunk: Seg[]; branches: Seg[][]; life: number; maxLife: number; thickness: number; flash: boolean }
 interface Shock { x: number; y: number; r: number; maxR: number; alpha: number; thickness: number; hue: number; speed: number }
-interface SpeedBurst { x: number; y: number; lines: { angle: number; len: number }[]; life: number; maxLife: number; thickness: number; hue: number }
+interface SpeedBurst {
+  x: number; y: number;
+  lines: { angle: number; inner: number; outer: number }[];
+  life: number; maxLife: number; thickness: number; hue: number;
+}
 interface Glitch { x: number; y: number; w: number; h: number; life: number; maxLife: number; density: number }
 interface Circle { x: number; y: number; life: number; maxLife: number; angle: number; rotSpeed: number; size: number; color: Hsl }
-interface Fog { id: string; x: number; y: number; x2: number; y2: number; phase: number; par: Record<string, number>; color: Hsl }
+interface Fog { id: string; x: number; y: number; x2: number; y2: number; phase: number; par: Record<string, number>; color: Hsl; lleno: boolean }
 interface Neon { id: string; mode: "point" | "line"; x: number; y: number; x2: number; y2: number; thickness: number; color: Hsl; dim: boolean; dimTimer: number; flickerRate: number }
 interface Bulb { t: number; colorIdx: number; phase: number }
 interface Xmas { id: string; x: number; y: number; x2: number; y2: number; bulbs: Bulb[]; size: number; blink: number }
@@ -309,7 +320,9 @@ interface Orb { id: string; x: number; y: number; phase: number; color: Hsl; par
 interface Portal { id: string; x: number; y: number; phase: number; color: Hsl; par: Record<string, number> }
 interface Aura { id: string; x: number; y: number; color: Hsl; par: Record<string, number> }
 interface Fire { id: string; x: number; y: number; x2: number; y2: number; color: Hsl; par: Record<string, number>; humo: boolean }
-interface Ambient { id: string; kind: VfxKind; x: number; y: number; x2: number; y2: number; color: Hsl; par: Record<string, number> }
+// `lleno`: solo la forma "arriba" reparte por todo el alto. No inferir por
+// y<=0: una línea a mano (o con deriva) en el borde llenaba la pantalla.
+interface Ambient { id: string; kind: VfxKind; x: number; y: number; x2: number; y2: number; color: Hsl; par: Record<string, number>; lleno: boolean }
 // Un golpe que vuelve a saltar cada cierto rato.
 interface BurstEm {
   id: string; kind: VfxKind; x: number; y: number;
@@ -339,10 +352,12 @@ const AMBIENT_CONFIG: Record<string, {
   sway: boolean; rotate: boolean;
 }> = {
   lluvia: { sizeMin: 0.8, sizeMax: 1.6, vxMin: -0.3, vxMax: 0.3, vyMin: 6, vyMax: 10, gravity: 0.08, drag: 0.999, maxLife: 220, renderType: "rain", blend: "source-over", sway: false, rotate: false },
-  nieve: { sizeMin: 0.7, sizeMax: 2.0, vxMin: -0.2, vxMax: 0.2, vyMin: 0.6, vyMax: 1.6, gravity: 0.002, drag: 0.999, maxLife: 400, renderType: "glow", blend: "source-over", sway: true, rotate: false },
+  // La nieve es lenta; necesita vivir lo bastante para cruzar el cuadro.
+  nieve: { sizeMin: 0.7, sizeMax: 2.0, vxMin: -0.2, vxMax: 0.2, vyMin: 0.6, vyMax: 1.6, gravity: 0.002, drag: 0.999, maxLife: 500, renderType: "glow", blend: "source-over", sway: true, rotate: false },
   ceniza: { sizeMin: 1.5, sizeMax: 3, vxMin: -0.3, vxMax: 0.3, vyMin: -0.6, vyMax: 0.3, gravity: -0.001, drag: 0.995, maxLife: 260, renderType: "glow", blend: "lighter", sway: true, rotate: false },
   hojas: { sizeMin: 3, sizeMax: 6, vxMin: -0.3, vxMax: 0.3, vyMin: 1, vyMax: 2, gravity: 0.01, drag: 0.997, maxLife: 300, renderType: "leaf", blend: "source-over", sway: true, rotate: true },
-  polvo: { sizeMin: 1, sizeMax: 2.2, vxMin: -0.2, vxMax: 0.2, vyMin: -0.5, vyMax: -0.1, gravity: 0, drag: 0.99, maxLife: 180, renderType: "glow", blend: "lighter", sway: true, rotate: false },
+  // Polvo: velocidad y empuje suficientes para no frenarse y saturar.
+  polvo: { sizeMin: 1, sizeMax: 2.4, vxMin: -0.35, vxMax: 0.35, vyMin: -1.8, vyMax: -0.7, gravity: -0.003, drag: 0.997, maxLife: 280, renderType: "glow", blend: "lighter", sway: true, rotate: false },
   // Suben despacio y se van; el vaivén las hace parecer agua.
   burbujas: { sizeMin: 2.5, sizeMax: 7, vxMin: -0.15, vxMax: 0.15, vyMin: -1.6, vyMax: -0.6, gravity: -0.004, drag: 0.995, maxLife: 240, renderType: "bubble", blend: "source-over", sway: true, rotate: false },
   // Papelitos: caen dando vueltas, como las hojas pero más vivos.
@@ -362,6 +377,7 @@ const RITMO_AMBIENTE: Record<string, number> = {
   burbujas: 0.45,
   nieve: 0.7,
   estrellas: 0.8,
+  polvo: 0.55,      // si no, con vida larga se llena la toma de chispas
 };
 const XMAS: Hsl[] = [
   { h: 0, s: 80, l: 55 }, { h: 140, s: 70, l: 45 }, { h: 45, s: 90, l: 60 },
@@ -404,6 +420,8 @@ export class VfxScene {
   // degradados en cada fotograma. Dibujados una vez y reutilizados, queda en un
   // drawImage por partícula.
   private sprites = new Map<string, HTMLCanvasElement>();
+  // Sprite suave de humo (sin el núcleo duro del resplandor).
+  private smokeSprite: HTMLCanvasElement | null = null;
 
   // Segundo que se está simulando AHORA. No vale this.t: ese solo se actualiza
   // al terminar el seek, así que dentro del bucle va un paso por detrás —y en
@@ -435,7 +453,15 @@ export class VfxScene {
       this.shocks.length > 0 || this.speeds.length > 0 || this.glitches.length > 0 ||
       this.circles.length > 0 || this.fogs.length > 0 || this.neons.length > 0 ||
       this.xmas.length > 0 || this.beacons.length > 0 || this.orbs.length > 0 ||
-      this.portals.length > 0;
+      this.portals.length > 0 || this.lamps.length > 0 || this.haces.length > 0 ||
+      this.chispazos.length > 0 || this.auras.length > 0 || this.fires.length > 0 ||
+      this.ambients.length > 0 || this.storms.length > 0 || this.bursts.length > 0;
+  }
+
+  // Intervalo aleatorio con media `base` (tormentas sin ritmo de metrónomo).
+  private intervaloTormenta(base: number) {
+    const u = Math.max(1e-6, 1 - this.rnd());
+    return clamp(-Math.log(u) * base, base * 0.22, base * 3.2);
   }
 
   // Deja la simulación en el segundo `t` de esa toma. Si el reproductor ha
@@ -539,7 +565,11 @@ export class VfxScene {
         for (const e of this.haces) if (e.id === clave) { e.par = c.params; e.color = col; }
         for (const e of this.chispazos) if (e.id === clave) e.par = c.params;
         for (const e of this.bursts) if (e.id === clave) { e.par = c.params; e.color = col; }
-        for (const e of this.neons) if (e.id === clave) { e.color = col; e.thickness = (c.params.thickness ?? 1) * 3 * this.k; }
+        for (const e of this.neons) if (e.id === clave) {
+          e.color = col;
+          e.thickness = (c.params.thickness ?? 1) * 3 * this.k;
+          e.flickerRate = (c.params.blink ?? 0.5) * 0.01;
+        }
         for (const e of this.bursts) if (e.id === clave) { e.x = x; e.y = y; }
         for (const e of this.lamps) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.haces) if (e.id === clave) { e.x = x; e.y = y; }
@@ -553,7 +583,11 @@ export class VfxScene {
         for (const e of this.fogs) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.storms) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
         for (const e of this.neons) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
-        for (const e of this.xmas) if (e.id === clave) { e.x = x; e.y = y; e.x2 = x2; e.y2 = y2; }
+        for (const e of this.xmas) if (e.id === clave) {
+          e.x = x; e.y = y; e.x2 = x2; e.y2 = y2;
+          e.blink = c.params.blink ?? 1;
+          e.size = (c.params.size ?? 1) * this.k;
+        }
       });
     }
   }
@@ -620,7 +654,8 @@ export class VfxScene {
         this.haces.push({ id: clave, x, y, phase: this.r(0, Math.PI * 2), color: col, par: p });
         return;
       case "electricidad": {
-        const cada = 1 / Math.max(0.2, p.stormrate ?? 2);
+        // stormrate = segundos entre chispazos (menos = más a menudo).
+        const cada = Math.max(0.05, p.stormrate ?? 0.35);
         this.chispazos.push({ id: clave, x, y, x2, y2, par: p, t: this.r(0, cada), cada });
         return;
       }
@@ -635,16 +670,18 @@ export class VfxScene {
         // Cada rayo arranca con su propio desfase y su propio ritmo: si no,
         // varios rayos puestos a la vez caen todos en el mismo fotograma y
         // canta muchísimo.
-        const cada = 1 / Math.max(0.05, p.stormrate ?? 0.5);
+        // stormrate = segundos entre rayos (menos = más a menudo).
+        const base = Math.max(0.05, p.stormrate ?? 1.2);
+        const cada = this.intervaloTormenta(base);
         this.storms.push({
           id: clave, x, y, x2, y2, par: p,
           t: this.r(0, cada), cada, arriba: c.shape === "arriba",
         });
         return;
       }
-      case "niebla": this.fogs.push({ id: clave, x, y, x2, y2, phase: this.rnd() * 6.28, par: p, color: col }); return;
+      case "niebla": this.fogs.push({ id: clave, x, y, x2, y2, phase: this.rnd() * 6.28, par: p, color: col, lleno: c.shape === "arriba" }); return;
       default:
-        this.ambients.push({ id: clave, kind: c.kind, x, y, x2, y2, color: col, par: p });
+        this.ambients.push({ id: clave, kind: c.kind, x, y, x2, y2, color: col, par: p, lleno: c.shape === "arriba" });
     }
   }
 
@@ -669,6 +706,16 @@ export class VfxScene {
   }
 
   private r(a: number, b: number) { return a + this.rnd() * (b - a); }
+
+  // Cuántos fotogramas hacen falta para salir del cuadro en la dirección de
+  // `vy`, sin inventar vidas de media hora que saturan la pantalla.
+  private vidaHastaBorde(y: number, vy: number, base: number) {
+    const vel = Math.abs(vy);
+    // Casi quieta: no alargar la vida; si no, se acumula en el sitio.
+    if (vel < 0.08 * this.k) return base;
+    const dist = vy < 0 ? y + 60 * this.k : this.h - y + 60 * this.k;
+    return Math.min(480, Math.max(base, Math.ceil(dist / vel)));
+  }
 
   // Cuánto puede recorrer una partícula que sale de (x, y) yendo hacia arriba o
   // hacia abajo. La referencia es lo que hay de ahí al borde por el que se
@@ -728,10 +775,8 @@ export class VfxScene {
       });
     }
 
-    // 3. El fogonazo y la onda que sale disparada del punto cero.
+    // 3. Fogonazo suave del primer instante (sin anillo de onda).
     this.flashes.push({ x, y, r: 6 * this.k, maxR: 95 * tam * this.k, alpha: 1, hue: base.h });
-    this.shocks.push({ x, y, r: 4 * this.k, maxR: 150 * tam * this.k, alpha: 0.7,
-      speed: 7 * vel * this.k, thickness: 2.2 * this.k, hue: base.h });
   }
   private chispas(x: number, y: number, base: Hsl, p: Record<string, number>) {
     const n = Math.round(70 * (p.intensity ?? 1));
@@ -783,8 +828,21 @@ export class VfxScene {
   }
   private speedlines(x: number, y: number, base: Hsl, p: Record<string, number>) {
     const n = Math.round(22 * (p.intensity ?? 1));
+    // Alcance máximo de las rayas (hacia el borde del cuadro).
+    const alcance = Math.min(this.w, this.h) * 0.58 * (p.length ?? 1);
+    // Hueco central: 0 = salen del punto; 1 = empiezan casi en el borde
+    // (queda sitio para un coche, una bici, un insecto…).
+    const hueco = Math.max(0, Math.min(1, p.hueco ?? 0));
+    const minLen = 22 * this.k;
     const lines = [];
-    for (let i = 0; i < n; i++) lines.push({ angle: this.r(0, Math.PI * 2), len: this.r(80, 220) * (p.length ?? 1) * this.k });
+    for (let i = 0; i < n; i++) {
+      const angle = this.r(0, Math.PI * 2);
+      const outer = alcance * this.r(0.72, 1);
+      // El arranque se abre con el hueco; siempre queda un trozo visible.
+      let inner = hueco * outer * this.r(0.92, 1);
+      if (outer - inner < minLen) inner = Math.max(0, outer - minLen);
+      lines.push({ angle, inner, outer });
+    }
     this.speeds.push({ x, y, lines, life: 0, maxLife: 14, thickness: 2 * (p.thickness ?? 1) * this.k, hue: base.h });
   }
   private glitch(x: number, y: number, p: Record<string, number>) {
@@ -891,29 +949,34 @@ export class VfxScene {
   private emitir() {
     for (const e of this.fires) {
       const p = e.par;
+      if (e.humo) {
+        // Humo suave: pocas manchas, nacen ya blandas y se abren al subir.
+        const bruto = 0.4 * (p.intensity ?? 1);
+        const cuantas = bruto >= 1 ? Math.round(bruto) : (this.rnd() < bruto ? 1 : 0);
+        for (let h = 0; h < cuantas; h++) {
+          const th = this.rnd();
+          const hx = e.x + (e.x2 - e.x) * th, hy = e.y + (e.y2 - e.y) * th;
+          this.parts.push({
+            // Un poco de dispersión al nacer evita el “punto de cuadritos”.
+            x: hx + this.r(-10, 10) * this.k, y: hy + this.r(-6, 4) * this.k,
+            vx: this.r(-0.35, 0.35) * this.k,
+            vy: this.r(-1.05, -0.35) * (p.speed ?? 1) * this.k,
+            size: this.r(5, 9) * (p.size ?? 1) * this.k,
+            life: 0, maxLife: this.r(140, 230),
+            hue: e.color.h, sat: Math.min(e.color.s, 5), light: this.r(58, 78),
+            gravity: -0.0018 * this.k, drag: 0.994,
+            crece: this.r(0.04, 0.09) * (p.size ?? 1) * this.k,
+            sway: this.r(1.0, 2.4), swayPhase: this.r(0, Math.PI * 2),
+            type: "smoke", blend: "source-over",
+            ...this.corteDe(p, hx, hy, -1),
+          });
+        }
+        continue;
+      }
       const n = Math.max(1, Math.round(2 * (p.intensity ?? 1)));
       for (let i = 0; i < n; i++) {
         const t = this.rnd();
         const ex = e.x + (e.x2 - e.x) * t, ey = e.y + (e.y2 - e.y) * t;
-        if (e.humo) {
-          // Columna de humo: sube más despacio, se abre y no ilumina nada.
-          // El humo se ABRE al subir y se apaga: nace pequeño y compacto y
-          // acaba ancho y translúcido. Antes salía del mismo tamaño siempre y
-          // se leía como un óvalo gris pegado al sitio.
-          this.parts.push({
-            x: ex + this.r(-4, 4) * this.k, y: ey + this.r(-2, 2) * this.k,
-            vx: this.r(-0.18, 0.18) * this.k, vy: this.r(-1.6, -0.7) * (p.speed ?? 1) * this.k,
-            size: this.r(2.5, 5.5) * (p.size ?? 1) * this.k, life: 0, maxLife: this.r(90, 160),
-            hue: e.color.h, sat: Math.min(e.color.s, 14), light: e.color.l,
-            gravity: -0.004 * this.k, drag: 0.99,
-            // Se ensancha con la edad: es lo que convierte la mancha en penacho.
-            crece: this.r(0.06, 0.13) * (p.size ?? 1) * this.k,
-            sway: this.r(0.5, 1.3), swayPhase: this.r(0, Math.PI * 2),
-            type: "smoke", blend: "source-over",
-            ...this.corteDe(p, ex, ey, -1),
-          });
-          continue;
-        }
         this.parts.push({
           x: ex + this.r(-4, 4) * this.k, y: ey + this.r(-2, 2) * this.k,
           vx: this.r(-0.4, 0.4) * this.k, vy: this.r(-2.6, -1.4) * (p.speed ?? 1) * this.k,
@@ -987,16 +1050,29 @@ export class VfxScene {
         // Las fugaces se inclinan a gusto: -1 va hacia la izquierda, 1 a la derecha.
         const inclina = e.kind === "fugaces" ? (p.angulo ?? 0) : 0;
         // El sentido manda sobre la dirección; la config solo pone el ritmo.
+        // Si el slider está casi en 0, se usa el sentido natural: un polvo
+        // "parado" no es usable y solo satura.
         const natural = cfg.vyMin + cfg.vyMax >= 0 ? 1 : -1;
-        const sent = p.sentido ?? natural;
-        const vy = Math.abs(this.r(cfg.vyMin, cfg.vyMax)) * sent * (p.speed ?? 1) * this.k;
-        // Lo que apenas se mueve en vertical no llega a bajar del borde: si en
-        // toda su vida no puede cruzar ni medio cuadro, se reparte por el alto.
-        // Así "desde arriba" quiere decir que llena la escena, no que se queda
-        // en una tira pegada al canto.
+        const sentRaw = p.sentido ?? natural;
+        const sent = Math.abs(sentRaw) < 0.15 ? natural : sentRaw;
+        const ry = Math.abs(this.r(cfg.vyMin, cfg.vyMax));
+        // Mínimo de velocidad (salvo estrellas): si no, el drag las frena y saturan.
+        const piso = e.kind === "estrellas" ? 0 : 0.35;
+        const vy = Math.max(ry, piso) * sent * (p.speed ?? 1) * this.k;
+        // "Desde arriba"/techo: al caer nacen arriba; al subir entran por abajo.
         const alcance = Math.abs(vy) * cfg.maxLife;
-        const bandaArriba = e.y <= 0 && e.y2 <= 0;
-        const ey2 = (bandaArriba && alcance < this.h * 0.6) ? this.rnd() * this.h : ey;
+        const techo = e.lleno || (e.y <= this.h * 0.04 && e.y2 <= this.h * 0.04);
+        let ey2 = ey;
+        if (techo && sent < 0) {
+          ey2 = alcance < this.h * 0.6
+            ? this.rnd() * this.h
+            : this.h + this.r(12, 70) * this.k;
+        } else if (e.lleno && sent > 0 && alcance < this.h * 0.6) {
+          ey2 = this.rnd() * this.h;
+        }
+        const maxLife = (e.kind === "nieve" || e.kind === "polvo" || e.kind === "corazones")
+          ? this.vidaHastaBorde(ey2, vy, cfg.maxLife)
+          : cfg.maxLife;
         this.parts.push({
           x: ex + this.r(-4, 4) * this.k, y: ey2 + this.r(-2, 2) * this.k,
           vx: (this.r(cfg.vxMin, cfg.vxMax) * (inclina || 1)) * (p.speed ?? 1) * this.k + viento,
@@ -1006,7 +1082,8 @@ export class VfxScene {
           rotSpeed: cfg.rotate ? this.r(-0.05, 0.05) : 0,
           sway: cfg.sway ? this.r(0.3, 1.1) : 0,
           swayPhase: this.r(0, Math.PI * 2),
-          life: 0, maxLife: cfg.maxLife,
+          life: 0,
+          maxLife,
           hue: tono, sat: e.kind === "confeti" ? 85 : e.color.s,
           // Las estrellas nacen con brillo distinto cada una: así titilan en
           // vez de encenderse todas igual.
@@ -1081,27 +1158,35 @@ export class VfxScene {
     for (const e of this.chispazos) {
       e.t += PASO;
       if (e.t < e.cada) continue;
-      e.cada = (1 / Math.max(0.2, e.par.stormrate ?? 2)) * this.r(0.5, 1.5);
+      e.cada = Math.max(0.05, e.par.stormrate ?? 0.35) * this.r(0.5, 1.5);
       e.t = 0;
-      // Chispazo corto y desordenado alrededor del sitio: no es un rayo de
-      // tormenta, es un cable pelado.
-      // Eran de 40 px: sobre una imagen no se leían como nada. Un chispazo
-      // tiene que verse en el fotograma en que salta, que es el único que hay.
-      const largo = 85 * (e.par.size ?? 1) * this.k;
-      const a = this.r(0, Math.PI * 2);
-      // Un punto cualquiera del tramo: con una línea, los chispazos recorren el
-      // cable entero en vez de amontonarse en la punta.
-      const q = this.rnd();
-      const bx = e.x + (e.x2 - e.x) * q, by = e.y + (e.y2 - e.y) * q;
-      const ox = bx + this.r(-largo, largo) * 0.3;
-      const oy = by + this.r(-largo, largo) * 0.3;
-      this.rayo(ox, oy, ox + Math.cos(a) * largo, oy + Math.sin(a) * largo,
-        { thickness: 1.1 * (e.par.size ?? 1), branch: e.par.branch ?? 1, flicker: 2, flash: e.par.flash ?? 0 });
-      // Un fogonazo pequeño donde nace el chispazo. Una línea sola, por muy
-      // brillante que sea, casi no ocupa pixeles: el ojo se la pierde. Esto es
-      // lo que hace que se note que ha SALTADO algo.
-      this.flashes.push({ x: ox, y: oy, r: 3 * this.k,
-        maxR: 30 * (e.par.size ?? 1) * this.k, alpha: 0.75, hue: 200 });
+      // Chispazos radiales desde el centro. El hueco aleja el origen; el largo no cambia.
+      const cx = (e.x + e.x2) / 2, cy = (e.y + e.y2) / 2;
+      const tam = e.par.size ?? 1;
+      const hueco = Math.max(0, Math.min(1, e.par.hueco ?? 0));
+      const largo = 70 * tam * this.k;
+      const maxInner = Math.min(this.w, this.h) * 0.42 * hueco;
+      const cuantas = Math.round(this.r(2, 5));
+      for (let i = 0; i < cuantas; i++) {
+        const a = this.r(0, Math.PI * 2);
+        const inner = maxInner * this.r(0.85, 1);
+        const len = largo * this.r(0.75, 1.15);
+        const ox = cx + Math.cos(a) * inner;
+        const oy = cy + Math.sin(a) * inner;
+        const tx = ox + Math.cos(a) * len;
+        const ty = oy + Math.sin(a) * len;
+        this.rayo(ox, oy, tx, ty, {
+          thickness: 1.1 * tam,
+          branch: e.par.branch ?? 1,
+          flicker: 2,
+          flash: i === 0 && (e.par.flash ?? 0) > 0.5 ? 1 : 0,
+        });
+      }
+      // Fogonazo en el centro: marca el origen del salto.
+      this.flashes.push({
+        x: cx, y: cy, r: 2.5 * this.k,
+        maxR: 24 * tam * this.k, alpha: 0.6, hue: 200,
+      });
     }
 
     for (const b of this.bursts) {
@@ -1118,17 +1203,17 @@ export class VfxScene {
     for (const s of this.storms) {
       s.t += PASO;
       if (s.t < s.cada) continue;
-      // El siguiente no cae justo al mismo ritmo: se reparte ±40 % para que dos
-      // tormentas no se acompasen nunca.
-      const base = 1 / Math.max(0.05, s.par.stormrate ?? 0.5);
-      s.cada = base * this.r(0.6, 1.4);
+      const base = Math.max(0.05, s.par.stormrate ?? 1.2);
+      s.cada = this.intervaloTormenta(base);
       s.t = 0;
       if (s.arriba) {
-        // Tormenta de verdad: cae del cielo, por donde le da la gana, hasta un
-        // punto cualquiera de la parte de abajo.
+        // Origen y destino independientes para que no caigan todos iguales.
         const ox = this.r(0.05, 0.95) * this.w;
-        const tx = clamp(ox + this.r(-120, 120) * this.k, 10, this.w - 10);
-        this.rayo(ox, -10 * this.k, tx, this.r(0.35, 0.95) * this.h, s.par);
+        const txLibre = this.r(0.04, 0.96) * this.w;
+        const txCercano = ox + this.r(-180, 180) * this.k;
+        const tx = clamp(this.rnd() < 0.55 ? txLibre : txCercano, 10, this.w - 10);
+        const ty = this.r(0.28, 1.02) * this.h;
+        this.rayo(ox, -10 * this.k, tx, ty, s.par);
       } else {
         // La línea marca de dónde a dónde; se le mete algo de azar para que no
         // salgan dos rayos calcados.
@@ -1233,7 +1318,7 @@ export class VfxScene {
       for (const s of this.shocks) this.dibShock(ctx, s);
       for (const b of this.speeds) this.dibSpeed(ctx, b);
       for (const g of this.glitches) this.dibGlitch(ctx, g);
-      for (const p of this.parts) if (p.type === "smoke") this.dibGlow(ctx, p);
+      for (const p of this.parts) if (p.type === "smoke") this.dibSmoke(ctx, p);
       for (const p of this.parts) {
         if (p.type === "smoke") continue;
         if (p.type === "spark") this.dibSpark(ctx, p);
@@ -1292,6 +1377,43 @@ export class VfxScene {
     const antes = ctx.globalAlpha;
     ctx.globalAlpha = antes * a;
     ctx.drawImage(sp, p.x - r, p.y - r, r * 2, r * 2);
+    ctx.globalAlpha = antes;
+  }
+
+  // Nube suave circular para humo (se dibuja una vez).
+  private puffSprite() {
+    if (this.smokeSprite) return this.smokeSprite;
+    const S = 128, R = S / 2;
+    const c = document.createElement("canvas");
+    c.width = S; c.height = S;
+    const x = c.getContext("2d")!;
+    const g = x.createRadialGradient(R, R, 0, R, R, R);
+    g.addColorStop(0, "rgba(210,210,210,0.35)");
+    g.addColorStop(0.35, "rgba(190,190,190,0.18)");
+    g.addColorStop(0.7, "rgba(170,170,170,0.06)");
+    g.addColorStop(1, "rgba(160,160,160,0)");
+    x.fillStyle = g;
+    x.beginPath(); x.arc(R, R, R, 0, Math.PI * 2); x.fill();
+    this.smokeSprite = c;
+    return c;
+  }
+
+  // Humo: sprite circular suave, sin estirar el degradado (evita rayas).
+  private dibSmoke(ctx: CanvasRenderingContext2D, p: Part) {
+    const t = Math.min(1, p.life / p.maxLife);
+    const aparece = t < 0.18 ? t / 0.18 : 1;
+    const seVa = t > 0.45 ? Math.max(0, 1 - (t - 0.45) / 0.55) : 1;
+    const a = this.alfa(p, aparece * seVa * 0.22);
+    if (a <= 0.003) return;
+    ctx.globalCompositeOperation = "source-over";
+    const grow = 1 + t * 1.8;
+    const r = Math.max(p.size * grow, 8 * this.k);
+    const rx = r * (1 + t * 0.2);
+    const ry = r;
+    const sp = this.puffSprite();
+    const antes = ctx.globalAlpha;
+    ctx.globalAlpha = antes * a;
+    ctx.drawImage(sp, p.x - rx, p.y - ry, rx * 2, ry * 2);
     ctx.globalAlpha = antes;
   }
   private dibSpark(ctx: CanvasRenderingContext2D, p: Part) {
@@ -1510,8 +1632,8 @@ export class VfxScene {
     ctx.globalCompositeOperation = "source-over";
     ctx.strokeStyle = `hsla(${b.hue},20%,95%,${a})`; ctx.lineWidth = b.thickness; ctx.lineCap = "round";
     for (const l of b.lines) {
-      const x2 = b.x + Math.cos(l.angle) * l.len, y2 = b.y + Math.sin(l.angle) * l.len;
-      const x1 = b.x + Math.cos(l.angle) * (l.len * 0.15), y1 = b.y + Math.sin(l.angle) * (l.len * 0.15);
+      const x1 = b.x + Math.cos(l.angle) * l.inner, y1 = b.y + Math.sin(l.angle) * l.inner;
+      const x2 = b.x + Math.cos(l.angle) * l.outer, y2 = b.y + Math.sin(l.angle) * l.outer;
       ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
     }
   }
@@ -1651,43 +1773,74 @@ export class VfxScene {
     const base = f.color;
     // Más grande y más ancha que alta: la niebla se tumba, no se apelotona.
     const r = Math.max(150 * (p.size ?? 1) * this.k, 1);
-    // Las manchas se reparten A LO LARGO DEL TRAMO del efecto, no todas en su
-    // punto de origen: si no, una niebla trazada de lado a lado salía como un
-    // borrón en un extremo. Cuanto más largo el tramo, más manchas.
+    ctx.globalCompositeOperation = "source-over";
+
+    // Forma "arriba": rejilla por todo el cuadro (no una franja diagonal).
+    if (f.lleno) {
+      const cols = 5, rows = 4;
+      const n = cols * rows;
+      for (let i = 0; i < n; i++) {
+        const col = i % cols, row = Math.floor(i / cols);
+        const off = f.phase + i * 1.7;
+        // Centro de cada celda + un vaivén suave, sin salirse del cuadro.
+        let x = ((col + 0.5) / cols) * this.w
+          + Math.sin(off) * 36 * this.k
+          + Math.sin(off * 0.37) * 18 * this.k * (p.speed ?? 1);
+        let y = ((row + 0.5) / rows) * this.h
+          + Math.cos(off * 0.7) * 28 * this.k
+          + Math.sin(off * 1.3) * 16 * this.k;
+        x = Math.max(r * 0.2, Math.min(this.w - r * 0.2, x));
+        y = Math.max(r * 0.25, Math.min(this.h - r * 0.2, y));
+        this.manchaNiebla(ctx, base, x, y, r, off, p.density ?? 1);
+      }
+      return;
+    }
+
+    // Línea / punto / libre: las manchas van A LO LARGO DEL TRAMO.
     const largo = Math.hypot(f.x2 - f.x, f.y2 - f.y);
     const n = Math.max(6, Math.min(22, Math.round(6 + largo / (r * 0.5))));
-    ctx.globalCompositeOperation = "source-over";
     for (let i = 0; i < n; i++) {
       const off = f.phase + i * 2.1;
       const t = n === 1 ? 0.5 : i / (n - 1);
       const bx = f.x + (f.x2 - f.x) * t;
       const by = f.y + (f.y2 - f.y) * t;
       const x = bx + Math.sin(off) * 60 * this.k + Math.sin(off * 0.31) * 24 * this.k * (p.speed ?? 1);
-      // La niebla tiene grosor: se sube y se baja un poco alrededor del tramo.
-      let y = by + Math.cos(off * 0.7) * 20 * this.k + Math.sin(off * 1.7) * r * 0.35;
-      // Un tramo puesto por encima del borde (la forma "arriba" nace en
-      // y = -0.02) dejaba la niebla fuera de vista. En ese caso "desde arriba"
-      // quiere decir que llena la escena, así que se reparte por todo el alto;
-      // en cualquier otro sitio solo se mete dentro del cuadro.
-      if (f.y <= 0 && f.y2 <= 0) y = this.h * (0.12 + 0.76 * ((i + 0.5) / n + Math.sin(off * 0.53) * 0.18) % 1);
-      y = Math.max(r * 0.35, Math.min(this.h - r * 0.15, y));
-      // Cada mancha con su tamaño y su transparencia: todas iguales se leían
-      // como dos borrones, no como niebla.
-      const esc = 0.6 + 0.7 * ((Math.sin(off * 1.7) + 1) / 2);
-      const rx = r * esc * 1.6, ry = r * esc * 0.62;
-      // El degradado se crea DESPUÉS de mover y estirar el lienzo: hecho antes,
-      // su centro se queda en otro sitio y la mancha sale casi transparente.
-      const R = Math.max(rx, ry);
-      const op = 0.3 * (p.density ?? 1) * (0.6 + 0.4 * ((Math.sin(off * 0.9) + 1) / 2));
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.scale(rx / R, ry / R);
-      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
-      g.addColorStop(0, `hsla(${base.h},${base.s}%,${base.l}%,${op})`);
-      g.addColorStop(0.5, `hsla(${base.h},${base.s}%,${base.l}%,${op * 0.55})`);
-      g.addColorStop(1, "transparent");
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
+      const y = Math.max(
+        r * 0.35,
+        Math.min(
+          this.h - r * 0.15,
+          by + Math.cos(off * 0.7) * 20 * this.k + Math.sin(off * 1.7) * r * 0.35,
+        ),
+      );
+      this.manchaNiebla(ctx, base, x, y, r, off, p.density ?? 1);
     }
+  }
+
+  private manchaNiebla(
+    ctx: CanvasRenderingContext2D,
+    base: Hsl,
+    x: number,
+    y: number,
+    r: number,
+    off: number,
+    density: number,
+  ) {
+    // Cada mancha con su tamaño y su transparencia: todas iguales se leían
+    // como dos borrones, no como niebla.
+    const esc = 0.6 + 0.7 * ((Math.sin(off * 1.7) + 1) / 2);
+    const rx = r * esc * 1.6, ry = r * esc * 0.62;
+    // El degradado se crea DESPUÉS de mover y estirar el lienzo: hecho antes,
+    // su centro se queda en otro sitio y la mancha sale casi transparente.
+    const R = Math.max(rx, ry);
+    const op = 0.3 * density * (0.6 + 0.4 * ((Math.sin(off * 0.9) + 1) / 2));
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(rx / R, ry / R);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+    g.addColorStop(0, `hsla(${base.h},${base.s}%,${base.l}%,${op})`);
+    g.addColorStop(0.5, `hsla(${base.h},${base.s}%,${base.l}%,${op * 0.55})`);
+    g.addColorStop(1, "transparent");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
   }
 }

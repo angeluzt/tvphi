@@ -262,7 +262,7 @@ export function ejemploDeEscena() {
         vfx: [
           { id: "v3", kind: "rayo", shape: "arriba", espacio: "encuadre",
             nodes: [{ x: 0, y: 0, x2: 1, y2: 0 }], colorHex: "#ffffff",
-            params: { thickness: 1, branch: 1, flicker: 1, stormrate: 0.5, flash: 1 },
+            params: { thickness: 1, branch: 1, flicker: 1, stormrate: 1.2, flash: 1 },
             timing: "all", startSec: 0, endSec: 0 },
         ],
       },

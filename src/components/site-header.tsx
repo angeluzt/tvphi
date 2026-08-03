@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
-import { Clapperboard, LogOut, User, Sparkles } from "lucide-react";
+import { LogOut, User, Sparkles } from "lucide-react";
 
 interface HeaderUser {
   username: string;
@@ -21,9 +21,6 @@ export function SiteHeader({ user }: { user: HeaderUser | null }) {
         <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           {user ? (
             <>
-              {/* La app es esto: contar historias. El Studio era de otra etapa
-                  y solo repartía la atención, así que se quita de la cabecera.
-                  La página sigue en /studio para quien tenga trabajo allí. */}
               <Link href="/story" className="btn-brand" title="Historias narradas">
                 <Sparkles className="h-4 w-4" />
                 <span className="hidden sm:inline">Historias</span>
