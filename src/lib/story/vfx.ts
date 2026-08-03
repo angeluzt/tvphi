@@ -486,11 +486,76 @@ export class VfxScene {
   }
 
   // Escala visual con el zoom del encuadre (anclas de foto). Atmósfera = 1.
+  // Si el zoom cambia a mitad de toma, NO se reinicia la simulación: se
+  // reescalan las partículas ya vivas alrededor del centro del cuadro para
+  // que sigan pegadas a la imagen (si no, cada ~10 % de zoom borraba todo y
+  // el humo “brincaba”).
   setZoomScale(z: number) {
     const nz = Math.max(0.05, Math.min(20, z));
     if (Math.abs(nz - this.zoom) < 1e-6) return;
+    const ratio = nz / this.zoom;
     this.zoom = nz;
     this.k = this.baseK * this.zoom;
+    if (Math.abs(ratio - 1) > 1e-4) this.pegarAlZoom(ratio);
+  }
+
+  // Mueve lo ya soltado como si estuviera pintado en la foto: al acercar la
+  // cámara, se aleja del centro y engorda en la misma proporción.
+  private pegarAlZoom(ratio: number) {
+    const cx = this.w * 0.5, cy = this.h * 0.5;
+    const xy = (x: number, y: number) => ({
+      x: cx + (x - cx) * ratio,
+      y: cy + (y - cy) * ratio,
+    });
+    for (const p of this.parts) {
+      const n = xy(p.x, p.y);
+      p.x = n.x; p.y = n.y;
+      p.vx *= ratio; p.vy *= ratio;
+      p.size *= ratio;
+      p.gravity *= ratio;
+      if (p.crece) p.crece *= ratio;
+      if (p.ox != null && p.oy != null) {
+        const o = xy(p.ox, p.oy);
+        p.ox = o.x; p.oy = o.y;
+      }
+      if (p.recorrido != null) p.recorrido *= ratio;
+      if (p.cx != null && p.cy != null) {
+        const c = xy(p.cx, p.cy);
+        p.cx = c.x; p.cy = c.y;
+      }
+      if (p.radius != null) p.radius *= ratio;
+      if (p.trail) for (const t of p.trail) { const q = xy(t.x, t.y); t.x = q.x; t.y = q.y; }
+    }
+    for (const f of this.flashes) {
+      const n = xy(f.x, f.y); f.x = n.x; f.y = n.y;
+      f.r *= ratio; f.maxR *= ratio;
+    }
+    for (const s of this.shocks) {
+      const n = xy(s.x, s.y); s.x = n.x; s.y = n.y;
+      s.r *= ratio; s.maxR *= ratio; s.thickness *= ratio;
+    }
+    for (const b of this.speeds) {
+      const n = xy(b.x, b.y); b.x = n.x; b.y = n.y;
+      b.thickness *= ratio;
+      for (const l of b.lines) { l.inner *= ratio; l.outer *= ratio; }
+    }
+    for (const g of this.glitches) {
+      const n = xy(g.x, g.y); g.x = n.x; g.y = n.y;
+      g.w *= ratio; g.h *= ratio;
+    }
+    for (const m of this.circles) {
+      const n = xy(m.x, m.y); m.x = n.x; m.y = n.y;
+      m.size *= ratio;
+    }
+    for (const b of this.bolts) {
+      const seg = (s: Seg) => {
+        const a = xy(s.x1, s.y1), c = xy(s.x2, s.y2);
+        s.x1 = a.x; s.y1 = a.y; s.x2 = c.x; s.y2 = c.y;
+      };
+      for (const s of b.trunk) seg(s);
+      for (const br of b.branches) for (const s of br) seg(s);
+      b.thickness *= ratio;
+    }
   }
 
   private limpiar() {
@@ -546,7 +611,14 @@ export class VfxScene {
       hechos = objetivo - MAX_PASOS;
       this.t = hechos * PASO;
     }
-    if (objetivo <= hechos) return;
+    if (objetivo <= hechos) {
+      // Mismo instante (reproductor en pausa o fotograma repetido): igual hay
+      // que recolocar emisores si el usuario movió un sitio o tocó un ajuste.
+      this.tPaso = this.t;
+      this.montar(capas, this.t);
+      this.recolocar(capas);
+      return;
+    }
     // Escena recién montada: se le da un empujón para que lo continuo ya esté
     // en marcha en el primer fotograma.
     if (hechos === 0) this.precalentar(capas);
@@ -652,9 +724,11 @@ export class VfxScene {
 
   private montar(capas: VfxInput[], t: number) {
     for (const c of capas) {
-      const dentro = t >= c.start && t < c.end;
       // Cada sitio va por su cuenta: así se pueden tener tres hogueras de un
       // mismo efecto, y quitar una sin tocar las otras.
+      // <= end: en el último fotograma lt === dur; con < end se apagaban todos.
+      // En vista previa el reloj extra también pasaba del final de la toma.
+      const dentro = t >= c.start && t <= c.end;
       c.nodes.forEach((n, i) => {
         const clave = `${c.id}#${i}`;
         const yaEsta = this.vivos.has(clave);

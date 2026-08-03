@@ -371,8 +371,8 @@ export function quienesHablan(p: StoryProject): string[] {
 }
 
 export const MIN_SHOT = 2; // duración mínima de una toma sin diálogos
-export const TAIL = 0.4; // margen tras el último diálogo
-export const DEFAULT_TRANS_DUR = 0.6;
+export const TAIL = 0; // sin margen extra tras el último diálogo (fluidez)
+export const DEFAULT_TRANS_DUR = 0.35;
 
 // --------------------------------------------------------------------------
 // Formato del video
@@ -783,7 +783,7 @@ export function newScene(imageId: string, imgW: number, imgH: number): StoryScen
   return { id: nanoid(6), imageId, imgW, imgH, shots: [newShot(imgW, imgH)], vfx: [] };
 }
 
-export function newDialogue(gapSec = 0.3): Dialogue {
+export function newDialogue(gapSec = 0): Dialogue {
   return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none", speed: 1, pitch: 1, stale: false };
 }
 

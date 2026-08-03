@@ -23,6 +23,20 @@ const cuerpo = z.object({
   voz: z.string().max(40).optional(),
 });
 
+// Cómo debe sonar la narración. Por ahora fijo en español latino/neutro:
+// sin acento de España y sin pausas entre palabras que no vengan en el texto.
+// Solo aplica en gpt-4o-mini-tts (y variantes); tts-1 / tts-1-hd lo ignoran o fallan.
+const INSTRUCCIONES_VOZ =
+  "Habla en español latinoamericano neutro, fluido y natural, como un narrador de audiolibro. " +
+  "No uses acento ni léxico de España (nada de ceceo, «vale», «tío», etc.). " +
+  "Lee en frases continuas: no pauses entre palabras salvo comas, puntos u otra puntuación del texto. " +
+  "Tono calmado de narración; no suenes robótico ni como si dictaras una lista.";
+
+// tts-1 y tts-1-hd no aceptan `instructions`.
+function aceptaInstrucciones(modelo: string) {
+  return !/^tts-1(-hd)?$/i.test(modelo.trim());
+}
+
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
@@ -61,7 +75,13 @@ export async function POST(req: Request) {
       ? await fetch(OPENAI("/v1/audio/speech"), {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-          body: JSON.stringify({ model: modelo, input: parsed.data.texto, voice: voz, response_format: "wav" }),
+          body: JSON.stringify({
+            model: modelo,
+            input: parsed.data.texto,
+            voice: voz,
+            response_format: "wav",
+            ...(aceptaInstrucciones(modelo) ? { instructions: INSTRUCCIONES_VOZ } : {}),
+          }),
         })
       : await fetch(OPENAI("/v1/chat/completions"), {
           method: "POST",
@@ -75,7 +95,8 @@ export async function POST(req: Request) {
               // El aviso va en mayúsculas y repetido a propósito: aquí no hay
               // garantía, solo insistencia.
               { role: "system", content:
-                "Eres un LECTOR, no un asistente. Tu única salida es la lectura en voz alta del texto del usuario, palabra por palabra, con tono de narrador.\n" +
+                "Eres un LECTOR, no un asistente. Tu única salida es la lectura en voz alta del texto del usuario, con tono de narrador.\n" +
+                INSTRUCCIONES_VOZ + "\n" +
                 "PROHIBIDO: saludar, despedirse, comentar el texto, preguntar nada, decir si te gusta, ofrecer ayuda, añadir introducción o cierre.\n" +
                 "Si el texto es una sola palabra, lees esa palabra y callas. No existe ninguna razón para decir nada que no esté escrito." },
               { role: "user", content: parsed.data.texto },

@@ -130,10 +130,13 @@ export function VfxCanvas({
   layer,
   borrando,
   onChange,
+  onSettled,
 }: {
   layer: VfxLayer;
   borrando: boolean;
   onChange: (nodes: VfxNode[]) => void;
+  /** Al soltar un arrastre / terminar un trazo: reiniciar partículas. */
+  onSettled?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [trazo, setTrazo] = useState<VfxNode | null>(null);
@@ -165,7 +168,10 @@ export function VfxCanvas({
     const { x, y } = pos(e);
     if (borrando) {
       const i = indiceCerca(x, y);
-      if (i >= 0) onChange(layer.nodes.filter((_, k) => k !== i));
+      if (i >= 0) {
+        onChange(layer.nodes.filter((_, k) => k !== i));
+        onSettled?.();
+      }
       return;
     }
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -181,6 +187,7 @@ export function VfxCanvas({
     if (forma === "punto") {
       onChange([...base, { x, y, x2: x, y2: y }]);
       modo.current = "nada";
+      onSettled?.();
       return;
     }
     // Línea y mano alzada: un solo trazo A→B (no trocitos = muchos emisores).
@@ -203,7 +210,12 @@ export function VfxCanvas({
 
   function up(e: React.PointerEvent) {
     try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
-    if (modo.current === "mover") { modo.current = "nada"; mover.current = null; return; }
+    if (modo.current === "mover") {
+      modo.current = "nada";
+      mover.current = null;
+      onSettled?.();
+      return;
+    }
     if (modo.current !== "crear") return;
     modo.current = "nada";
     if (!trazo) return;
@@ -211,6 +223,7 @@ export function VfxCanvas({
     const corta = Math.hypot(trazo.x2 - trazo.x, trazo.y2 - trazo.y) < 0.02;
     onChange([...base, corta ? { ...trazo, x2: trazo.x, y2: trazo.y } : trazo]);
     setTrazo(null);
+    onSettled?.();
   }
 
   // Guías solo mientras este canvas está montado (= "Colocando" activo).

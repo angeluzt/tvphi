@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
-  Settings2, AlertTriangle, Sparkles, Check, RefreshCw,
+  Settings2, AlertTriangle, Sparkles, Check, RefreshCw, Image as ImageIcon,
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
 import { VOCES_INFO } from "@/lib/story/modelos";
@@ -1538,6 +1538,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <VfxCanvas
                 layer={curVfx} borrando={borrandoVfx}
                 onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
+                onSettled={() => engineRef.current?.resetVfx()}
               />
             )}
             {!project.scenes.length && (
@@ -1639,14 +1640,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
           </div>
         )}
 
-        {/* Quién habla con qué voz. Se elige una vez y vale para todo el
-            capítulo: cambiar la voz del narrador frase a frase sería absurdo. */}
-        {vozOpenAi && quienesHablan(project).length > 1 && (
+        {/* Quién habla con qué voz OpenAI. Siempre visible si hay TTS de OpenAI. */}
+        {vozOpenAi && (
           <div className="card p-3">
             <span className="label">Voces del capítulo</span>
             <p className="mt-1 text-[11px] text-muted">
-              Cada quien puede sonar distinto. Al cambiar una voz, las frases ya grabadas se
-              quedan como están: vuelve a generarlas para oírlas con la nueva.
+              Cada quien usa una voz distinta de OpenAI al generar el audio. Si cambias una,
+              las frases ya grabadas se marcan para regenerarlas.
             </p>
             <div className="mt-2 space-y-2">
               {quienesHablan(project).map((quien) => (
@@ -1656,12 +1656,26 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                     className="input mt-0.5 w-full text-sm"
                     aria-label={`Voz de ${quien || "narrador"}`}
                     value={project.voices?.[quien] ?? ""}
-                    onChange={(e) => mut((p) => ({
-                      ...p,
-                      voices: { ...(p.voices ?? {}), [quien]: e.target.value },
-                    }))}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      mut((p) => ({
+                        ...p,
+                        voices: { ...(p.voices ?? {}), [quien]: next },
+                        scenes: p.scenes.map((sc) => ({
+                          ...sc,
+                          shots: sc.shots.map((sh) => ({
+                            ...sh,
+                            dialogues: sh.dialogues.map((d) =>
+                              (d.quien ?? "") === quien && d.audioId
+                                ? { ...d, stale: true }
+                                : d,
+                            ),
+                          })),
+                        })),
+                      }));
+                    }}
                   >
-                    <option value="">La de siempre</option>
+                    <option value="">La de siempre (ajuste global)</option>
                     {VOCES_INFO.map((v) => (
                       <option key={v.id} value={v.id}>{v.id} · {v.que}</option>
                     ))}
@@ -1858,6 +1872,106 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
                 {openScene === sc.id && (
                   <div className="mt-3 space-y-3">
+                    {/* Imagen: se puede cambiar siempre (IA o archivo), no solo si falta. */}
+                    <div className="rounded-lg border border-border p-2">
+                      <span className="text-[11px] font-medium text-muted">Imagen de la escena</span>
+                      <textarea
+                        className="input mt-1.5 h-20 w-full text-sm"
+                        value={sc.prompt ?? ""}
+                        placeholder="Cómo es esta imagen: qué se ve, luz, ambiente. Sin letras en la foto."
+                        aria-label={`Descripción de la escena ${si + 1}`}
+                        onChange={(e) => mut((p) => ({
+                          ...p,
+                          scenes: p.scenes.map((s) =>
+                            s.id === sc.id ? { ...s, prompt: e.target.value } : s,
+                          ),
+                        }))}
+                      />
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {iaImagen && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn-brand text-xs"
+                              disabled={!!reponiendo || (sc.prompt ?? "").trim().length < 4}
+                              onClick={() => setDibujo({
+                                falta: {
+                                  id: sc.imageId,
+                                  tipo: "escena",
+                                  donde: [`Escena ${si + 1}`],
+                                  sceneIds: [sc.id],
+                                },
+                                texto: sc.prompt ?? "",
+                              })}
+                            >
+                              <Sparkles className="h-3.5 w-3.5" />
+                              {sc.imageId ? "Redibujar con IA" : "Dibujar con IA"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-xs disabled:opacity-40"
+                              disabled={rehaciendo === sc.imageId || (sc.prompt ?? "").trim().length < 4}
+                              onClick={async () => {
+                                const texto = sc.prompt ?? "";
+                                setRehaciendo(sc.imageId);
+                                try {
+                                  const r = await fetch("/api/story/ia/rehacer", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      que: "imagen",
+                                      actual: texto,
+                                      contexto: { titulo: name },
+                                    }),
+                                  });
+                                  const j = await r.json();
+                                  if (!r.ok) throw new Error(j.error || "Error");
+                                  mut((p) => ({
+                                    ...p,
+                                    scenes: p.scenes.map((s) =>
+                                      s.id === sc.id ? { ...s, prompt: j.texto } : s,
+                                    ),
+                                  }));
+                                  setStatus(j.igual ? "Ha devuelto lo mismo." : "Otra descripción ✓ · revísala y redibuja");
+                                } catch (e: any) {
+                                  setStatus("No se pudo rehacer: " + (e?.message ?? ""));
+                                } finally {
+                                  setRehaciendo(null);
+                                }
+                              }}
+                            >
+                              {rehaciendo === sc.imageId
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <RefreshCw className="h-3.5 w-3.5 text-accent" />}
+                              Otra descripción
+                            </button>
+                          </>
+                        )}
+                        <label className="btn-ghost cursor-pointer text-xs">
+                          <ImageIcon className="h-3.5 w-3.5 text-accent" /> Elegir archivo
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              e.target.value = "";
+                              if (!f) return;
+                              await reponer(
+                                {
+                                  id: sc.imageId,
+                                  tipo: "escena",
+                                  donde: [`Escena ${si + 1}`],
+                                  sceneIds: [sc.id],
+                                },
+                                f,
+                              );
+                            }}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
                     {/* Efectos de la FOTO: una vez, encima de las tomas. */}
                     <div className="rounded-lg border border-accent/30 bg-accent/5 p-2">
                       <VfxEditor
@@ -1871,11 +1985,9 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                           setSelVfx(id);
                           setBorrandoVfx(false);
                           // Hace falta una toma activa para colocar sobre la previsualización.
+                          // No se busca el inicio ni se pausa: al ajustar se ve en vivo.
                           const toma = sc.shots.find((s) => s.id === selShot) ?? sc.shots[0];
-                          if (toma) {
-                            setSelShot(toma.id);
-                            if (id) engineRef.current?.seekToShot(toma.id);
-                          }
+                          if (toma) setSelShot(toma.id);
                         }}
                       />
                     </div>
@@ -1978,13 +2090,14 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                           setSelShot(sh.id);
                           setSelVfx(id);
                           setBorrandoVfx(false);
-                          if (id) engineRef.current?.seekToShot(sh.id);
+                          // Sin seek: pausaba y volvía al inicio de la toma.
                         }}
                         onSelectOverlay={(id) => {
                           setSelShot(sh.id);
                           setSelOverlay(id);
                           if (id) irAlSticker(sh, id);
                         }}
+                        vocesIa={vozOpenAi}
                       />
                     ))}
                     <button onClick={() => addShot(sc)} className="btn-ghost w-full text-sm">
@@ -2395,6 +2508,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
               <VfxCanvas
                 layer={curVfx} borrando={borrandoVfx}
                 onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
+                onSettled={() => engineRef.current?.resetVfx()}
               />
             )}
           </div>

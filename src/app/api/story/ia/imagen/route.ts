@@ -39,17 +39,25 @@ function promptConVfx(scene: string, summary = "") {
   return [
     scene.trim(),
     "Edit only the transparent background region. Preserve the visible input effects as fixed spatial anchors.",
-    "Create one continuous environment across the entire frame. Attach generated supports and architecture exactly to the existing effects:",
-    "torch holders or braziers beneath fire, architectural frames and openings around portals, vents or chimneys beneath smoke, lamp fixtures at light anchors.",
-    "The returned image is the CLEAN BACKGROUND PLATE. Do not bake temporary motion: no duplicated floating particles, sparks, embers, snowflakes, rain streaks, lightning bolts, moving smoke puffs or motion trails.",
-    "TVPHI will render the animated effects again on top. Do not create a poster, diagram, UI, labels, captions, borders, duplicated effects or floating unrelated objects. No written text.",
-    summary ? `VFX positions on the full image:\n${summary}` : "",
+    "DEPTH / OCCLUSION (important):",
+    "- People MAY stand in front of or beside torches, fire, smoke, lamps, neon and similar emitters. That depth is natural and desired.",
+    "- Do NOT put a face, head or body INSIDE a portal opening or magic circle. Portal interiors stay empty voids or architectural frames only.",
+    "- Never the inverse of natural depth: do not place a portal/effect so it covers a character's face as if the person were stuck behind/under the effect.",
+    "Create one continuous environment. Attach supports around anchors: braziers under fire, frames around portals, vents under smoke, fixtures at lamps.",
+    "The returned image is the CLEAN BACKGROUND PLATE. Do not bake temporary motion (no floating particles, sparks, rain streaks, lightning bolts, motion trails).",
+    "TVPHI will render animated effects on top. No poster, UI, labels, captions, borders or written text.",
+    summary ? `VFX anchors on the full image:\n${summary}` : "",
   ].filter(Boolean).join("\n\n");
 }
 
 function promptSoloTexto(scene: string, summary = "") {
   if (!summary) return scene;
-  return `${scene}\n\nBuild believable physical sources for these future animated effects at the stated full-image coordinates. Do not draw floating particles or temporary motion; create only fixtures, openings, surfaces and static lighting:\n${summary}`;
+  return [
+    scene.trim(),
+    "Build believable physical sources for these future animated effects at the stated coordinates. Do not draw floating particles or temporary motion.",
+    "People may stand in front of torches/fire/lamps. Do not put faces inside portal openings.",
+    summary,
+  ].join("\n\n");
 }
 
 function pngBytes(value: string): Buffer | null {

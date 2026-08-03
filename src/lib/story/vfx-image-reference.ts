@@ -4,6 +4,10 @@
 // pinta los efectos del JSON sobre negro, quita el negro (alfa) y arma la
 // máscara como en el HTML de prueba. OpenAI rellena el fondo; TVPHI vuelve a
 // dibujar las partículas encima, así que NO se recompone el VFX extraído.
+//
+// Además: zonas geométricas DURAS solo para portal / círculo mágico (el agujero
+// negro se confundía con fondo editable). Fuego, antorcha, humo, lámpara… no se
+// bloquean: la persona puede estar delante y verse natural.
 
 import {
   flatten,
@@ -16,7 +20,7 @@ import {
   type VfxLayer,
   type VfxNode,
 } from "./model";
-import { VfxScene, vfxSpec, type VfxInput } from "./vfx";
+import { VfxScene, vfxSpec, type VfxInput, type VfxKind } from "./vfx";
 
 export type ReferenciaVfx = {
   /** PNG RGBA: efectos visibles, negro → transparente. */
@@ -37,6 +41,21 @@ const BLACK = 10;
 const PROTECT = 28;
 const FEATHER = 7;
 const MUESTRAS = [0.16, 0.48, 1.05, 1.9, 2.8];
+
+// Atmósfera de cuadro entero: no se reserva (taparían a los personajes).
+const SIN_ZONA = new Set<VfxKind>([
+  "lluvia", "nieve", "ceniza", "hojas", "confeti", "estrellas", "fugaces",
+  "rayo", "glitch", "speedlines",
+]);
+
+// Solo estos bloquean el píxel entero: un portal/círculo mágico taparía la cara
+// si la IA pinta gente dentro. Fuego, antorcha, humo, lámpara… NO: la persona
+// puede estar delante y verse natural (el efecto queda detrás o al lado).
+const ZONA_DURA = new Set<VfxKind>(["portal", "magiccircle"]);
+
+function esDuro(kind: VfxKind) {
+  return ZONA_DURA.has(kind);
+}
 
 function smoothstep(a: number, b: number, x: number) {
   if (a === b) return x < a ? 0 : 1;
@@ -71,7 +90,7 @@ function inputsDeEscena(project: StoryProject, scene: StoryScene) {
       seen.add(layer.id);
       const nodes = (layer.nodes ?? []).map((n) => toImage(n, layer, flat));
       if (!nodes.length) continue;
-      const params: Record<string, number> = { ...layer.params, derivaX: 0, derivaY: 0 };
+      const params: Record<string, number> = { ...layer.params, derivaX: 0, derivaY: 0, derivaOn: 0 };
       if (layer.kind === "rayo" || layer.kind === "electricidad") {
         params.stormrate = Math.max(params.stormrate ?? 1.2, 1.5);
       }
@@ -90,16 +109,23 @@ function inputsDeEscena(project: StoryProject, scene: StoryScene) {
       });
       const label = vfxSpec(layer.kind).label;
       if (layer.shape === "arriba") {
-        summary.push(`${label}: atmósfera desde el borde superior.`);
+        summary.push(`${label}: atmósfera desde el borde superior (personas OK).`);
       } else {
         for (const n of nodes.slice(0, 12)) {
           const a = `${Math.round(n.x * 100)}%, ${Math.round(n.y * 100)}%`;
           const linea = Math.hypot(n.x2 - n.x, n.y2 - n.y) > 0.01;
-          summary.push(
-            linea
-              ? `${label}: de (${a}) a (${Math.round(n.x2 * 100)}%, ${Math.round(n.y2 * 100)}%).`
-              : `${label}: ancla en (${a}).`,
-          );
+          const donde = linea
+            ? `de (${a}) a (${Math.round(n.x2 * 100)}%, ${Math.round(n.y2 * 100)}%)`
+            : `ancla en (${a})`;
+          if (esDuro(layer.kind)) {
+            summary.push(
+              `${label}: ${donde} — EMPTY FOOTPRINT: no faces/bodies INSIDE; people may stand beside or in front, never through the opening.`,
+            );
+          } else {
+            summary.push(
+              `${label}: ${donde} — people MAY stand in front/beside (natural depth OK); do not bury a face inside the emitter core.`,
+            );
+          }
         }
       }
     }
@@ -119,8 +145,81 @@ function canvasToBase64(canvas: HTMLCanvasElement): Promise<string> {
   });
 }
 
-/** Negro → transparente + máscara (editable = alfa 0, VFX = alfa 255). */
-function prepararEnvio(source: ImageData, w: number, h: number) {
+/** Radio en px de la silueta dura (portal / círculo mágico). */
+function radioBase(kind: VfxKind, p: Record<string, number>, minSide: number) {
+  const size = Math.max(0.35, p.size ?? 1);
+  const k = minSide / 720;
+  if (kind === "portal") return Math.max(48, 42 * size) * k * 1.15;
+  return Math.max(30, 38 * size) * k * 1.15;
+}
+
+/**
+ * Rellena huellas DURAS (portal, círculo mágico).
+ * Fuego/antorcha/humo no: la persona puede pintarse delante.
+ */
+function dibujarZonasOcupadas(
+  ctx: CanvasRenderingContext2D,
+  inputs: VfxInput[],
+  w: number,
+  h: number,
+  modo: "mascara" | "ocupacion",
+) {
+  const minSide = Math.min(w, h);
+  ctx.save();
+  for (const inp of inputs) {
+    if (inp.shape === "arriba" || SIN_ZONA.has(inp.kind) || !esDuro(inp.kind)) continue;
+    const p = inp.params ?? {};
+    const R = radioBase(inp.kind, p, minSide);
+
+    for (const n of inp.nodes) {
+      const x = n.x * w;
+      const y = n.y * h;
+
+      ctx.save();
+      if (inp.kind === "portal") {
+        const aw = Math.max(0.25, p.ancho ?? 1);
+        const ah = Math.max(0.25, p.alto ?? 1.15);
+        const tilt = (p.giro ?? 0) * (Math.PI / 2);
+        const rx = R * aw;
+        const ry = R * ah;
+        const rect = (p.forma ?? 0) > 0.5;
+        ctx.translate(x, y);
+        ctx.rotate(tilt);
+        ctx.beginPath();
+        if (rect) {
+          const rr = Math.min(rx, ry) * 0.14;
+          if (typeof ctx.roundRect === "function") ctx.roundRect(-rx, -ry, rx * 2, ry * 2, rr);
+          else ctx.rect(-rx, -ry, rx * 2, ry * 2);
+        } else {
+          ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+        }
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, Math.PI * 2);
+      }
+      if (modo === "mascara") {
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+      } else {
+        ctx.fillStyle = "rgba(18, 48, 72, 0.95)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(80, 200, 255, 0.85)";
+        ctx.lineWidth = Math.max(3, minSide * 0.006);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+  ctx.restore();
+}
+
+/** Negro → transparente + máscara (editable = alfa 0, VFX/zona = alfa 255). */
+function prepararEnvio(
+  source: ImageData,
+  zonas: ImageData,
+  w: number,
+  h: number,
+) {
   const tonal = Math.max(10, FEATHER * 2);
   const input = new ImageData(w, h);
   const mask = new ImageData(w, h);
@@ -133,11 +232,14 @@ function prepararEnvio(source: ImageData, w: number, h: number) {
     const maximum = Math.max(r, g, b) * sa;
     const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) * sa;
     const brightness = Math.max(maximum, luminance);
+    // Canal rojo de la capa de zonas (blanco = reservado).
+    const zona = zonas.data[i] / 255;
 
-    const visibleAlpha = Math.round(255 * smoothstep(BLACK, BLACK + tonal, brightness));
-    const protectedAlpha = Math.round(
-      255 * smoothstep(Math.max(0, PROTECT - tonal), PROTECT, brightness),
-    );
+    const visibleFromFx = smoothstep(BLACK, BLACK + tonal, brightness);
+    const visibleAlpha = Math.round(255 * Math.max(visibleFromFx, zona > 0.15 ? 1 : 0));
+    const protectedFromFx = smoothstep(Math.max(0, PROTECT - tonal), PROTECT, brightness);
+    // Zona geométrica: protección dura (portal entero, no solo el borde brillante).
+    const protectedAlpha = Math.round(255 * Math.max(protectedFromFx, zona));
 
     input.data[i] = r;
     input.data[i + 1] = g;
@@ -209,8 +311,20 @@ export async function crearReferenciaVfx(
     fx.draw(ctx, i === all.length - 1 ? 1 : 0.58);
   });
 
+  // Huellas sólidas: el agujero del portal deja de ser "negro vacío".
+  dibujarZonasOcupadas(ctx, inputs, size.w, size.h, "ocupacion");
+
   const source = ctx.getImageData(0, 0, size.w, size.h);
-  const { inputCanvas, maskCanvas } = prepararEnvio(source, size.w, size.h);
+
+  const zonaCanvas = document.createElement("canvas");
+  zonaCanvas.width = size.w;
+  zonaCanvas.height = size.h;
+  const zctx = zonaCanvas.getContext("2d", { willReadFrequently: true })!;
+  zctx.clearRect(0, 0, size.w, size.h);
+  dibujarZonasOcupadas(zctx, inputs, size.w, size.h, "mascara");
+  const zonas = zctx.getImageData(0, 0, size.w, size.h);
+
+  const { inputCanvas, maskCanvas } = prepararEnvio(source, zonas, size.w, size.h);
   const [imagen, mascara] = await Promise.all([
     canvasToBase64(inputCanvas),
     canvasToBase64(maskCanvas),

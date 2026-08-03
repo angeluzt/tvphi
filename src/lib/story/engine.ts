@@ -81,6 +81,11 @@ export class StoryEngine {
   // Repetir el tramo sin parar: sirve de vista previa mientras se colocan los
   // stickers, para ver el efecto sin tener que dar al play cada vez.
   private looping = false;
+  // En pausa: los VFX siguen animándose (sin audio ni avanzar el playhead) para
+  // poder colocar sitios viendo lluvia/fuego/portal en vivo.
+  private vfxLive = true;
+  private vfxExtra = 0;
+  private lastVfxFrame = 0;
   playhead = 0;
   onTime: ((t: number) => void) | null = null;
   onEnded: (() => void) | null = null;
@@ -518,12 +523,22 @@ export class StoryEngine {
         }
         this.onTime?.(this.playhead);
         this.render();
+      } else if (this.vfxLive && this.project && this.flat.length) {
+        // ~30 fps: bastante para ver el efecto al colocar; no satura como a 60.
+        const now = performance.now();
+        if (!this.lastVfxFrame) this.lastVfxFrame = now;
+        if (now - this.lastVfxFrame >= 33) {
+          this.vfxExtra += (now - this.lastVfxFrame) / 1000;
+          this.lastVfxFrame = now;
+          // Antes de MAX_PASOS (15 s): reinicio suave para que no “desaparezcan”
+          // ni salten al ponerse al día de golpe.
+          if (this.vfxExtra > 12) {
+            this.vfxScenes.clear();
+            this.vfxExtra = 0.8;
+          }
+          this.render();
+        }
       }
-      // En pausa NO se repinta en cada vuelta. Antes sí, y con unos cuantos
-      // efectos son más de mil partículas redibujadas sesenta veces por segundo
-      // sin que nada cambie: eso era lo que dejaba la página pastosa aunque no
-      // se estuviera reproduciendo nada. Parado, se repinta solo cuando hay
-      // motivo (mover el tiempo, tocar un ajuste, terminar de cargar una imagen).
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -571,6 +586,7 @@ export class StoryEngine {
       }
       this.stopSources(); // por si algo quedó sonando
       this.scheduleAudio(this.playhead);
+      this.vfxExtra = 0;
       this.playing = true;
       this.onPlaying?.(true);
       this.start();
@@ -583,11 +599,28 @@ export class StoryEngine {
     this.playing = false;
     this.stopSources();
     if (era) this.onPlaying?.(false);
+    // Al pausar, el reloj de vista previa de VFX arranca limpio en este instante.
+    this.lastVfxFrame = performance.now();
+  }
+  /** En pausa, animar efectos sin audio (para colocar sitios en vivo). */
+  setVfxLive(v: boolean) {
+    this.vfxLive = v;
+    if (!v) this.vfxExtra = 0;
+    else this.lastVfxFrame = performance.now();
+    if (!this.playing) this.render();
+  }
+  /** Reinicia las partículas (p. ej. al soltar un sitio arrastrado). */
+  resetVfx() {
+    this.vfxScenes.clear();
+    this.vfxExtra = 0;
+    this.lastVfxFrame = performance.now();
+    if (!this.playing) this.render();
   }
   // Mover el punto de reproducción siempre para el sonido: así el botón nunca
   // dice "pausa" mientras se sigue oyendo.
   seek(t: number) {
     this.pause();
+    this.vfxExtra = 0;
     const lo = this.rangeStart;
     const hi = Math.min(this.duration(), this.rangeEnd);
     this.playhead = Math.max(lo, Math.min(hi, t));
@@ -731,6 +764,7 @@ export class StoryEngine {
       const a = mapa(n.x, n.y), b = mapa(n.x2, n.y2);
       return { x: a.x, y: a.y, x2: b.x, y2: b.y };
     };
+    const preview = !this.playing;
     const entradas: VfxInput[] = capas.map((v) => {
       const w = vfxWindow(v, f.dur);
       const nodes = v.nodes ?? [];
@@ -739,19 +773,27 @@ export class StoryEngine {
         nodes: (v.follow || v.espacio === "imagen")
           ? nodes.map((n) => seguir(n, v.espacio === "imagen"))
           : nodes,
-        colorHex: v.colorHex, params: v.params, start: w.start, end: w.end,
+        colorHex: v.colorHex, params: v.params,
+        // En pausa la simulación sigue adelante del final de la toma: si se
+        // respeta w.end, a los pocos segundos se dan de baja TODOS los efectos.
+        start: preview ? 0 : w.start,
+        end: preview ? 1e9 : w.end,
       };
     });
     const escena = this.escenaVfx(f.shot.id + sufijo);
     escena.setSize(this.w, this.h);
+    // El zoom ya no va en la clave: si iba, cada ~10 % borraba partículas y el
+    // humo brincaba. setZoomScale reescala lo vivo para que siga la cámara.
     escena.setZoomScale(zoomScale);
-    // Estructura + zoom grueso (cada 10 %): si el zoom animado entrara fino en
-    // la clave, se reharía la escena en cada fotograma.
-    let clave = f.shot.id + sufijo + `|z${Math.round(zoomScale * 10)}`;
+    let clave = f.shot.id + sufijo;
     for (const v of capas) {
       clave += `|${v.id},${v.kind},${v.shape},${v.nodes.length},${v.timing},${v.startSec},${v.endSec}`;
     }
-    escena.seek(clave, entradas, lt);
+    // En pausa el reloj extra no debe “salirse” del final de la toma (si no,
+    // montar da de baja todo). Y se recicla antes de MAX_PASOS para no hacer
+    // un salto brusco a los 15 s.
+    const tSim = preview ? lt + this.vfxExtra : lt;
+    escena.seek(clave, entradas, tSim);
     escena.draw(this.ctx, alpha);
   }
 

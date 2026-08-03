@@ -19,6 +19,7 @@ import {
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect, type VfxLayer,
 } from "@/lib/story/model";
 import { vfxSpec } from "@/lib/story/vfx";
+import { VOCES_INFO } from "@/lib/story/modelos";
 
 // Panel de una sub-escena (toma): movimiento, duración, transición de entrada,
 // diálogos narrados, efectos de sonido y stickers.
@@ -57,6 +58,7 @@ export function ShotEditor({
   sceneVfx,
   onOmitirEfectoEscena,
   onSoloEnEstaToma,
+  vocesIa,
 }: {
   shot: Shot;
   index: number;
@@ -95,6 +97,8 @@ export function ShotEditor({
   onOmitirEfectoEscena: (vfxId: string, modo: "esta" | "adelante") => void;
   // Quita el efecto de la escena y lo deja solo en esta toma.
   onSoloEnEstaToma: (vfxId: string) => void;
+  /** Si hay OpenAI: se muestra el desplegable de voces TTS (alloy, nova…). */
+  vocesIa?: boolean;
 }) {
   const dur = shotDur(shot);
   const movim = moveDur(shot); // lo que tarda el recorrido, sin la pausa
@@ -248,8 +252,8 @@ export function ShotEditor({
             label="Pausa al final"
             value={hold}
             onChange={(v) => onChange({ ...shot, holdSec: v })}
-            min={0} max={60} step={1} decimals={0}
-            hint="Quieta en el punto 2 antes de pasar a la siguiente"
+            min={0} max={60} step={0.1} decimals={1}
+            hint="Quieta en el punto 2 antes de pasar a la siguiente (0 = al tiro)"
           />
           <div className="flex flex-col justify-center rounded-lg border border-border/60 px-2 py-1 text-[11px] text-muted">
             <span>
@@ -336,9 +340,30 @@ export function ShotEditor({
                     value={d.quien ?? ""}
                     placeholder="narrador"
                     aria-label="Quién habla"
-                    onChange={(e) => updDialogue(d.id, { quien: e.target.value.trim() || undefined })}
+                    onChange={(e) => updDialogue(d.id, {
+                      quien: e.target.value.trim() || undefined,
+                      ...(d.audioId ? { stale: true } : {}),
+                    })}
                   />
                 </label>
+                {vocesIa && (
+                  <label className="flex items-center gap-1 text-[11px] text-muted" title="Voz de OpenAI para generar el audio">
+                    Voz IA
+                    <select
+                      className="input max-w-[11rem] py-0.5 text-[11px]"
+                      value={d.voz ?? ""}
+                      onChange={(e) => updDialogue(d.id, {
+                        voz: e.target.value || undefined,
+                        ...(d.audioId ? { stale: true } : {}),
+                      })}
+                    >
+                      <option value="">La de su personaje</option>
+                      {VOCES_INFO.map((v) => (
+                        <option key={v.id} value={v.id}>{v.id} · {v.que}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 {/* Otra forma de decir lo mismo, con el contexto del capítulo
                     alrededor. No cambia lo que pasa: cambia cómo se dice. */}
                 {onRehacerTexto && (
@@ -356,7 +381,7 @@ export function ShotEditor({
                   onChange={(v) => updDialogue(d.id, { gapSec: v })}
                   label={i === 0 ? "Pausa al empezar" : "Pausa antes"}
                 />
-                <label className="flex items-center gap-1 text-[11px] text-muted">
+                <label className="flex items-center gap-1 text-[11px] text-muted" title="Filtro de audio (robot, eco…). No sustituye a la voz IA.">
                   Efecto
                   <select
                     className="input w-32 py-0.5 text-[11px]"
@@ -366,10 +391,9 @@ export function ShotEditor({
                     {VOICE_EFFECTS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
                   </select>
                 </label>
-                {/* Atajos: la voz IA solo trae una, así que las "otras voces"
-                    salen de tocarle el tono sin cambiar lo que tarda en leer. */}
+                {/* Tono: retoca el audio ya generado sin regenerar (grave/agudo). */}
                 <label className="flex items-center gap-1 text-[11px] text-muted">
-                  Voz
+                  Tono
                   <select
                     className="input w-28 py-0.5 text-[11px]"
                     value={vozPreset(d.pitch)}
