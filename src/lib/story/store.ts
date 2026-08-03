@@ -1,7 +1,7 @@
 // Almacén de recursos (imágenes, audios) por id en IndexedDB. Los recursos grandes
 // no se suben al servidor; viven en el navegador del usuario.
 
-import { esDeBiblioteca, urlPista } from "./musica";
+import { esDeBiblioteca, urlPista, esDeBibliotecaSonido, urlSonido } from "./musica";
 
 const DB = "tvphi-story";
 const STORE = "assets";
@@ -37,11 +37,11 @@ export async function putAsset(id: string, blob: Blob): Promise<void> {
 const cacheLib = new Map<string, Blob>();
 
 export async function getAsset(id: string): Promise<Blob | null> {
-  if (esDeBiblioteca(id)) {
+  if (esDeBiblioteca(id) || esDeBibliotecaSonido(id)) {
     const guardado = cacheLib.get(id);
     if (guardado) return guardado;
     try {
-      const r = await fetch(urlPista(id));
+      const r = await fetch(esDeBiblioteca(id) ? urlPista(id) : urlSonido(id));
       if (!r.ok) return null;
       const blob = await r.blob();
       cacheLib.set(id, blob);

@@ -1,5 +1,5 @@
 import { VFX, SHAPE_LABEL, GROUP_LABEL, vfxDefaults } from "./vfx";
-import { catalogoMusicaIA } from "./musica";
+import { catalogoMusicaIA, catalogoSonidosIA } from "./musica";
 
 // El catálogo de efectos, en un sitio solo: lo sirve /api/story/efectos y viaja
 // también dentro de los JSON que se exportan.
@@ -305,6 +305,10 @@ export function referenciaParaIA() {
       comoSeUsa: "Pon la pista en audioLayers con audioId igual al identificador (empieza por «lib:»), kind:\"music\", loop:true, volume 0.25-0.4, startSec 0.",
       pistas: catalogoMusicaIA(),
     },
+    sonidos: {
+      comoSeUsa: "Sonidos puntuales de 2-5 s. Van DENTRO de la toma, en shot.sfx: {id, audioId igual al identificador (empieza por «son:»), name, volume 0.8, dur (los segundos de abajo), gapSec = cuánto espera desde que empieza la toma, loop:false}. Ponle el sonido al efecto que ya hayas dibujado: si hay un rayo, que truene.",
+      sonidos: catalogoSonidosIA(),
+    },
   };
 }
 
@@ -321,6 +325,10 @@ export function referenciaCompacta() {
     musica: {
       comoSeUsa: "Pon la pista en audioLayers con audioId igual al identificador de abajo (empieza por «lib:»), kind:\"music\", loop:true, volume 0.25-0.4 para que no tape la narración, startSec 0. Los archivos ya están en la app: no hacen falta subirlos.",
       pistas: catalogoMusicaIA(),
+    },
+    sonidos: {
+      comoSeUsa: "Sonidos puntuales de 2-5 s, dentro de la toma: shot.sfx = [{id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}]. Úsalos para que el efecto que dibujas suene: rayo → trueno, portal → portal.",
+      sonidos: catalogoSonidosIA(),
     },
     ejemploDeEfecto: ejemploDe("fuego", "punto", "#ff8a3d"),
   };

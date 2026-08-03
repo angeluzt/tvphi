@@ -2,10 +2,13 @@
 
 import {
   Plus, Trash2, Wand2, Volume2, Sticker, Image as ImageIcon, ChevronUp, ChevronDown, Clock,
-  Loader2, Repeat, Play, Pause, Copy, RefreshCw,
+  Loader2, Repeat, Play, Pause, Copy, RefreshCw, Sparkles,
 } from "lucide-react";
+import { useState } from "react";
 import { nanoid } from "nanoid";
 import type { VoiceStatus } from "@/lib/story/tts";
+import { BibliotecaSonidos } from "./biblioteca-sonidos";
+import { refSonido } from "@/lib/story/musica";
 import { MotionEditor } from "./motion-editor";
 import { Slider } from "./slider";
 import { GapInput } from "./gap-input";
@@ -13,7 +16,7 @@ import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
 import { VfxEditor } from "./vfx-editor";
 import {
-  newDialogue, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
+  newDialogue, newSfx, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
   overlaySoundStart,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop, type Frame,
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect, type VfxLayer,
@@ -100,6 +103,7 @@ export function ShotEditor({
   /** Si hay OpenAI: se muestra el desplegable de voces TTS (alloy, nova…). */
   vocesIa?: boolean;
 }) {
+  const [verSonidos, setVerSonidos] = useState(false);
   const dur = shotDur(shot);
   const movim = moveDur(shot); // lo que tarda el recorrido, sin la pausa
   const hold = Math.max(0, shot.holdSec || 0);
@@ -457,11 +461,28 @@ export function ShotEditor({
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Sonidos de esta toma</span>
-          <label className="btn-ghost ml-auto cursor-pointer text-xs">
-            <Volume2 className="h-3.5 w-3.5 text-accent" /> Añadir sonido
+          <button
+            onClick={() => setVerSonidos((v) => !v)}
+            className="btn-ghost ml-auto text-xs"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-accent" /> De la app
+          </button>
+          <label className="btn-ghost cursor-pointer text-xs">
+            <Volume2 className="h-3.5 w-3.5 text-accent" /> Subir sonido
             <input type="file" accept="audio/*" className="hidden" onChange={onAddSfx} />
           </label>
         </div>
+
+        {verSonidos && (
+          <BibliotecaSonidos
+            onCerrar={() => setVerSonidos(false)}
+            onElegir={(s) => {
+              // Referencia, no archivo: lo sirve la app (ver getAsset).
+              onChange({ ...shot, sfx: [...shot.sfx, newSfx(refSonido(s), s.titulo, s.segundos)] });
+              setVerSonidos(false);
+            }}
+          />
+        )}
 
         {/* Sueltos: se encadenan con su pausa, como los diálogos */}
         <div className="mt-2 space-y-1">

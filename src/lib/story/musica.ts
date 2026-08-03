@@ -123,6 +123,26 @@ export const PISTAS: Pista[] = [
   // ── naturaleza y viaje ─────────────────────────────────────────────────
   { id: "emerald-canopy", titulo: "Emerald Canopy", segundos: 30.6, ambiente: "naturaleza",
     cuando: "Selva, bosque frondoso, naturaleza viva y luminosa.", bucle: "limpio" },
+
+  // ── añadidas después ───────────────────────────────────────────────────
+  { id: "a-la-torre", titulo: "La torre", segundos: 29.6, ambiente: "fantasia",
+    cuando: "Una torre, un lugar alto y solitario. Misterio con peso.", bucle: "limpio" },
+  { id: "b-el-duelo", titulo: "El duelo", segundos: 30.8, ambiente: "epico",
+    cuando: "Un enfrentamiento cara a cara. Tensión antes del golpe.", bucle: "corta" },
+  { id: "acero-y-valor", titulo: "Acero y valor", segundos: 30.8, ambiente: "epico",
+    cuando: "Combate, coraje, avanzar espada en mano.", bucle: "corta" },
+  { id: "the-heros-first-step", titulo: "The Hero's First Step", segundos: 30.8, ambiente: "epico",
+    cuando: "El primer paso del viaje. Cuando alguien decide ir.", bucle: "limpio" },
+  { id: "road-beyond-the-hills", titulo: "Road Beyond the Hills", segundos: 30.8, ambiente: "naturaleza",
+    cuando: "Camino largo, cruzar colinas, viaje que no acaba hoy.", bucle: "corta" },
+  { id: "the-ancient-map", titulo: "The Ancient Map", segundos: 30.8, ambiente: "fantasia",
+    cuando: "Un mapa viejo, una ruta olvidada, planear la expedición.", bucle: "corta" },
+  { id: "the-hidden-treasure", titulo: "The Hidden Treasure", segundos: 30.8, ambiente: "fantasia",
+    cuando: "El hallazgo del tesoro. Asombro y recompensa.", bucle: "corta" },
+  { id: "lanterns-at-the-tavern", titulo: "Lanterns at the Tavern", segundos: 30.8, ambiente: "cotidiano",
+    cuando: "Una taberna de noche, gente, jarras, descanso del camino.", bucle: "corta" },
+  { id: "kingdom-above-the-clouds", titulo: "Kingdom Above the Clouds", segundos: 30.8, ambiente: "epico",
+    cuando: "Un reino imposible, una vista que quita el aliento.", bucle: "corta" },
 ];
 
 // Prefijo que distingue una pista de la biblioteca de un archivo del usuario.
@@ -147,4 +167,48 @@ export function porAmbiente(): { ambiente: Ambiente; label: string; pistas: Pist
 // Lo que se le manda a la IA: compacto, una línea por pista.
 export function catalogoMusicaIA() {
   return PISTAS.map((p) => `${refPista(p)} · ${AMBIENTE_LABEL[p.ambiente]} · ${p.cuando}`);
+}
+
+
+// ---------------------------------------------------------------------------
+// Sonidos puntuales
+// ---------------------------------------------------------------------------
+// No son música: duran 2-5 s, empiezan fuerte y se apagan. Van dentro de una
+// TOMA, no de fondo, y lo que los hace útiles es que casi todos tienen un
+// efecto visual que les corresponde: el trueno con el rayo, el hielo con la
+// escarcha. Por eso cada uno dice a qué efecto acompaña — así la IA puede
+// ponerle sonido a lo que dibuja en vez de dejarlo mudo.
+
+export interface Sonido {
+  id: string;
+  titulo: string;
+  segundos: number;
+  cuando: string;
+  /** Efecto visual con el que pega, si hay uno. */
+  conEfecto?: string;
+}
+
+export const SONIDOS: Sonido[] = [
+  { id: "close-thunder", titulo: "Trueno cerca", segundos: 3,
+    cuando: "Un trueno que revienta encima. Va con el fogonazo.", conEfecto: "rayo" },
+  { id: "dark-portal-opening", titulo: "Portal que se abre", segundos: 5,
+    cuando: "Algo se abre y suena hondo. Al aparecer el portal.", conEfecto: "portal" },
+  { id: "arcane-magic-explosion", titulo: "Explosión arcana", segundos: 2,
+    cuando: "Un hechizo que estalla.", conEfecto: "magiccircle" },
+  { id: "ice-rapidly-freezing", titulo: "Hielo formándose", segundos: 3,
+    cuando: "Algo se congela de golpe, cristales creciendo.", conEfecto: "escarcha" },
+  { id: "massive-stone-creature", titulo: "Criatura de piedra", segundos: 3,
+    cuando: "Algo enorme de roca que se mueve o despierta.", conEfecto: "shockwave" },
+];
+
+export const PREFIJO_SON = "son:";
+export const esDeBibliotecaSonido = (id: string) => id.startsWith(PREFIJO_SON);
+export const refSonido = (s: Sonido) => `${PREFIJO_SON}${s.id}`;
+export const urlSonido = (id: string) => `/sonidos/${id.slice(PREFIJO_SON.length)}.mp3`;
+export const buscarSonido = (ref: string) =>
+  SONIDOS.find((s) => s.id === ref.slice(PREFIJO_SON.length)) ?? null;
+
+export function catalogoSonidosIA() {
+  return SONIDOS.map((s) =>
+    `${refSonido(s)} · ${s.segundos}s · ${s.cuando}${s.conEfecto ? ` (efecto: ${s.conEfecto})` : ""}`);
 }

@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
 import { BibliotecaMusica } from "./biblioteca-musica";
-import { refPista, esDeBiblioteca, type Pista } from "@/lib/story/musica";
+import { refPista, esDeBiblioteca, esDeBibliotecaSonido, type Pista } from "@/lib/story/musica";
 import { VOCES_INFO } from "@/lib/story/modelos";
 import { MissingAssets } from "./missing-assets";
 import { StoryHome, StoryBreadcrumb } from "./story-home";
@@ -1183,7 +1183,7 @@ export function StoryApp({
         vistos.add(r.id);
         // Las pistas de la biblioteca no se meten: ya viajan dentro de la app,
         // así que copiarlas engordaría el paquete para nada.
-        if (esDeBiblioteca(r.id)) continue;
+        if (esDeBiblioteca(r.id) || esDeBibliotecaSonido(r.id)) continue;
         const blob = await getAsset(r.id);
         if (!blob) { sinArchivo++; continue; }
         const ext = (blob.type.split("/")[1] || "bin").replace(/[^\w]/g, "").slice(0, 5);
