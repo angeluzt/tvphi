@@ -218,12 +218,15 @@ export function ShotEditor({
         <MotionEditor shot={shot} imageId={imageId} imgW={imgW} imgH={imgH} prevTo={prevTo} onChange={onChange} />
       </div>
 
-      {/* Tiempo: la duración marca la velocidad del movimiento */}
+      {/* Tiempo de la toma: movimiento de cámara + pausa quieta al final */}
       <div className="mt-3 rounded-xl border border-border p-2.5">
-        <span className="label">Tiempo</span>
+        <span className="label">Tiempo de la toma</span>
+        <p className="mt-0.5 text-[11px] text-muted">
+          Cuánto dura el recorrido de la cámara y cuánto se queda quieta al acabar, antes de la siguiente toma.
+        </p>
         <div className="mt-2 grid grid-cols-2 gap-2">
           <label className="space-y-0.5 text-xs">
-            <span className="text-muted">Duración</span>
+            <span className="text-muted">Cómo se decide la duración del movimiento</span>
             <select
               className="input"
               value={shot.autoDuration ? "auto" : "fija"}
@@ -232,11 +235,11 @@ export function ShotEditor({
               onChange={(e) => onChange({ ...shot, autoDuration: e.target.value === "auto", durationSec: movim })}
             >
               <option value="auto">Según los diálogos</option>
-              <option value="fija">Fija</option>
+              <option value="fija">Fija (tú eliges los segundos)</option>
             </select>
           </label>
           <NumberInput
-            label="Segundos de movimiento"
+            label="Segundos de movimiento de cámara"
             value={movim}
             onChange={(v) => onChange({ ...shot, durationSec: v })}
             min={0.3} max={600} step={0.5}
@@ -249,18 +252,18 @@ export function ShotEditor({
               recorrido la imagen se queda quieta y hasta que no pasa no empieza
               la toma siguiente. Por eso su tope no depende de la duración. */}
           <NumberInput
-            label="Pausa al final"
+            label="Pausa al final de esta toma"
             value={hold}
             onChange={(v) => onChange({ ...shot, holdSec: v })}
             min={0} max={60} step={0.1} decimals={1}
-            hint="Quieta en el punto 2 antes de pasar a la siguiente (0 = al tiro)"
+            hint="Tras el movimiento, la imagen se queda en el punto final antes de pasar a la siguiente toma (0 = al tiro)"
           />
           <div className="flex flex-col justify-center rounded-lg border border-border/60 px-2 py-1 text-[11px] text-muted">
             <span>
               Se mueve <span className="text-fg tabular-nums">{movim.toFixed(1)}s</span>
               {hold > 0 && <> y se queda quieta <span className="text-fg tabular-nums">{hold}s</span></>}
             </span>
-            <span>La toma dura <span className="text-fg tabular-nums">{dur.toFixed(1)}s</span></span>
+            <span>La toma dura en total <span className="text-fg tabular-nums">{dur.toFixed(1)}s</span></span>
           </div>
         </div>
       </div>
@@ -268,7 +271,7 @@ export function ShotEditor({
       {/* Entrada desde la toma anterior */}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <label className="space-y-0.5 text-xs">
-          <span className="text-muted">Entrada desde la toma anterior</span>
+          <span className="text-muted">Transición al entrar en esta toma</span>
           <select
             className="input"
             value={shot.transition}
@@ -280,7 +283,7 @@ export function ShotEditor({
           </select>
         </label>
         <NumberInput
-          label="Duración de la entrada (s)"
+          label="Duración de esa transición (s)"
           value={shot.transitionDur}
           onChange={(v) => onChange({ ...shot, transitionDur: v })}
           min={0} max={5} step={0.1}
@@ -300,6 +303,9 @@ export function ShotEditor({
             <Plus className="h-3.5 w-3.5 text-accent" /> Añadir diálogo
           </button>
         </div>
+        <p className="mt-1 text-[11px] text-muted">
+          «Quién habla» es el nombre del personaje (opcional). Vacío = narrador; si pones un nombre, esa voz se reutiliza en sus otras frases.
+        </p>
         <div className="mt-2 space-y-2">
           {shot.dialogues.map((d, i) => (
             <div key={d.id} className="rounded-lg border border-border p-2">
@@ -330,16 +336,16 @@ export function ShotEditor({
                   )}
                   {voiceJobs[d.id] ? voiceLabel(voiceJobs[d.id]) : d.audioId ? "Regenerar voz" : "Generar voz"}
                 </button>
-                {/* Quién habla. Vacío = el narrador, que es lo normal. Poner un
-                    nombre hace que esa frase suene con la voz de ese personaje,
-                    que se elige una sola vez para todo el capítulo. */}
-                <label className="flex items-center gap-1 text-[11px] text-muted">
-                  Quién
+                {/* Nombre del personaje que dice esta línea. Vacío = narrador.
+                    Sirve para reutilizar la misma voz IA en todas las frases
+                    de ese personaje en el capítulo. No es obligatorio. */}
+                <label className="flex flex-wrap items-center gap-1 text-[11px] text-muted" title="Nombre del personaje que habla. Déjalo vacío si habla el narrador.">
+                  <span className="whitespace-nowrap">Quién habla</span>
                   <input
                     className="input w-28 py-0.5 text-[11px]"
                     value={d.quien ?? ""}
                     placeholder="narrador"
-                    aria-label="Quién habla"
+                    aria-label="Quién habla (vacío = narrador)"
                     onChange={(e) => updDialogue(d.id, {
                       quien: e.target.value.trim() || undefined,
                       ...(d.audioId ? { stale: true } : {}),
@@ -832,43 +838,59 @@ export function ShotEditor({
             checked={shot.usarVfxEscena !== false}
             onChange={(e) => onChange({ ...shot, usarVfxEscena: e.target.checked })}
           />
-          <span>Mostrar efectos de la escena en esta toma</span>
+          <span>Mostrar en esta toma los efectos de la escena</span>
         </label>
 
         {shot.usarVfxEscena !== false && sceneVfx.length > 0 && (
           <div className="rounded-lg border border-border p-2">
-            <p className="text-[11px] text-muted">De la escena (puedes ocultar u omitir uno a uno)</p>
+            <p className="text-[11px] text-muted">
+              Efectos de la foto (compartidos). Puedes quitarlos solo aquí o desde esta toma en adelante.
+            </p>
             <ul className="mt-1 space-y-1.5">
               {sceneVfx.map((v) => {
                 const omitido = (shot.omitirVfxEscena ?? []).includes(v.id);
                 return (
                   <li key={v.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <label className="flex min-w-0 flex-1 items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={!omitido}
-                        onChange={() => onOmitirEfectoEscena(v.id, "esta")}
-                      />
-                      <span className={`truncate ${omitido ? "text-muted line-through" : ""}`}>
-                        {vfxSpec(v.kind).label}
-                      </span>
-                    </label>
-                    <button
-                      type="button"
-                      className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
-                      title="Ocultar este efecto en esta toma y en las siguientes"
-                      onClick={() => onOmitirEfectoEscena(v.id, "adelante")}
-                    >
-                      De aquí en adelante
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
-                      title="Sacar de la escena y dejarlo solo en esta toma"
-                      onClick={() => onSoloEnEstaToma(v.id)}
-                    >
-                      Solo aquí
-                    </button>
+                    <span className={`min-w-0 flex-1 truncate font-medium ${omitido ? "text-muted line-through" : ""}`}>
+                      {vfxSpec(v.kind).label}
+                    </span>
+                    {omitido ? (
+                      <button
+                        type="button"
+                        className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                        title="Volver a mostrar este efecto en esta toma"
+                        onClick={() => onOmitirEfectoEscena(v.id, "esta")}
+                      >
+                        Mostrar aquí
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                          title="Quitar este efecto solo en esta toma"
+                          onClick={() => onOmitirEfectoEscena(v.id, "esta")}
+                        >
+                          Quitar aquí
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                          title="Quitar este efecto en esta toma y en las siguientes"
+                          onClick={() => onOmitirEfectoEscena(v.id, "adelante")}
+                        >
+                          Desde aquí
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                          title="Sacarlo de la escena compartida y dejarlo solo en esta toma"
+                          onClick={() => onSoloEnEstaToma(v.id)}
+                        >
+                          Solo esta toma
+                        </button>
+                      </>
+                    )}
                   </li>
                 );
               })}

@@ -165,7 +165,7 @@ export async function GET(req: Request) {
   if (id) {
     const project = await prisma.storyProject.findFirst({
       where: { id, userId: user.id },
-      select: { id: true, name: true, data: true, updatedAt: true },
+      select: { id: true, name: true, seriesId: true, data: true, updatedAt: true },
     });
     if (!project) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
     return NextResponse.json({ project });

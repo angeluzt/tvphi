@@ -6,7 +6,11 @@ import { StoryApp } from "@/components/story/story-app";
 
 export const dynamic = "force-dynamic";
 
-export default async function StoryPage() {
+export default async function StoryPage({
+  searchParams,
+}: {
+  searchParams: { id?: string; serie?: string };
+}) {
   const user = await getCurrentUser();
   if (!user) redirect("/auth/login");
 
@@ -19,6 +23,13 @@ export default async function StoryPage() {
     estadoCupoHistorias(user.id, user.email),
   ]);
   const projects = rows.map((r) => ({ id: r.id, name: r.name, seriesId: r.seriesId, updatedAt: r.updatedAt.toISOString() }));
+  // Si el id no es tuyo, se ignora: el cliente abre el inicio.
+  const openId = searchParams?.id && projects.some((p) => p.id === searchParams.id)
+    ? searchParams.id
+    : null;
+  const serieInicial = searchParams?.serie && !openId
+    ? searchParams.serie
+    : null;
 
   return (
     <div className="space-y-4">
@@ -31,7 +42,12 @@ export default async function StoryPage() {
           </p>
         </div>
       </div>
-      <StoryApp initialProjects={projects} initialCupo={cupo} />
+      <StoryApp
+        initialProjects={projects}
+        initialCupo={cupo}
+        initialOpenId={openId}
+        initialSerie={serieInicial}
+      />
     </div>
   );
 }
