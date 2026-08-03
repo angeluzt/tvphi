@@ -1,9 +1,9 @@
 import {
   flatten, locate, lerpFrame, framePx, frameH, moveProgress, overlayBox,
   dialogueStarts, sfxStarts, loopSpan, dialogueDur, VOICE_RATE, ASPECTS, aspectInfo, setProjectAspect,
-  overlayWindows, overlaySoundStart, vfxWindow,
+  overlayWindows, overlaySoundStart, vfxWindow, capasVfxActivas, esVfxDeEscena,
   type StoryProject, type FlatShot, type PngOverlay, type Frame, type VoiceEffect,
-  type ClipVideo,
+  type ClipVideo, type VfxLayer,
 } from "./model";
 import { VfxScene, type VfxInput } from "./vfx";
 import { stretchBuffer } from "./stretch";
@@ -681,30 +681,46 @@ export class StoryEngine {
     this.drawVfx(f, lt, alpha);
   }
 
-  // Partículas de la toma. Van encima de todo (la lluvia cae por delante de los
-  // stickers) y no se dibujan durante la transición de salida de la anterior:
-  // la escena es de ESTA toma y no tiene sentido verla sobre la de antes.
+  // Partículas. Anclas de la foto escalan con el zoom; lluvia/atmósfera no.
   private drawVfx(f: FlatShot, lt: number, alpha: number) {
-    const capas = f.shot.vfx ?? [];
-    if (!capas.length) { return; }
-    // Si la capa sigue a la toma, sus sitios se anclan a la IMAGEN: se pasan por
-    // el encuadre para saber dónde caen ahora en el cuadro. Es lo mismo que
-    // hacen los stickers "pegados a la imagen", y evita que una hoguera se
-    // quede flotando cuando la cámara se desplaza.
+    const capas = capasVfxActivas(f.scene, f.shot);
+    if (!capas.length) return;
+
     const p = moveProgress(f.shot, lt);
     const fr = f.frames;
-    const iw = f.scene.imgW || 16, ih = f.scene.imgH || 9;
+    const fa = lerpFrame(fr.from, fr.to, p);
+    // w=1 → imagen entera; w=0.5 → ×2. Atmósfera se queda en 1.
+    const zoomAnclas = fa.w > 0.01 ? 1 / fa.w : 1;
+
+    const anclas = capas.filter(esVfxDeEscena);
+    const cuadro = capas.filter((v) => !esVfxDeEscena(v));
+    this.pintarGrupoVfx(f, lt, alpha, anclas, zoomAnclas, ":a");
+    this.pintarGrupoVfx(f, lt, alpha, cuadro, 1, ":c");
+  }
+
+  private pintarGrupoVfx(
+    f: FlatShot,
+    lt: number,
+    alpha: number,
+    capas: VfxLayer[],
+    zoomScale: number,
+    sufijo: string,
+  ) {
+    if (!capas.length) return;
+    const p = moveProgress(f.shot, lt);
+    const fr = f.frames;
+    // MISMO tamaño que drawShot al recortar la foto. Si se usa scene.imgW/H y
+    // la imagen natural tiene otra proporción, el fuego “salta” fuera del
+    // encuadre en cuanto carga el PNG (parece que la imagen se lo come).
+    const img = this.images.get(f.scene.imageId);
+    const iw = img?.naturalWidth || f.scene.imgW || 16;
+    const ih = img?.naturalHeight || f.scene.imgH || 9;
     const seguir = (n: { x: number; y: number; x2: number; y2: number }, imagen: boolean) => {
       const f0 = fr.from;
       const fa = lerpFrame(fr.from, fr.to, p);
       const h0 = frameH(f0.w, iw, ih);
       const hp = frameH(fa.w, iw, ih);
       const mapa = (x: number, y: number) => {
-        // Dos formas de leer un sitio:
-        //   "encuadre": 0..1 sobre el encuadre inicial de la toma (lo que sale
-        //       al colocarlo con el dedo sobre la previsualización).
-        //   "imagen": 0..1 sobre la foto entera. Es lo cómodo al escribir el
-        //       proyecto a mano: no hay que saber cómo está encuadrada la toma.
         const ix = imagen ? x : f0.cx - f0.w / 2 + x * f0.w;
         const iy = imagen ? y : f0.cy - h0 / 2 + y * h0;
         return {
@@ -720,24 +736,18 @@ export class StoryEngine {
       const nodes = v.nodes ?? [];
       return {
         id: v.id, kind: v.kind, shape: v.shape,
-        // En espacio "imagen" hay que pasar por el encuadre siempre: un sitio
-        // dado sobre la foto no significa nada en pantalla hasta proyectarlo.
         nodes: (v.follow || v.espacio === "imagen")
           ? nodes.map((n) => seguir(n, v.espacio === "imagen"))
           : nodes,
         colorHex: v.colorHex, params: v.params, start: w.start, end: w.end,
       };
     });
-    const escena = this.escenaVfx(f.shot.id);
+    const escena = this.escenaVfx(f.shot.id + sufijo);
     escena.setSize(this.w, this.h);
-    // La clave solo lleva la ESTRUCTURA: qué efectos hay, de qué tipo, con qué
-    // forma, cuántos sitios y en qué rato. Los ajustes (color, tamaño,
-    // velocidad…) NO entran: se sincronizan en caliente sobre los emisores ya
-    // vivos. Si entraran, mover una barra cambiaría la clave y la escena se
-    // reharía desde el segundo cero en cada fotograma del arrastre — con unos
-    // pocos efectos, cientos de miles de partículas por movimiento del dedo, y
-    // era lo que dejaba la toma inservible.
-    let clave = f.shot.id;
+    escena.setZoomScale(zoomScale);
+    // Estructura + zoom grueso (cada 10 %): si el zoom animado entrara fino en
+    // la clave, se reharía la escena en cada fotograma.
+    let clave = f.shot.id + sufijo + `|z${Math.round(zoomScale * 10)}`;
     for (const v of capas) {
       clave += `|${v.id},${v.kind},${v.shape},${v.nodes.length},${v.timing},${v.startSec},${v.endSec}`;
     }

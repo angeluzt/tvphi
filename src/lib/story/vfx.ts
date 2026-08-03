@@ -59,6 +59,8 @@ export interface VfxParam {
   min: number;
   max: number;
   step: number;
+  // Agrupa el slider en el editor (forma, ritmo, movimiento…).
+  seccion?: "forma" | "ritmo" | "aspecto" | "movimiento" | "general";
 }
 
 export type VfxGroup = "golpes" | "fuego" | "clima" | "ambiente" | "luces";
@@ -81,17 +83,19 @@ export interface VfxSpec {
   continuo: boolean;
 }
 
-const P = (key: string, label: string, min = 0.2, max = 3, step = 0.05): VfxParam =>
-  ({ key, label, min, max, step });
-const INTENSIDAD = P("intensity", "Cantidad");
-const TAMANO = P("size", "Tamaño");
-const VELOCIDAD = P("speed", "Velocidad");
-const VIENTO = P("wind", "Viento", -3, 3, 0.1);
+const P = (
+  key: string, label: string, min = 0.2, max = 3, step = 0.05,
+  seccion?: VfxParam["seccion"],
+): VfxParam => ({ key, label, min, max, step, seccion });
+const INTENSIDAD = P("intensity", "Cantidad", 0.2, 3, 0.05, "ritmo");
+const TAMANO = P("size", "Tamaño", 0.2, 3, 0.05, "forma");
+const VELOCIDAD = P("speed", "Velocidad", 0.2, 3, 0.05, "ritmo");
+const VIENTO = P("wind", "Viento", -3, 3, 0.1, "movimiento");
 // Los golpes (explosión, onda, líneas…) son de un disparo. Con estos dos se
 // vuelven repetibles: cada cuánto vuelven a saltar y cuánto se separan del
 // sitio marcado, para que no caigan siempre en el mismo pixel.
-const REPETIR = P("every", "Cada cuántos segundos se repite (0 = una sola vez)", 0, 8, 0.1);
-const REPARTO = P("spread", "Se reparte alrededor del sitio", 0, 1, 0.02);
+const REPETIR = P("every", "Cada cuántos segundos se repite (0 = una sola vez)", 0, 8, 0.1, "ritmo");
+const REPARTO = P("spread", "Se reparte alrededor del sitio", 0, 1, 0.02, "forma");
 // Cuánto aguantan las partículas antes de esfumarse, medido DESDE EL SITIO por
 // el que salen, no como una altura fija del cuadro. En 0 no se esfuman y viajan
 // hasta salirse; en 1 llegan justo al borde; en 0.4, se apagan al recorrer el
@@ -101,8 +105,18 @@ const REPARTO = P("spread", "Se reparte alrededor del sitio", 0, 1, 0.02);
 // Hacia dónde van. Negativo sube, positivo cae. Cada efecto arranca con lo
 // suyo (las burbujas suben, la lluvia cae) pero se puede dar la vuelta: hay
 // quien quiere corazones lloviendo y quien los quiere subiendo.
-const SENTIDO = P("sentido", "Sube (−1) / cae (+1)", -1, 1, 0.05);
-const LIMITE = P("limit", "Se esfuman tras recorrer (0 = hasta salir del cuadro)", 0, 1, 0.01);
+const SENTIDO = P("sentido", "Sube (−1) / cae (+1)", -1, 1, 0.05, "movimiento");
+const LIMITE = P("limit", "Se esfuman tras recorrer (0 = hasta salir del cuadro)", 0, 1, 0.01, "ritmo");
+
+export const VFX_SECCION_LABEL: Record<NonNullable<VfxParam["seccion"]>, string> = {
+  forma: "Forma y tamaño",
+  aspecto: "Aspecto",
+  ritmo: "Cantidad y ritmo",
+  movimiento: "Movimiento propio",
+  general: "Otros",
+};
+export const VFX_SECCION_ORDEN: NonNullable<VfxParam["seccion"]>[] =
+  ["forma", "aspecto", "ritmo", "movimiento", "general"];
 
 export const VFX: VfxSpec[] = [
   { id: "explosion", label: "Explosión", group: "golpes", shapes: ["punto"], color: "#ff8a3d", continuo: false,
@@ -129,7 +143,15 @@ export const VFX: VfxSpec[] = [
   { id: "aura", label: "Aura de energía", group: "fuego", shapes: ["punto"], color: "#7effc2", continuo: true,
     params: [INTENSIDAD, TAMANO, VELOCIDAD, P("turb", "Revuelo"), LIMITE] },
   { id: "portal", label: "Portal", group: "fuego", shapes: ["punto"], color: "#7ee8ff", continuo: true,
-    params: [TAMANO, VELOCIDAD, INTENSIDAD, P("dir", "Hacia dentro (0) / fuera (1)", 0, 1, 1)] },
+    params: [
+      TAMANO,
+      P("forma", "Óvalo (0) / Rectángulo (1)", 0, 1, 1, "forma"),
+      P("ancho", "Ancho (1 = redondo / cuadrado)", 0.25, 3, 0.05, "forma"),
+      P("alto", "Alto (1 = redondo / cuadrado)", 0.25, 3, 0.05, "forma"),
+      P("giro", "Inclinación (−90° … +90°)", -1, 1, 0.02, "forma"),
+      VELOCIDAD, INTENSIDAD,
+      P("dir", "Hacia dentro (0) / fuera (1)", 0, 1, 1, "ritmo"),
+    ] },
   { id: "luz", label: "Luz (esfera)", group: "luces", shapes: ["punto"], color: "#a0c8ff", continuo: true,
     params: [INTENSIDAD, TAMANO, P("blink", "Velocidad del parpadeo (más = más rápido)")] },
   { id: "baliza", label: "Baliza (policía / ambulancia)", group: "luces", shapes: ["punto"], color: null, continuo: true,
@@ -198,11 +220,29 @@ export const VFX: VfxSpec[] = [
 // bruma que entra por un lado, un orbe que cruza la escena. Se mide en anchos
 // de cuadro por segundo, así que 0.1 cruza la escena en diez segundos.
 //
+// Va apagado de serie (derivaOn = 0): no es la cámara ni el zoom. Solo se
+// enciende cuando el usuario quiere que el efecto se desplace solo.
 // Se añade a lo continuo y nada más: un golpe dura dos décimas, no le da tiempo
 // a ir a ningún sitio.
-const DERIVA_X = P("derivaX", "Se mueve solo: hacia los lados (anchos por segundo)", -0.5, 0.5, 0.01);
-const DERIVA_Y = P("derivaY", "Se mueve solo: arriba/abajo (altos por segundo)", -0.5, 0.5, 0.01);
-for (const v of VFX) if (v.continuo) v.params = [...v.params, DERIVA_X, DERIVA_Y];
+const DERIVA_ON = P("derivaOn", "Se mueve solo por la pantalla", 0, 1, 1, "movimiento");
+const DERIVA_X = P("derivaX", "Hacia los lados (anchos de cuadro / s)", -0.5, 0.5, 0.01, "movimiento");
+const DERIVA_Y = P("derivaY", "Arriba / abajo (altos de cuadro / s)", -0.5, 0.5, 0.01, "movimiento");
+for (const v of VFX) if (v.continuo) v.params = [...v.params, DERIVA_ON, DERIVA_X, DERIVA_Y];
+
+/** Agrupa un parámetro en su sección del editor (explícita o por clave). */
+export function vfxSeccionDe(p: VfxParam): NonNullable<VfxParam["seccion"]> {
+  if (p.seccion) return p.seccion;
+  if (p.key === "derivaOn" || p.key === "derivaX" || p.key === "derivaY" ||
+      p.key === "wind" || p.key === "sentido" || p.key === "angulo") return "movimiento";
+  if (p.key === "size" || p.key === "forma" || p.key === "ancho" || p.key === "alto" ||
+      p.key === "giro" || p.key === "thickness" || p.key === "length" || p.key === "hueco" ||
+      p.key === "spread" || p.key === "rayos" || p.key === "spacing") return "forma";
+  if (p.key === "intensity" || p.key === "speed" || p.key === "every" || p.key === "limit" ||
+      p.key === "duration" || p.key === "blink" || p.key === "stormrate" || p.key === "flicker" ||
+      p.key === "flash" || p.key === "dir" || p.key === "density" || p.key === "branch" ||
+      p.key === "preset" || p.key === "nervio") return "ritmo";
+  return "general";
+}
 
 export const vfxSpec = (k: VfxKind) => VFX.find((v) => v.id === k) ?? VFX[0];
 
@@ -217,9 +257,11 @@ export function vfxDefaults(k: VfxKind): Record<string, number> {
     // continuo se iría solo de la pantalla en cuanto se pusiera: un fuego que
     // se va andando. Es exactamente el fallo que salió al añadirla.
     const enCero = p.key === "wind" || p.key === "every" || p.key === "spread" ||
-      p.key === "derivaX" || p.key === "derivaY";
+      p.key === "derivaX" || p.key === "derivaY" || p.key === "giro";
     out[p.key] = p.step === 1 ? p.min : (enCero ? 0 : 1);
   }
+  // Portal de serie: óvalo un poco alto (vano de pie), sin inclinación.
+  if (k === "portal") { out.forma = 0; out.ancho = 1; out.alto = 1.15; out.giro = 0; }
   if (k === "rayo") { out.stormrate = 1.2; out.flash = 1; } // ~un rayo por segundo y pico
   if (k === "neon") out.blink = 0.5;
   // Una guirnalda tiene que VERSE: de serie salían bombillas de un pixel.
@@ -293,6 +335,8 @@ interface Part {
   estela?: number;
   cx?: number; cy?: number; angle?: number; radius?: number;
   angularSpeed?: number; radialSpeed?: number;
+  // Escala e inclinación del portal (mismo óvalo/rectángulo que el agujero).
+  sx?: number; sy?: number; tilt?: number;
   // De dónde salió y cuánto puede recorrer antes de esfumarse (px), más el
   // contador de apagado una vez pasado ese recorrido.
   ox?: number; oy?: number; recorrido?: number; apagando?: number;
@@ -431,11 +475,22 @@ export class VfxScene {
   private clave = "";
   private t = 0;
   private vivos = new Set<string>(); // capas cuyo golpe ya se disparó
+  private baseK = 1.5;
+  private zoom = 1;
 
   setSize(w: number, h: number) {
     if (this.w === w && this.h === h) return;
-    this.w = w; this.h = h; this.k = h / ALTO_BASE;
+    this.w = w; this.h = h; this.baseK = h / ALTO_BASE;
+    this.k = this.baseK * this.zoom;
     this.limpiar();
+  }
+
+  // Escala visual con el zoom del encuadre (anclas de foto). Atmósfera = 1.
+  setZoomScale(z: number) {
+    const nz = Math.max(0.05, Math.min(20, z));
+    if (Math.abs(nz - this.zoom) < 1e-6) return;
+    this.zoom = nz;
+    this.k = this.baseK * this.zoom;
   }
 
   private limpiar() {
@@ -537,6 +592,9 @@ export class VfxScene {
   // subió, subió.
   // Cuánto se ha desplazado un efecto por su cuenta, en pixeles.
   private deriva(p: Record<string, number>): [number, number] {
+    // Apagado de serie: no basta con X/Y en cero; el interruptor evita
+    // que un valor residual mueva el efecto sin que el usuario lo pida.
+    if ((p.derivaOn ?? 0) < 0.5) return [0, 0];
     const dx = p.derivaX ?? 0, dy = p.derivaY ?? 0;
     if (!dx && !dy) return [0, 0];
     return [dx * this.w * this.tPaso, dy * this.h * this.tPaso];
@@ -1121,12 +1179,16 @@ export class VfxScene {
       e.phase += 0.06 * (p.speed ?? 1);
       const n = Math.max(1, Math.round(2 * (p.intensity ?? 1)));
       const haciaFuera = !!p.dir;
+      const sx = Math.max(0.2, p.ancho ?? 1);
+      const sy = Math.max(0.2, p.alto ?? 1.15);
+      const tilt = (p.giro ?? 0) * (Math.PI / 2);
       for (let i = 0; i < n; i++) {
         const startR = haciaFuera ? 6 * this.k : 70 * (p.size ?? 1) * this.k;
         const radial = (haciaFuera ? this.r(0.6, 1.4) : -this.r(0.6, 1.4)) * this.k;
         this.parts.push({
           type: "portal", cx: e.x, cy: e.y, angle: this.r(0, Math.PI * 2), radius: startR,
           angularSpeed: this.r(0.03, 0.07) * (this.rnd() < 0.5 ? 1 : -1), radialSpeed: radial,
+          sx, sy, tilt,
           x: e.x, y: e.y, vx: 0, vy: 0, size: this.r(1.4, 2.6) * (p.size ?? 1) * this.k,
           life: 0, maxLife: this.r(40, 70),
           hue: e.color.h + this.r(-10, 10), sat: 75, light: 80,
@@ -1233,8 +1295,13 @@ export class VfxScene {
       if (p.type === "portal") {
         p.angle! += p.angularSpeed!;
         p.radius! += p.radialSpeed!;
-        p.x = p.cx! + Math.cos(p.angle!) * p.radius!;
-        p.y = p.cy! + Math.sin(p.angle!) * p.radius! * 0.6;
+        // Misma silueta que el agujero: óvalo/rectángulo + inclinación.
+        const lx = Math.cos(p.angle!) * p.radius! * (p.sx ?? 1);
+        const ly = Math.sin(p.angle!) * p.radius! * (p.sy ?? 1);
+        const t = p.tilt ?? 0;
+        const cos = Math.cos(t), sin = Math.sin(t);
+        p.x = p.cx! + lx * cos - ly * sin;
+        p.y = p.cy! + lx * sin + ly * cos;
         if (p.radius! < 2 || p.life >= p.maxLife) this.parts.splice(i, 1);
         continue;
       }
@@ -1712,35 +1779,62 @@ export class VfxScene {
   // como un montoncito de puntos, no como un sitio por el que se pasa. Lo que
   // lo hace reconocible es el contraste: un centro OSCURO —el otro lado— con
   // un borde encendido, y dentro un remolino que gira.
+  //
+  // Forma ajustable: óvalo (círculo si ancho=alto) o rectángulo (cuadrado si
+  // ancho=alto), más inclinación. Así se encaja en portales que dibuja la IA.
   private dibPortal(ctx: CanvasRenderingContext2D, e: Portal) {
     const p = e.par;
     const c = e.color;
     const R = Math.max(38 * (p.size ?? 1) * this.k, 4);
     const lat = 1 + 0.06 * Math.sin(e.phase * 0.9);   // late despacio
-    const rx = R * lat, ry = R * 1.18 * lat;          // de pie: un vano, no un charco
+    const aw = Math.max(0.2, p.ancho ?? 1);
+    const ah = Math.max(0.2, p.alto ?? 1.15);
+    const rx = Math.max(R * aw * lat, 2);
+    const ry = Math.max(R * ah * lat, 2);
+    const rect = (p.forma ?? 0) > 0.5;
+    const tilt = (p.giro ?? 0) * (Math.PI / 2);
     const inten = p.intensity ?? 1;
+    const rMax = Math.max(rx, ry);
+
+    const silueta = (sx = 1, sy = 1) => {
+      const x = rx * sx, y = ry * sy;
+      ctx.beginPath();
+      if (rect) {
+        const rr = Math.min(x, y) * 0.14;
+        if (typeof ctx.roundRect === "function") ctx.roundRect(-x, -y, x * 2, y * 2, rr);
+        else ctx.rect(-x, -y, x * 2, y * 2);
+      } else {
+        ctx.ellipse(0, 0, x, y, 0, 0, Math.PI * 2);
+      }
+    };
 
     ctx.save();
     ctx.translate(e.x, e.y);
+    ctx.rotate(tilt);
 
     // 1. El halo que tiñe lo que hay alrededor.
     ctx.globalCompositeOperation = "lighter";
-    const halo = ctx.createRadialGradient(0, 0, ry * 0.6, 0, 0, ry * 2.1);
+    const halo = ctx.createRadialGradient(0, 0, rMax * 0.55, 0, 0, rMax * 2.1);
     halo.addColorStop(0, `hsla(${c.h},${c.s}%,${c.l}%,${0.3 * inten})`);
     halo.addColorStop(1, "transparent");
     ctx.fillStyle = halo;
-    ctx.beginPath(); ctx.ellipse(0, 0, rx * 2.1, ry * 2.1, 0, 0, Math.PI * 2); ctx.fill();
+    silueta(2.1, 2.1);
+    ctx.fill();
 
     // 2. El otro lado: oscuro de verdad, para que se lea como un hueco.
     ctx.globalCompositeOperation = "source-over";
-    const hueco = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
+    const hueco = ctx.createRadialGradient(0, 0, 0, 0, 0, rMax);
     hueco.addColorStop(0, `hsla(${c.h},${Math.min(c.s, 60)}%,4%,0.95)`);
     hueco.addColorStop(0.7, `hsla(${c.h},${c.s}%,8%,0.75)`);
     hueco.addColorStop(1, "transparent");
     ctx.fillStyle = hueco;
-    ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+    silueta();
+    ctx.fill();
 
-    // 3. El remolino: brazos que giran hacia dentro.
+    // 3. El remolino: brazos que giran hacia dentro (recortados a la silueta).
+    ctx.save();
+    silueta();
+    ctx.clip();
     ctx.globalCompositeOperation = "lighter";
     ctx.lineCap = "round";
     for (let b = 0; b < 3; b++) {
@@ -1749,20 +1843,23 @@ export class VfxScene {
       for (let s = 0; s <= 16; s++) {
         const u = s / 16;
         const ang = giro + u * 2.4;
-        const rr = ry * (0.92 - u * 0.72);
-        const px = Math.cos(ang) * rr * (rx / ry), py = Math.sin(ang) * rr;
+        const rr = rMax * (0.92 - u * 0.72);
+        const px = Math.cos(ang) * rr * (rx / rMax);
+        const py = Math.sin(ang) * rr * (ry / rMax);
         s === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
       }
       ctx.strokeStyle = `hsla(${c.h},${c.s}%,${Math.min(c.l + 12, 85)}%,${0.4 * inten})`;
       ctx.lineWidth = 2.2 * this.k;
       ctx.stroke();
     }
+    ctx.restore();
 
     // 4. El borde encendido, que es lo que dibuja la silueta.
-    ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.globalCompositeOperation = "lighter";
+    silueta();
     ctx.strokeStyle = `hsla(${c.h},${c.s}%,${Math.min(c.l + 25, 92)}%,${0.9 * inten})`;
     ctx.lineWidth = 2.6 * this.k; ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(0, 0, rx * 1.06, ry * 1.06, 0, 0, Math.PI * 2);
+    silueta(1.06, 1.06);
     ctx.strokeStyle = `hsla(${c.h},${c.s}%,${c.l}%,${0.35 * inten})`;
     ctx.lineWidth = 6 * this.k; ctx.stroke();
     ctx.restore();

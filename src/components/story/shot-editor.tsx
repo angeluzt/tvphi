@@ -16,8 +16,9 @@ import {
   newDialogue, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
   overlaySoundStart,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop, type Frame,
-  type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect,
+  type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect, type VfxLayer,
 } from "@/lib/story/model";
+import { vfxSpec } from "@/lib/story/vfx";
 
 // Panel de una sub-escena (toma): movimiento, duración, transición de entrada,
 // diálogos narrados, efectos de sonido y stickers.
@@ -53,6 +54,9 @@ export function ShotEditor({
   onAddOverlaySound,
   onSelectOverlay,
   onSelectVfx,
+  sceneVfx,
+  onOmitirEfectoEscena,
+  onSoloEnEstaToma,
 }: {
   shot: Shot;
   index: number;
@@ -86,6 +90,11 @@ export function ShotEditor({
   onAddOverlaySound: (overlayId: string, e: React.ChangeEvent<HTMLInputElement>) => void;
   onSelectOverlay: (id: string | null) => void;
   onSelectVfx: (id: string | null) => void;
+  sceneVfx: VfxLayer[];
+  // modo: esta toma | esta y las siguientes
+  onOmitirEfectoEscena: (vfxId: string, modo: "esta" | "adelante") => void;
+  // Quita el efecto de la escena y lo deja solo en esta toma.
+  onSoloEnEstaToma: (vfxId: string) => void;
 }) {
   const dur = shotDur(shot);
   const movim = moveDur(shot); // lo que tarda el recorrido, sin la pausa
@@ -792,7 +801,61 @@ export function ShotEditor({
         </div>
       </div>
 
+      <div className="mt-3 space-y-2">
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={shot.usarVfxEscena !== false}
+            onChange={(e) => onChange({ ...shot, usarVfxEscena: e.target.checked })}
+          />
+          <span>Mostrar efectos de la escena en esta toma</span>
+        </label>
+
+        {shot.usarVfxEscena !== false && sceneVfx.length > 0 && (
+          <div className="rounded-lg border border-border p-2">
+            <p className="text-[11px] text-muted">De la escena (puedes ocultar u omitir uno a uno)</p>
+            <ul className="mt-1 space-y-1.5">
+              {sceneVfx.map((v) => {
+                const omitido = (shot.omitirVfxEscena ?? []).includes(v.id);
+                return (
+                  <li key={v.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <label className="flex min-w-0 flex-1 items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={!omitido}
+                        onChange={() => onOmitirEfectoEscena(v.id, "esta")}
+                      />
+                      <span className={`truncate ${omitido ? "text-muted line-through" : ""}`}>
+                        {vfxSpec(v.kind).label}
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                      title="Ocultar este efecto en esta toma y en las siguientes"
+                      onClick={() => onOmitirEfectoEscena(v.id, "adelante")}
+                    >
+                      De aquí en adelante
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                      title="Sacar de la escena y dejarlo solo en esta toma"
+                      onClick={() => onSoloEnEstaToma(v.id)}
+                    >
+                      Solo aquí
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+      </div>
+
       <VfxEditor
+        titulo="Efectos de esta toma"
+        pista="Lluvia, rayos, explosiones a tiempo… solo este plano."
         vfx={shot.vfx ?? []}
         dur={dur}
         seleccionado={selectedVfx}

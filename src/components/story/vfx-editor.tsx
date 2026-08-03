@@ -7,7 +7,8 @@ import { Slider } from "./slider";
 import { NumberInput } from "./number-input";
 import {
   VFX, vfxSpec, vfxDefaults, SHAPE_LABEL, GROUP_LABEL,
-  type VfxKind, type VfxShape, type VfxGroup,
+  VFX_SECCION_LABEL, VFX_SECCION_ORDEN, vfxSeccionDe,
+  type VfxKind, type VfxShape, type VfxGroup, type VfxParam,
 } from "@/lib/story/vfx";
 import { newVfx, vfxWindow, defaultNode, type VfxLayer } from "@/lib/story/model";
 
@@ -22,12 +23,16 @@ export function VfxEditor({
   seleccionado,
   onChange,
   onSelect,
+  titulo,
+  pista,
 }: {
   vfx: VfxLayer[];
   dur: number;
   seleccionado: string | null;
   onChange: (v: VfxLayer[]) => void;
   onSelect: (id: string | null) => void;
+  titulo?: string;
+  pista?: string;
 }) {
   const [catalogo, setCatalogo] = useState(false);
   const [busca, setBusca] = useState("");
@@ -74,11 +79,12 @@ export function VfxEditor({
   return (
     <div className="mt-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="label">Efectos (partículas)</span>
+        <span className="label">{titulo ?? "Efectos (partículas)"}</span>
         <button onClick={() => setCatalogo((v) => !v)} className="btn-ghost ml-auto text-xs">
           <Plus className="h-3.5 w-3.5 text-accent" /> Añadir efecto
         </button>
       </div>
+      {pista && <p className="mt-1 text-[11px] text-muted">{pista}</p>}
 
       {/* Catálogo: son muchos, así que van por secciones y con un buscador.
           Se pliega para no comerse el panel. */}
@@ -305,33 +311,12 @@ export function VfxEditor({
                     )}
                   </div>
 
-                  {/* Ajustes propios del efecto */}
-                  <div className="rounded-lg border border-accent/40 p-2">
-                    <span className="text-[11px] text-muted">Ajustes</span>
-                    {spec.params.map((p) => {
-                      // Solo 0/1 con paso 1 es interruptor. «Cuántos rayos» (1–12)
-                      // también tiene step 1, pero es un número, no un checkbox.
-                      const interruptor = p.step === 1 && p.min === 0 && p.max === 1;
-                      return interruptor ? (
-                        <label key={p.key} className="mt-1 flex items-center gap-2 text-[11px]">
-                          <input
-                            type="checkbox"
-                            checked={!!v.params[p.key]}
-                            onChange={(e) => updParam(v.id, p.key, e.target.checked ? 1 : 0)}
-                          />
-                          <span className="text-muted">{p.label}</span>
-                        </label>
-                      ) : (
-                        <Slider
-                          key={p.key} label={p.label}
-                          value={v.params[p.key] ?? 1}
-                          min={p.min} max={p.max} step={p.step}
-                          onChange={(n) => updParam(v.id, p.key, n)}
-                          format={(n) => (p.step === 1 ? String(Math.round(n)) : n.toFixed(2))}
-                        />
-                      );
-                    })}
-                  </div>
+                  {/* Ajustes por sección: forma, ritmo, movimiento… */}
+                  <AjustesPorSeccion
+                    params={spec.params}
+                    values={v.params}
+                    onChange={(key, n) => updParam(v.id, key, n)}
+                  />
                 </div>
               )}
             </div>
@@ -353,3 +338,72 @@ const GRUPOS: VfxGroup[] = ["golpes", "fuego", "clima", "ambiente", "luces"];
 // Buscar sin pelearse con tildes ni mayúsculas: "neon" encuentra "Neón".
 const limpia = (t: string) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const coincide = (label: string, q: string) => !q.trim() || limpia(label).includes(limpia(q));
+
+/** Controles de un efecto, agrupados por sección (forma / ritmo / movimiento…). */
+function AjustesPorSeccion({
+  params,
+  values,
+  onChange,
+}: {
+  params: VfxParam[];
+  values: Record<string, number>;
+  onChange: (key: string, n: number) => void;
+}) {
+  const derivaActiva = (values.derivaOn ?? 0) > 0.5;
+  const porSeccion = VFX_SECCION_ORDEN.map((id) => ({
+    id,
+    params: params.filter((p) => {
+      if (vfxSeccionDe(p) !== id) return false;
+      // X/Y de deriva solo si el interruptor está encendido.
+      if ((p.key === "derivaX" || p.key === "derivaY") && !derivaActiva) return false;
+      return true;
+    }),
+  })).filter((s) => s.params.length > 0);
+
+  return (
+    <div className="space-y-2">
+      {porSeccion.map((sec) => (
+        <div key={sec.id} className="rounded-lg border border-accent/40 p-2">
+          <span className="text-[11px] font-medium text-muted">{VFX_SECCION_LABEL[sec.id]}</span>
+          {sec.id === "movimiento" && (
+            <p className="mt-0.5 text-[10px] leading-snug text-muted/80">
+              Apagado por defecto. No es la cámara: solo actívalo si el efecto
+              debe desplazarse solo por la pantalla.
+            </p>
+          )}
+          {sec.id === "forma" && sec.params.some((p) => p.key === "forma") && (
+            <p className="mt-0.5 text-[10px] leading-snug text-muted/80">
+              Óvalo o rectángulo; ajusta ancho/alto e inclinación para encajar
+              el portal de la imagen.
+            </p>
+          )}
+          {sec.params.map((p) => {
+            const interruptor = p.step === 1 && p.min === 0 && p.max === 1;
+            if (interruptor) {
+              return (
+                <label key={p.key} className="mt-1.5 flex items-center gap-2 text-[11px]">
+                  <input
+                    type="checkbox"
+                    checked={!!values[p.key]}
+                    onChange={(e) => onChange(p.key, e.target.checked ? 1 : 0)}
+                  />
+                  <span className="text-muted">{p.label}</span>
+                </label>
+              );
+            }
+            return (
+              <Slider
+                key={p.key}
+                label={p.label}
+                value={values[p.key] ?? (p.min < 0 || p.key.startsWith("deriva") ? 0 : 1)}
+                min={p.min} max={p.max} step={p.step}
+                onChange={(n) => onChange(p.key, n)}
+                format={(n) => (p.step === 1 ? String(Math.round(n)) : n.toFixed(2))}
+              />
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}

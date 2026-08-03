@@ -1,0 +1,711 @@
+{
+  "tvphi": "historia",
+  "version": 1,
+  "name": "El Umbral de Kepler",
+  "project": {
+    "aspect": "16:9",
+    "narrationVolume": 1,
+    "audioLayers": [],
+    "intro": null,
+    "outro": null,
+    "voices": {
+      "": "",
+      "Lena": "",
+      "Kael": "",
+      "Vox": ""
+    },
+    "scenes": [
+      {
+        "id": "sc1",
+        "imageId": "img-kepler-muelle",
+        "imgW": 1920,
+        "imgH": 1080,
+        "prompt": "Ciencia ficción cinematográfica. Exterior de una estación espacial abandonada llamada Kepler-9, vista desde la pasarela de atraque. Dos astronautas con trajes EVA distintos: Lena (mujer latina ~35 años, traje azul oscuro con franjas cian, casco transparente, expresión concentrada) y Kael (hombre ~40, traje naranja quemado con parches, más corpulento). Están de pie en una pasarela metálica mirando el hangar abierto. Luces de emergencia ámbar en los muelles, ventanas rectangulares iluminadas en frío, vapor que sale de rejillas, polvo metálico flotando en microgravedad. Fondo: planetas lejanos y estrellas. Realista, anamórfico, contraste alto, sin texto.",
+        "vfx": [
+          {
+            "id": "s1-luz1",
+            "kind": "lampara",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.28, "y": 0.36, "x2": 0.28, "y2": 0.36 }],
+            "colorHex": "#a8d4ff",
+            "params": { "size": 0.9, "ancho": 1.6, "intensity": 0.55, "blink": 0.15, "nervio": 0, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s1-luz2",
+            "kind": "lampara",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.72, "y": 0.34, "x2": 0.72, "y2": 0.34 }],
+            "colorHex": "#ffb060",
+            "params": { "size": 0.75, "ancho": 1.3, "intensity": 0.45, "blink": 0.4, "nervio": 1, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s1-humo",
+            "kind": "humo",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [
+              { "x": 0.18, "y": 0.62, "x2": 0.18, "y2": 0.62 },
+              { "x": 0.82, "y": 0.58, "x2": 0.82, "y2": 0.58 }
+            ],
+            "colorHex": "#9aa3b0",
+            "params": { "intensity": 0.9, "size": 1.2, "speed": 0.7, "limit": 0.55, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s1-polvo",
+            "kind": "polvo",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.5, "y": 0.45, "x2": 0.5, "y2": 0.45 }],
+            "colorHex": "#cfe6ff",
+            "params": { "intensity": 1.1, "size": 0.85, "blink": 0.8, "speed": 0.6, "limit": 0.4, "sentido": -1, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          }
+        ],
+        "shots": [
+          {
+            "id": "sc1a",
+            "autoDuration": true,
+            "durationSec": 7,
+            "holdSec": 0.4,
+            "usarVfxEscena": true,
+            "omitirVfxEscena": [],
+            "motionMode": "preset",
+            "preset": { "kind": "in", "cx": 0.5, "cy": 0.48, "w": 1, "distance": 0.2 },
+            "from": { "cx": 0.5, "cy": 0.48, "w": 1 },
+            "to": { "cx": 0.5, "cy": 0.48, "w": 0.8 },
+            "transition": "fade",
+            "transitionDur": 0.8,
+            "dialogues": [
+              {
+                "id": "d1a",
+                "text": "La estación Kepler-9 llevaba dieciocho años en silencio.",
+                "quien": "",
+                "dur": 0,
+                "gapSec": 0.35,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              },
+              {
+                "id": "d1b",
+                "text": "Hasta que alguien, o algo, volvió a encender las luces.",
+                "quien": "",
+                "dur": 0,
+                "gapSec": 0.45,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              }
+            ],
+            "sfx": [],
+            "audioOverrides": [],
+            "overlays": [],
+            "vfx": [
+              {
+                "id": "sc1a-estrellas",
+                "kind": "estrellas",
+                "shape": "arriba",
+                "espacio": "encuadre",
+                "follow": false,
+                "auto": true,
+                "nodes": [{ "x": 0, "y": -0.02, "x2": 1, "y2": -0.02 }],
+                "colorHex": "#fff3b0",
+                "params": { "intensity": 0.7, "size": 0.8, "blink": 1.2, "sentido": -1, "derivaOn": 0 },
+                "timing": "all",
+                "startSec": 0,
+                "endSec": 0
+              }
+            ]
+          },
+          {
+            "id": "sc1b",
+            "autoDuration": true,
+            "durationSec": 6,
+            "holdSec": 0.3,
+            "usarVfxEscena": true,
+            "omitirVfxEscena": [],
+            "motionMode": "preset",
+            "preset": { "kind": "fixed", "cx": 0.42, "cy": 0.52, "w": 0.42, "distance": 0 },
+            "from": { "cx": 0.42, "cy": 0.52, "w": 0.42 },
+            "to": { "cx": 0.42, "cy": 0.52, "w": 0.42 },
+            "transition": "cut",
+            "transitionDur": 0,
+            "dialogues": [
+              {
+                "id": "d1c",
+                "text": "Lecturas de oxígeno en el hangar. Alguien respiró aquí hace menos de una hora.",
+                "quien": "Lena",
+                "dur": 0,
+                "gapSec": 0.3,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              },
+              {
+                "id": "d1d",
+                "text": "O algo fingió que lo hacía. Mantén el casco cerrado.",
+                "quien": "Kael",
+                "dur": 0,
+                "gapSec": 0.55,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              }
+            ],
+            "sfx": [],
+            "audioOverrides": [],
+            "overlays": [],
+            "vfx": []
+          }
+        ]
+      },
+      {
+        "id": "sc2",
+        "imageId": "img-kepler-pasillo",
+        "imgW": 1920,
+        "imgH": 1080,
+        "prompt": "Ciencia ficción cinematográfica. Interior de un pasillo largo de estación espacial dañada. Lena y Kael caminan hacia cámara, cascos abiertos, rostros visibles e iluminados por luces de neón magenta y cian rotas. Paneles laterales chispeando, cables colgando, señalización holográfica a medias. Humo bajo a la altura de las rodillas. Lena lleva un escáner holográfico en la mano; Kael una linterna táctica. Perspectiva fuerte de pasillo, profundidad, realismo, sin texto.",
+        "vfx": [
+          {
+            "id": "s2-neon",
+            "kind": "neon",
+            "shape": "linea",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.12, "y": 0.22, "x2": 0.88, "y2": 0.22 }],
+            "colorHex": "#ff2fd6",
+            "params": { "thickness": 1.1, "intensity": 1.2, "blink": 0.7, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s2-elec",
+            "kind": "electricidad",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [
+              { "x": 0.2, "y": 0.4, "x2": 0.2, "y2": 0.4 },
+              { "x": 0.78, "y": 0.48, "x2": 0.78, "y2": 0.48 }
+            ],
+            "colorHex": "#9ad4ff",
+            "params": { "size": 0.9, "branch": 1.2, "hueco": 0.15, "stormrate": 0.45, "flash": 0, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s2-baliza",
+            "kind": "baliza",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.5, "y": 0.12, "x2": 0.5, "y2": 0.12 }],
+            "colorHex": "#ff4040",
+            "params": { "size": 1.1, "blink": 1.4, "intensity": 1, "preset": 0, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s2-humo",
+            "kind": "humo",
+            "shape": "linea",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.15, "y": 0.78, "x2": 0.85, "y2": 0.8 }],
+            "colorHex": "#7a8088",
+            "params": { "intensity": 1.15, "size": 1.4, "speed": 0.55, "limit": 0.35, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          }
+        ],
+        "shots": [
+          {
+            "id": "sc2a",
+            "autoDuration": true,
+            "durationSec": 6,
+            "holdSec": 0.3,
+            "usarVfxEscena": true,
+            "omitirVfxEscena": [],
+            "motionMode": "preset",
+            "preset": { "kind": "in", "cx": 0.5, "cy": 0.5, "w": 1, "distance": 0.22 },
+            "from": { "cx": 0.5, "cy": 0.5, "w": 1 },
+            "to": { "cx": 0.5, "cy": 0.5, "w": 0.78 },
+            "transition": "fade",
+            "transitionDur": 0.6,
+            "dialogues": [
+              {
+                "id": "d2a",
+                "text": "El pasillo B-7 sigue activo. Eso no debería ser posible sin un núcleo estable.",
+                "quien": "Lena",
+                "dur": 0,
+                "gapSec": 0.3,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              },
+              {
+                "id": "d2b",
+                "text": "Estación Kepler. Identifíquense.",
+                "quien": "Vox",
+                "dur": 0,
+                "gapSec": 0.7,
+                "effect": "robot",
+                "speed": 0.95,
+                "pitch": 0.9,
+                "stale": false
+              }
+            ],
+            "sfx": [],
+            "audioOverrides": [],
+            "overlays": [],
+            "vfx": []
+          },
+          {
+            "id": "sc2b",
+            "autoDuration": true,
+            "durationSec": 5,
+            "holdSec": 0.25,
+            "usarVfxEscena": true,
+            "omitirVfxEscena": [],
+            "motionMode": "preset",
+            "preset": { "kind": "fixed", "cx": 0.5, "cy": 0.42, "w": 0.38, "distance": 0 },
+            "from": { "cx": 0.5, "cy": 0.42, "w": 0.38 },
+            "to": { "cx": 0.5, "cy": 0.42, "w": 0.38 },
+            "transition": "cut",
+            "transitionDur": 0,
+            "dialogues": [
+              {
+                "id": "d2c",
+                "text": "Somos la tripulación de rescate del Meridiano. Responde: ¿quién reactivó el núcleo?",
+                "quien": "Kael",
+                "dur": 0,
+                "gapSec": 0.25,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              },
+              {
+                "id": "d2d",
+                "text": "El umbral no se reactivó. Se abrió.",
+                "quien": "Vox",
+                "dur": 0,
+                "gapSec": 0.55,
+                "effect": "robot",
+                "speed": 0.92,
+                "pitch": 0.88,
+                "stale": false
+              }
+            ],
+            "sfx": [],
+            "audioOverrides": [],
+            "overlays": [],
+            "vfx": [
+              {
+                "id": "sc2b-glitch",
+                "kind": "glitch",
+                "shape": "punto",
+                "espacio": "encuadre",
+                "follow": false,
+                "auto": false,
+                "nodes": [{ "x": 0.5, "y": 0.45, "x2": 0.5, "y2": 0.45 }],
+                "colorHex": "#ffffff",
+                "params": { "intensity": 1.3, "size": 1.4, "duration": 1.1, "every": 2.2, "spread": 0.15 },
+                "timing": "all",
+                "startSec": 0,
+                "endSec": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "sc3",
+        "imageId": "img-kepler-umbral",
+        "imgW": 1920,
+        "imgH": 1080,
+        "prompt": "Ciencia ficción cinematográfica. Laboratorio circular en el corazón de la estación. En el centro, un anillo metálico enorme sostiene un portal ovalado vertical, ligeramente ladeado, con borde de energía cian y núcleo oscuro como un agujero. Lena está a la izquierda del anillo con la mano casi tocando el campo; Kael a la derecha, arma baja, tensión en el cuerpo. Consolas holográficas alrededor, runas de luz, cables de energía. Personas reales, proporciones humanas correctas, iluminación dramática, sin texto.",
+        "vfx": [
+          {
+            "id": "s3-portal",
+            "kind": "portal",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.52, "y": 0.44, "x2": 0.52, "y2": 0.44 }],
+            "colorHex": "#6ef0ff",
+            "params": {
+              "size": 1.55,
+              "forma": 0,
+              "ancho": 0.82,
+              "alto": 1.35,
+              "giro": -0.18,
+              "speed": 1.15,
+              "intensity": 1.25,
+              "dir": 0,
+              "derivaOn": 0
+            },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s3-aura",
+            "kind": "aura",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.52, "y": 0.44, "x2": 0.52, "y2": 0.44 }],
+            "colorHex": "#7effc2",
+            "params": { "intensity": 0.85, "size": 1.6, "speed": 0.9, "turb": 1.1, "limit": 0.5, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s3-haces",
+            "kind": "haces",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.52, "y": 0.4, "x2": 0.52, "y2": 0.4 }],
+            "colorHex": "#b8f7ff",
+            "params": { "rayos": 7, "length": 1.3, "intensity": 0.55, "speed": 0.6, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s3-polvo",
+            "kind": "polvo",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.52, "y": 0.5, "x2": 0.52, "y2": 0.5 }],
+            "colorHex": "#a8fff0",
+            "params": { "intensity": 1.3, "size": 1, "blink": 1.4, "speed": 0.7, "limit": 0.45, "sentido": -1, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          }
+        ],
+        "shots": [
+          {
+            "id": "sc3a",
+            "autoDuration": true,
+            "durationSec": 7,
+            "holdSec": 0.35,
+            "usarVfxEscena": true,
+            "omitirVfxEscena": [],
+            "motionMode": "preset",
+            "preset": { "kind": "in", "cx": 0.52, "cy": 0.45, "w": 1, "distance": 0.24 },
+            "from": { "cx": 0.52, "cy": 0.45, "w": 1 },
+            "to": { "cx": 0.52, "cy": 0.45, "w": 0.72 },
+            "transition": "fade",
+            "transitionDur": 0.7,
+            "dialogues": [
+              {
+                "id": "d3a",
+                "text": "No es un agujero de gusano. Es una puerta. Alguien la talló para que se abriera desde este lado.",
+                "quien": "Lena",
+                "dur": 0,
+                "gapSec": 0.3,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              },
+              {
+                "id": "d3b",
+                "text": "Y del otro lado… ¿quién espera?",
+                "quien": "Kael",
+                "dur": 0,
+                "gapSec": 0.5,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              }
+            ],
+            "sfx": [],
+            "audioOverrides": [],
+            "overlays": [],
+            "vfx": []
+          },
+          {
+            "id": "sc3b",
+            "autoDuration": true,
+            "durationSec": 5,
+            "holdSec": 0.4,
+            "usarVfxEscena": true,
+            "omitirVfxEscena": ["s3-haces"],
+            "motionMode": "preset",
+            "preset": { "kind": "fixed", "cx": 0.52, "cy": 0.44, "w": 0.36, "distance": 0 },
+            "from": { "cx": 0.52, "cy": 0.44, "w": 0.36 },
+            "to": { "cx": 0.52, "cy": 0.44, "w": 0.36 },
+            "transition": "cut",
+            "transitionDur": 0,
+            "dialogues": [
+              {
+                "id": "d3c",
+                "text": "Acceso autorizado. El umbral acepta dos viajeros.",
+                "quien": "Vox",
+                "dur": 0,
+                "gapSec": 0.25,
+                "effect": "robot",
+                "speed": 0.9,
+                "pitch": 0.85,
+                "stale": false
+              },
+              {
+                "id": "d3d",
+                "text": "Si cruzamos, no hay vuelta fácil. Dilo ahora.",
+                "quien": "Lena",
+                "dur": 0,
+                "gapSec": 0.55,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              }
+            ],
+            "sfx": [],
+            "audioOverrides": [],
+            "overlays": [],
+            "vfx": [
+              {
+                "id": "sc3b-destello",
+                "kind": "destello",
+                "shape": "punto",
+                "espacio": "imagen",
+                "follow": true,
+                "auto": false,
+                "nodes": [{ "x": 0.52, "y": 0.44, "x2": 0.52, "y2": 0.44 }],
+                "colorHex": "#8fd3ff",
+                "params": { "intensity": 1.4, "size": 1.5, "duration": 1.2, "every": 3, "spread": 0 },
+                "timing": "all",
+                "startSec": 0,
+                "endSec": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "sc4",
+        "imageId": "img-kepler-cubierta",
+        "imgW": 1920,
+        "imgH": 1080,
+        "prompt": "Ciencia ficción cinematográfica. Cubierta de observación con un gran ventanal hexagonal frente al vacío. Un desgarro espacial ovalado horizontal flota fuera, como una cicatriz luminosa en el espacio, ladeada hacia la derecha. Lena y Kael de espaldas al espectador, siluetas humanas claras, mirando el fenómeno. Niebla fina dentro de la cubierta, reflejos en el cristal, estrellas densas. Emoción de decisión final. Realista, épico, sin texto.",
+        "vfx": [
+          {
+            "id": "s4-portal",
+            "kind": "portal",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.58, "y": 0.4, "x2": 0.58, "y2": 0.4 }],
+            "colorHex": "#b98bff",
+            "params": {
+              "size": 1.7,
+              "forma": 0,
+              "ancho": 1.75,
+              "alto": 0.7,
+              "giro": 0.22,
+              "speed": 0.85,
+              "intensity": 1.1,
+              "dir": 1,
+              "derivaOn": 0
+            },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s4-niebla",
+            "kind": "niebla",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.4, "y": 0.7, "x2": 0.4, "y2": 0.7 }],
+            "colorHex": "#cfd6e6",
+            "params": { "density": 1.1, "speed": 0.5, "size": 1.3, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          },
+          {
+            "id": "s4-luz",
+            "kind": "luz",
+            "shape": "punto",
+            "espacio": "imagen",
+            "follow": true,
+            "auto": false,
+            "nodes": [{ "x": 0.58, "y": 0.4, "x2": 0.58, "y2": 0.4 }],
+            "colorHex": "#d0b8ff",
+            "params": { "intensity": 1.1, "size": 1.8, "blink": 0.35, "derivaOn": 0 },
+            "timing": "all",
+            "startSec": 0,
+            "endSec": 0
+          }
+        ],
+        "shots": [
+          {
+            "id": "sc4a",
+            "autoDuration": true,
+            "durationSec": 7,
+            "holdSec": 0.4,
+            "usarVfxEscena": true,
+            "omitirVfxEscena": [],
+            "motionMode": "preset",
+            "preset": { "kind": "in", "cx": 0.55, "cy": 0.45, "w": 1, "distance": 0.18 },
+            "from": { "cx": 0.55, "cy": 0.45, "w": 1 },
+            "to": { "cx": 0.55, "cy": 0.45, "w": 0.82 },
+            "transition": "fade",
+            "transitionDur": 0.9,
+            "dialogues": [
+              {
+                "id": "d4a",
+                "text": "Desde la cubierta, el umbral ya no parecía un experimento. Parecía una invitación.",
+                "quien": "",
+                "dur": 0,
+                "gapSec": 0.35,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              },
+              {
+                "id": "d4b",
+                "text": "Si hay gente al otro lado… merecen saber que no los olvidamos.",
+                "quien": "Kael",
+                "dur": 0,
+                "gapSec": 0.5,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              }
+            ],
+            "sfx": [],
+            "audioOverrides": [],
+            "overlays": [],
+            "vfx": [
+              {
+                "id": "sc4a-fugaces",
+                "kind": "fugaces",
+                "shape": "arriba",
+                "espacio": "encuadre",
+                "follow": false,
+                "auto": true,
+                "nodes": [{ "x": 0, "y": -0.02, "x2": 1, "y2": -0.02 }],
+                "colorHex": "#dbe9ff",
+                "params": { "intensity": 0.9, "size": 1, "speed": 1.2, "angulo": -0.35, "limit": 0.7, "derivaOn": 0 },
+                "timing": "all",
+                "startSec": 0,
+                "endSec": 0
+              }
+            ]
+          },
+          {
+            "id": "sc4b",
+            "autoDuration": true,
+            "durationSec": 6,
+            "holdSec": 0.6,
+            "usarVfxEscena": true,
+            "omitirVfxEscena": [],
+            "motionMode": "preset",
+            "preset": { "kind": "fixed", "cx": 0.58, "cy": 0.4, "w": 0.4, "distance": 0 },
+            "from": { "cx": 0.58, "cy": 0.4, "w": 0.4 },
+            "to": { "cx": 0.58, "cy": 0.4, "w": 0.4 },
+            "transition": "fade",
+            "transitionDur": 1,
+            "dialogues": [
+              {
+                "id": "d4c",
+                "text": "Entonces cruzamos. Juntos.",
+                "quien": "Lena",
+                "dur": 0,
+                "gapSec": 0.3,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              },
+              {
+                "id": "d4d",
+                "text": "Y la estación, por primera vez en dieciocho años, dejó de estar sola.",
+                "quien": "",
+                "dur": 0,
+                "gapSec": 0.65,
+                "effect": "none",
+                "speed": 1,
+                "pitch": 1,
+                "stale": false
+              }
+            ],
+            "sfx": [],
+            "audioOverrides": [],
+            "overlays": [],
+            "vfx": [
+              {
+                "id": "sc4b-shock",
+                "kind": "shockwave",
+                "shape": "punto",
+                "espacio": "imagen",
+                "follow": true,
+                "auto": false,
+                "nodes": [{ "x": 0.58, "y": 0.4, "x2": 0.58, "y2": 0.4 }],
+                "colorHex": "#ffffff",
+                "params": { "size": 1.4, "speed": 1.1, "thickness": 1, "every": 4, "spread": 0 },
+                "timing": "all",
+                "startSec": 0,
+                "endSec": 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

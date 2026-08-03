@@ -225,10 +225,36 @@ export function newVfx(kind: VfxKind): VfxLayer {
     // Lo que se coloca en un sitio concreto se pega a la imagen; lo que cae
     // sobre todo el cuadro, no.
     follow: shape !== "arriba",
+    // Anclas de foto: espacio imagen. Atmósfera de cuadro: encuadre.
+    espacio: shape === "arriba" ? "encuadre" : "imagen",
     colorHex: spec.color ?? "#ffffff",
     params: vfxDefaults(kind),
     timing: "all", startSec: 0, endSec: 2,
   };
+}
+
+// ¿Este efecto pertenece a la foto (escena) o al cuadro de una toma?
+// Lluvia/nieve «arriba» y golpes a tiempo concreto se quedan en la toma.
+export function esVfxDeEscena(v: VfxLayer): boolean {
+  if (v.shape === "arriba") return false;
+  if (v.timing === "range") return false;
+  return !!v.follow || v.espacio === "imagen" || ANCLADOS.has(v.kind);
+}
+
+function fingerprintVfx(v: VfxLayer): string {
+  const nodos = (v.nodes ?? [])
+    .map((n) => [n.x, n.y, n.x2, n.y2].map((x) => Math.round(x * 100)).join(","))
+    .join(";");
+  return `${v.kind}|${v.shape}|${nodos}`;
+}
+
+// Capas que se dibujan en esta toma: las de la escena (si la toma las usa) + las suyas.
+export function capasVfxActivas(scene: StoryScene, shot: Shot): VfxLayer[] {
+  const propias = shot.vfx ?? [];
+  if (shot.usarVfxEscena === false) return [...propias];
+  const omitidos = new Set(shot.omitirVfxEscena ?? []);
+  const deEscena = (scene.vfx ?? []).filter((v) => !omitidos.has(v.id));
+  return [...deEscena, ...propias];
 }
 
 // El rato en el que cada efecto está activo dentro de la toma.
@@ -257,7 +283,14 @@ export interface Shot {
   sfx: ShotSfx[];
   audioOverrides: AudioOverride[]; // qué hacer con los bucles que vienen de arriba
   overlays: PngOverlay[];
+  // Efectos SOLO de esta toma (golpes a tiempo, lluvia de cuadro…). Los anclados
+  // a la foto viven en la escena y se reutilizan en todas las tomas.
   vfx: VfxLayer[];
+  // Si true (de serie), esta toma también enseña los efectos de la escena.
+  // Apágalo para un plano limpio o con efectos propios distintos.
+  usarVfxEscena: boolean;
+  // Ids de scene.vfx que esta toma NO pinta (aunque usarVfxEscena esté on).
+  omitirVfxEscena: string[];
   // Encuadres de los OTROS formatos. Lo de arriba (motionMode/preset/from/to) es
   // el encuadre del formato activo; al cambiar de formato se guarda aquí el que
   // se deja y se recupera el que ya se hubiera ajustado, para poder tener el
@@ -279,6 +312,9 @@ export interface StoryScene {
   imgW: number; // tamaño natural de la imagen, para calcular encuadres
   imgH: number;
   shots: Shot[];
+  // Efectos pegados a la FOTO (portal, fuego, humo…). Se colocan una vez y
+  // todas las tomas los ven al hacer zoom/pan, si la toma tiene usarVfxEscena.
+  vfx: VfxLayer[];
   // Cómo es esta imagen, con palabras. Lo escribe la IA al inventar el capítulo
   // y sirve para dibujarla luego; también vale escrito a mano. Es opcional: los
   // proyectos de antes no lo tienen y siguen funcionando igual.
@@ -738,11 +774,13 @@ export function newShot(imgW: number, imgH: number, kind: MotionKind = "in"): Sh
     audioOverrides: [],
     overlays: [],
     vfx: [],
+    usarVfxEscena: true,
+    omitirVfxEscena: [],
   };
 }
 
 export function newScene(imageId: string, imgW: number, imgH: number): StoryScene {
-  return { id: nanoid(6), imageId, imgW, imgH, shots: [newShot(imgW, imgH)] };
+  return { id: nanoid(6), imageId, imgW, imgH, shots: [newShot(imgW, imgH)], vfx: [] };
 }
 
 export function newDialogue(gapSec = 0.3): Dialogue {
@@ -901,6 +939,9 @@ export function duplicateShot(p: StoryProject, sceneId: string, shotId: string):
         // siguen valiendo tal cual.
         audioOverrides: o.audioOverrides.map((x) => ({ ...x })),
         overlays: o.overlays.map((x) => ({ ...x, id: nanoid(6) })),
+        // La copia sigue viendo los de la escena; los VFX propios se duplican.
+        usarVfxEscena: o.usarVfxEscena !== false,
+        omitirVfxEscena: [...(o.omitirVfxEscena ?? [])],
         vfx: (o.vfx ?? []).map((v) => ({
           ...v, id: nanoid(6),
           params: { ...v.params },
@@ -1043,8 +1084,34 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     audioOverrides: s.audioOverrides ?? [],
     overlays: (s.overlays ?? []).map(normalizeOverlay),
     vfx: (s.vfx ?? []).map(normalizeVfx),
+    usarVfxEscena: s.usarVfxEscena !== false,
+    omitirVfxEscena: Array.isArray(s.omitirVfxEscena)
+      ? s.omitirVfxEscena.map(String).filter(Boolean).slice(0, 40)
+      : [],
     altFrames: normalizeAltFrames(s.altFrames, imgW, imgH),
   };
+}
+
+function promoteSceneVfx(shots: Shot[], rawSceneVfx: any): { vfx: VfxLayer[]; shots: Shot[] } {
+  let vfx = (Array.isArray(rawSceneVfx) ? rawSceneVfx : []).map(normalizeVfx);
+  if (vfx.length) return { vfx, shots };
+
+  // Proyectos viejos: anclas repetidas en cada toma → subirlas a la escena.
+  const fuente = shots.find((s) => (s.vfx ?? []).some(esVfxDeEscena));
+  if (!fuente) return { vfx: [], shots };
+
+  vfx = fuente.vfx.filter(esVfxDeEscena).map((v) => ({
+    ...v,
+    id: nanoid(6),
+    params: { ...v.params },
+    nodes: v.nodes.map((n) => ({ ...n })),
+  }));
+  const huellas = new Set(vfx.map(fingerprintVfx));
+  const next = shots.map((s) => ({
+    ...s,
+    vfx: (s.vfx ?? []).filter((v) => !(esVfxDeEscena(v) && huellas.has(fingerprintVfx(v)))),
+  }));
+  return { vfx, shots: next };
 }
 
 function normalizeAltFrames(raw: any, imgW: number, imgH: number): Shot["altFrames"] {
@@ -1064,20 +1131,21 @@ export function migrateProject(raw: any): StoryProject {
   if (Array.isArray(raw.scenes)) {
     return {
       aspect: normalizeAspect(raw.aspect),
-      scenes: raw.scenes.map((sc: any) => ({
-        id: sc.id ?? nanoid(6),
-        imageId: sc.imageId,
-        imgW: sc.imgW || 16,
-        imgH: sc.imgH || 9,
-        shots: (sc.shots ?? []).map((s: any) => normalizeShot(s, sc.imgW || 16, sc.imgH || 9)),
-        // La descripción de la imagen viaja con la escena: sin ella no se puede
-        // volver a dibujar ni saber qué había ahí.
-        ...(typeof sc.prompt === "string" && sc.prompt.trim() ? { prompt: sc.prompt.trim().slice(0, 2000) } : {}),
-      })),
+      scenes: raw.scenes.map((sc: any) => {
+        const imgW = sc.imgW || 16, imgH = sc.imgH || 9;
+        const shotsRaw = (sc.shots ?? []).map((s: any) => normalizeShot(s, imgW, imgH));
+        const { vfx, shots } = promoteSceneVfx(shotsRaw, sc.vfx);
+        return {
+          id: sc.id ?? nanoid(6),
+          imageId: sc.imageId,
+          imgW, imgH,
+          shots,
+          vfx,
+          ...(typeof sc.prompt === "string" && sc.prompt.trim() ? { prompt: sc.prompt.trim().slice(0, 2000) } : {}),
+        };
+      }),
       audioLayers: raw.audioLayers ?? [],
       narrationVolume: typeof raw.narrationVolume === "number" ? raw.narrationVolume : 1,
-      // Qué voz usa cada quien. Viaja con el proyecto: si no, al abrirlo en otro
-      // sitio todos volverían a sonar igual.
       ...(raw.voices && typeof raw.voices === "object" ? { voices: raw.voices as Record<string, string> } : {}),
       intro: normalizeClip(raw.intro),
       outro: normalizeClip(raw.outro),
@@ -1092,9 +1160,11 @@ export function migrateProject(raw: any): StoryProject {
     return "fixed";
   };
   const scenes: StoryScene[] = raw.slides.map((s: any) => {
-    // No conocemos el tamaño original: 16:9 deja el encuadre completo.
     const imgW = 16, imgH = 9;
     const base = newShot(imgW, imgH, kindOf(s.pan, s.zoom));
+    const allVfx: VfxLayer[] = (s.vfx ?? []).map(normalizeVfx);
+    const sceneVfx = allVfx.filter(esVfxDeEscena);
+    const shotVfx = allVfx.filter((v: VfxLayer) => !esVfxDeEscena(v));
     const shot: Shot = {
       ...base,
       transition: s.transition ?? "fade",
@@ -1102,9 +1172,9 @@ export function migrateProject(raw: any): StoryProject {
         ? [{ id: nanoid(6), text: s.narration, audioId: s.audioId, dur: s.narrationDur ?? 0, gapSec: 0, effect: "none" as VoiceEffect, speed: 1, pitch: 1, stale: false }]
         : [],
       overlays: (s.overlays ?? []).map(normalizeOverlay),
-      vfx: (s.vfx ?? []).map(normalizeVfx),
+      vfx: shotVfx,
     };
-    return { id: s.id ?? nanoid(6), imageId: s.imageId, imgW, imgH, shots: [shot] };
+    return { id: s.id ?? nanoid(6), imageId: s.imageId, imgW, imgH, shots: [shot], vfx: sceneVfx };
   });
   return {
     aspect: normalizeAspect(raw.aspect),

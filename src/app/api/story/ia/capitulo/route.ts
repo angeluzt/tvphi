@@ -29,12 +29,13 @@ Devuelve SOLO un objeto JSON con esta forma:
 {"name": "título", "project": {"aspect":"16:9","narrationVolume":1,"audioLayers":[],"intro":null,"outro":null,"scenes":[...]}}
 
 Cada escena es UNA imagen:
-{"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen","shots":[...]}
+{"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen",
+ "vfx":[/* anclas de la FOTO: portal, fuego, humo… */],"shots":[...]}
 
 Cada toma es un encuadre sobre esa imagen:
 {"id":"s1a","autoDuration":true,"durationSec":6,"holdSec":0.4,"motionMode":"preset",
  "preset":{"kind":"in","cx":0.5,"cy":0.5,"w":1,"distance":0.25},
- "transition":"fade","transitionDur":1,
+ "transition":"fade","transitionDur":1,"usarVfxEscena":true,"omitirVfxEscena":[],
  "dialogues":[{"id":"d1","text":"...","quien":"","dur":0,"gapSec":0.5,"effect":"none","speed":1,"pitch":1,"stale":false}],
  "sfx":[],"overlays":[],"audioOverrides":[],"vfx":[]}
 
@@ -42,11 +43,15 @@ Reglas que NO puedes saltarte:
 - Los identificadores de imagen ("imageId") son inventados y descriptivos: uno distinto por escena.
 - "prompt" describe la imagen de esa escena para poder dibujarla: qué se ve, encuadre, luz, ambiente y estilo. Concreto y visual, 1-3 frases, sin texto ni letras dentro de la imagen. Mantén los mismos personajes y el mismo estilo entre escenas describiéndolos igual cada vez: es lo único que las mantiene unidas.
 - "kind" de preset: fixed, left, right, up, down, in, out. Para un primer plano baja "w" (1 = imagen entera, 0.35 = primer plano).
-- Los efectos van en "vfx" y SOLO puedes usar los "id" del catálogo que se te da. Respeta las formas admitidas de cada uno y los rangos de sus ajustes.
-- Para los sitios de un efecto usa SIEMPRE "espacio":"imagen" y coordenadas 0..1 sobre la foto.
+- Los efectos pegados a la foto (portal, fuego, humo, lámpara, aura…) van UNA SOLA VEZ en "scenes[].vfx", con "espacio":"imagen" y "follow":true. NO los copies en cada toma.
+- En "shots[].vfx" solo lo de ESA toma: lluvia/nieve/niebla con forma "arriba", o un golpe puntual (explosión, destello) con timing "range".
+- "usarVfxEscena":true (casi siempre) hace que la toma vea los efectos de la escena al hacer zoom. Pon false solo si esa toma debe verse sin NINGUNO de ellos.
+- "omitirVfxEscena":[] lista ids concretos de scenes[].vfx que esa toma no pinta (el resto sí). Úsalo si un plano no debe mostrar, por ejemplo, un fuego concreto; deja [] si no omite nada.
+- Los efectos SOLO pueden usar los "id" del catálogo. Respeta formas y rangos.
+- Para los sitios usa SIEMPRE "espacio":"imagen" y coordenadas 0..1 sobre la foto (salvo forma "arriba").
 - Escribe los diálogos en el idioma del encargo del usuario, con frases que se puedan narrar en voz alta.
 - "quien" dice quién habla: cadena vacía para el narrador, y el nombre del personaje cuando habla él. Usa el mismo nombre siempre para el mismo personaje: es lo que permite darle su propia voz.
-- Varias tomas por escena quedan mejor que una: un plano abierto y un primer plano sobre la misma imagen.
+- Varias tomas por escena quedan mejor que una: un plano abierto y un primer plano sobre la misma imagen (mismos vfx de escena, distinto encuadre).
 
 LO QUE SE NARRA (esto es lo que más se rompe, léelo dos veces):
 - El campo "text" de cada diálogo es EXACTAMENTE lo que se va a oír en el video. Se lee tal cual, palabra por palabra.

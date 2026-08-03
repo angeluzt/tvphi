@@ -27,7 +27,7 @@ const COMPORTAMIENTO: Record<string, string> = {
   magiccircle: "Círculo de runas que gira sobre el sitio y se apaga.",
   fuego: "Llama continua que sube desde el sitio. En línea, arde todo el trazo.",
   aura: "Bola de energía revuelta pegada al sitio. No se desplaza.",
-  portal: "Agujero ovalado: centro oscuro, borde encendido y remolino. Varios juntos llenan un vano.",
+  portal: "Agujero ajustable (óvalo o rectángulo): centro oscuro, borde encendido y remolino. Ancho/alto/giro para encajar el vano de la imagen.",
   luz: "Esfera de luz quieta. Pocas partículas.",
   baliza: "Destellos alternos de policía o ambulancia sobre el sitio.",
   neon: "Tubo de luz a lo largo del trazo: filamento blanco dentro de una nube de color.",
@@ -170,6 +170,9 @@ export function reglasMontaje() {
     duracion: "Con autoDuration la toma dura lo que dure su narración; hasta que no se genera la voz, dura el mínimo (2 s). Con autoDuration en falso manda durationSec.",
     pausa: "holdSec son segundos de imagen quieta DESPUÉS del movimiento; se suman a la toma.",
     tomas: "Una escena es una imagen; sus tomas son encuadres distintos sobre ella. Para un primer plano, baja preset.w (1 = imagen entera, 0.35 = primer plano).",
+    vfxEscena: "Portal, fuego, humo, lámpara… van en scenes[].vfx UNA vez (espacio imagen). Las tomas los ven con usarVfxEscena:true y al hacer zoom siguen el sitio.",
+    vfxToma: "En shots[].vfx solo atmósfera de cuadro (lluvia/nieve forma arriba) o golpes puntuales de ESA toma.",
+    omitirVfx: "omitirVfxEscena:[\"id\"] oculta efectos concretos de la escena en esa toma. [] = no omite ninguno. usarVfxEscena:false oculta TODOS los de la escena.",
     tiempos: "startSec y endSec de un efecto son segundos absolutos dentro de la toma: si la toma cambia de duración al generar la voz, se descolocan. Úsalos cortos o deja timing en «all».",
     musica: "Un sonido de toma con loop sigue sonando en las tomas siguientes hasta que otra lo corte con audioOverrides: [{sfxId, stop: true, volume: null}]. Es la forma de poner música que aguanta cambios de duración.",
     archivos: "Las imágenes y los audios NO viajan en el JSON: solo sus identificadores y sus nombres. Al importar salen como faltantes y se reponen desde la propia pantalla.",
@@ -224,9 +227,15 @@ export function ejemploDeEscena() {
     imageId: "img-torre",
     imgW: 1920, imgH: 1080,
     prompt: "Una torre de piedra en un acantilado, de noche, con una ventana encendida. Tormenta al fondo, mar picado. Estilo cinematográfico oscuro.",
+    vfx: [
+      { id: "v1", kind: "lampara", shape: "punto", espacio: "imagen", follow: true,
+        nodes: [{ x: 0.53, y: 0.38, x2: 0.53, y2: 0.38 }],
+        colorHex: "#ffd9a0", params: { size: 0.8, alcance: 1, intensity: 0.7, blink: 0.3, nervio: 0 },
+        timing: "all", startSec: 0, endSec: 0 },
+    ],
     shots: [
       {
-        id: "e1a", autoDuration: true, durationSec: 6, holdSec: 0.4,
+        id: "e1a", autoDuration: true, durationSec: 6, holdSec: 0.4, usarVfxEscena: true,
         motionMode: "preset", preset: { kind: "in", cx: 0.5, cy: 0.45, w: 1, distance: 0.18 },
         from: { cx: 0.5, cy: 0.45, w: 1 }, to: { cx: 0.5, cy: 0.45, w: 0.82 },
         transition: "fade", transitionDur: 1,
@@ -235,13 +244,6 @@ export function ejemploDeEscena() {
         ],
         sfx: [], audioOverrides: [], overlays: [],
         vfx: [
-          // La ventana encendida: la luz va PEGADA a la ventana, así que sigue
-          // al encuadre. Sin "follow" se quedaría flotando al acercarse.
-          { id: "v1", kind: "lampara", shape: "punto", espacio: "imagen", follow: true,
-            nodes: [{ x: 0.53, y: 0.38, x2: 0.53, y2: 0.38 }],
-            colorHex: "#ffd9a0", params: { size: 0.8, ancho: 1, intensity: 0.7, blink: 0.3, nervio: 0 },
-            timing: "all", startSec: 0, endSec: 0 },
-          // La lluvia cruza el cuadro entero: forma "arriba", sin sitios.
           { id: "v2", kind: "lluvia", shape: "arriba", espacio: "encuadre",
             nodes: [{ x: 0, y: 0, x2: 1, y2: 0 }],
             colorHex: "#8fc4ff", params: { intensity: 1.4, size: 1, speed: 1.2, wind: -0.6, limit: 0 },
@@ -249,8 +251,7 @@ export function ejemploDeEscena() {
         ],
       },
       {
-        // Primer plano de la ventana: la misma imagen, otro encuadre.
-        id: "e1b", autoDuration: true, durationSec: 4, holdSec: 0.2,
+        id: "e1b", autoDuration: true, durationSec: 4, holdSec: 0.2, usarVfxEscena: true,
         motionMode: "preset", preset: { kind: "fixed", cx: 0.53, cy: 0.38, w: 0.34, distance: 0 },
         from: { cx: 0.53, cy: 0.38, w: 0.34 }, to: { cx: 0.53, cy: 0.38, w: 0.34 },
         transition: "cut", transitionDur: 0,
@@ -274,6 +275,7 @@ export function ejemploDeEscena() {
 // delante. Van explícitos porque avisar sale más barato que corregir.
 export function fallosTipicos() {
   return [
+    "Copiar portal/fuego en cada toma: van en scenes[].vfx una sola vez.",
     "Poner un efecto por cada antorcha en vez de UN efecto con tres nodos.",
     "Usar «polvo» esperando que caiga: no cae, flota donde nace.",
     "Colocar un aura o una lámpara sin «follow»: al acercarse la cámara se despega de la foto.",

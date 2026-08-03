@@ -12,12 +12,14 @@ import { VOCES_INFO } from "@/lib/story/modelos";
 import { MissingAssets } from "./missing-assets";
 import { StoryHome, StoryBreadcrumb } from "./story-home";
 import { faltantes, referencias, type Falta } from "@/lib/story/missing";
+import { crearReferenciaVfx } from "@/lib/story/vfx-image-reference";
 import { crearZip, leerZip, nombreArchivo, idDeNombre } from "@/lib/story/zip";
 import { getAsset } from "@/lib/story/store";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
 import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
+import { VfxEditor } from "./vfx-editor";
 import { VfxCanvas, VfxTools } from "./vfx-canvas";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
@@ -28,7 +30,7 @@ import {
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets, duplicateShot,
   ASPECTS, aspectInfo, setProjectAspect, switchAspect, overlayWindow, vozDe, quienesHablan, NARRADOR, type Aspect,
   type StoryProject, type StoryScene, type Shot, type Dialogue, type AudioLayer, type PngOverlay, type Frame,
-  type VfxNode,
+  type VfxNode, type VfxLayer,
 } from "@/lib/story/model";
 import { Recorder } from "@/lib/studio/recorder";
 import { convert, remux } from "@/lib/editor/ffmpeg";
@@ -115,18 +117,32 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [montarAlEntrar, setMontarAlEntrar] = useState(false);
   // Qué pieza se está rehaciendo ahora mismo.
   const [rehaciendo, setRehaciendo] = useState<string | null>(null);
-  useEffect(() => {
-    fetch("/api/story/ia/clave").then((r) => r.json())
-      .then((j) => {
-        setVozOpenAi(!!j?.configurada && !!j?.models?.voz);
-        setIaImagen(!!j?.configurada && !!j?.models?.imagen);
-        setIaTexto(!!j?.configurada);
-      }).catch(() => {});
-  }, []);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
   // editor. Antes se caía directamente en el editor y elegir proyecto quedaba en
   // la columna de la derecha, que en un móvil acaba debajo de todo.
   const [vista, setVista] = useState<"inicio" | "editor">("inicio");
+
+  // La clave/modelos se guardan en otro panel; si solo se leían al montar,
+  // el editor se quedaba sin «Dibujar» aunque la DB ya tuviera gpt-image-2.
+  function aplicarCapacidadesIa(j: { configurada?: boolean; models?: { imagen?: string; voz?: string } } | null) {
+    setVozOpenAi(!!j?.configurada && !!j?.models?.voz);
+    setIaImagen(!!j?.configurada && !!j?.models?.imagen);
+    setIaTexto(!!j?.configurada);
+  }
+  async function refrescarCapacidadesIa() {
+    try {
+      const j = await fetch("/api/story/ia/clave").then((r) => r.json());
+      aplicarCapacidadesIa(j);
+      return j as { configurada?: boolean; models?: { imagen?: string; voz?: string } };
+    } catch {
+      return null;
+    }
+  }
+  useEffect(() => { void refrescarCapacidadesIa(); }, []);
+  useEffect(() => {
+    if (vista === "editor") void refrescarCapacidadesIa();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vista]);
   const [name, setName] = useState("Mi historia");
   const [voice, setVoice] = useState("es");
 
@@ -300,6 +316,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       scenes: p.scenes.map((sc) =>
         sc.id === sceneId ? { ...sc, shots: sc.shots.map((s) => (s.id === shotId ? next : s)) } : sc,
       ),
+    }));
+  }
+  function updSceneVfx(sceneId: string, vfx: VfxLayer[]) {
+    mut((p) => ({
+      ...p,
+      scenes: p.scenes.map((sc) => (sc.id === sceneId ? { ...sc, vfx } : sc)),
     }));
   }
 
@@ -659,13 +681,22 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       overlays: shot.overlays.map((o) => (o.id === overlayId ? { ...o, soundId, soundName: f.name } : o)),
     });
   }
-  // El efecto que se está colocando ahora mismo (si hay uno abierto).
-  const curVfx = curFlat?.shot.vfx?.find((v) => v.id === selVfx) ?? null;
+  // El efecto que se está colocando (de la escena o de la toma).
+  const curVfx =
+    curFlat?.scene.vfx?.find((v) => v.id === selVfx)
+    ?? curFlat?.shot.vfx?.find((v) => v.id === selVfx)
+    ?? null;
   function updVfxNodes(id: string, nodes: VfxNode[]) {
     if (!curFlat) return;
+    if ((curFlat.scene.vfx ?? []).some((v) => v.id === id)) {
+      updSceneVfx(
+        curFlat.scene.id,
+        (curFlat.scene.vfx ?? []).map((v) => (v.id === id ? { ...v, nodes, auto: false } : v)),
+      );
+      return;
+    }
     updShot(curFlat.scene.id, curFlat.shot.id, {
       ...curFlat.shot,
-      // Colocar a mano deja de ser "de serie": a partir de aquí manda el usuario.
       vfx: curFlat.shot.vfx.map((v) => (v.id === id ? { ...v, nodes, auto: false } : v)),
     });
   }
@@ -850,10 +881,27 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
     }
     setReponiendo(falta.id);
     try {
+      // Si la escena ya trae efectos del JSON, se pintan sobre negro y se mandan
+      // como referencia (imagen + máscara) para que el fondo encaje con ellos.
+      let referenciaVfx: Awaited<ReturnType<typeof crearReferenciaVfx>> = null;
+      const sceneId = falta.sceneIds[0];
+      if (sceneId) {
+        try {
+          referenciaVfx = await crearReferenciaVfx(projRef.current, sceneId);
+        } catch (e) {
+          console.warn("No se pudo preparar la referencia VFX", e);
+        }
+      }
+      if (referenciaVfx) setStatus(`Dibujando con ${referenciaVfx.resumen.split("\n").length} anclas VFX…`);
+
       const r = await fetch("/api/story/ia/imagen", {
         method: "POST", headers: { "Content-Type": "application/json" },
         // El formato del video manda: una escena apaisada pedida cuadrada se ve mal.
-        body: JSON.stringify({ prompt: descripcion, formato: projRef.current.aspect }),
+        body: JSON.stringify({
+          prompt: descripcion,
+          formato: projRef.current.aspect,
+          ...(referenciaVfx ? { referenciaVfx } : {}),
+        }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Error");
@@ -875,7 +923,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       }));
       setFaltas(await faltantes(projRef.current));
       engineRef.current?.update(projRef.current);
-      setStatus(`Imagen dibujada ✓ · ${falta.donde.join(" · ")}`);
+      const conRef = j.referenciaVfxUsada ? " (con VFX)" : "";
+      setStatus(`Imagen dibujada ✓${conRef} · ${falta.donde.join(" · ")}`);
       return true;
     } catch (err: any) {
       setStatus("No se pudo dibujar: " + (err?.message ?? ""));
@@ -973,7 +1022,9 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   // solo, y se ve por dónde va: es la diferencia entre esperar mirando una
   // barra y ver cómo se construye tu historia.
   async function montarTodo() {
-    const dibujos = iaImagen;
+    // Por si la clave/modelo se guardaron después de montar esta pantalla.
+    const cap = await refrescarCapacidadesIa();
+    const dibujos = !!(cap?.configurada && cap?.models?.imagen);
     let fs = await faltantes(projRef.current);
     setFaltas(fs);
 
@@ -1807,6 +1858,28 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
                 {openScene === sc.id && (
                   <div className="mt-3 space-y-3">
+                    {/* Efectos de la FOTO: una vez, encima de las tomas. */}
+                    <div className="rounded-lg border border-accent/30 bg-accent/5 p-2">
+                      <VfxEditor
+                        titulo="Efectos de la escena"
+                        pista="Portal, fuego, humo… de la foto. Se colocan una vez; todas las tomas los ven al hacer zoom."
+                        vfx={sc.vfx ?? []}
+                        dur={Math.max(2, ...sc.shots.map((s) => shotDur(s)))}
+                        seleccionado={selVfx}
+                        onChange={(v) => updSceneVfx(sc.id, v)}
+                        onSelect={(id) => {
+                          setSelVfx(id);
+                          setBorrandoVfx(false);
+                          // Hace falta una toma activa para colocar sobre la previsualización.
+                          const toma = sc.shots.find((s) => s.id === selShot) ?? sc.shots[0];
+                          if (toma) {
+                            setSelShot(toma.id);
+                            if (id) engineRef.current?.seekToShot(toma.id);
+                          }
+                        }}
+                      />
+                    </div>
+
                     {sc.shots.map((sh, hi) => (
                       <ShotEditor
                         key={sh.id}
@@ -1842,16 +1915,69 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                         onAddSticker={(e) => addSticker(sc.id, sh, e)}
                         onAddOverlaySound={(id, e) => addOverlaySound(sc.id, sh, id, e)}
                         selectedVfx={selVfx}
+                        sceneVfx={sc.vfx ?? []}
+                        onOmitirEfectoEscena={(vfxId, modo) => {
+                          mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => {
+                              if (s.id !== sc.id) return s;
+                              const i = s.shots.findIndex((x) => x.id === sh.id);
+                              if (i < 0) return s;
+                              return {
+                                ...s,
+                                shots: s.shots.map((toma, ti) => {
+                                  if (modo === "esta" && ti !== i) return toma;
+                                  if (modo === "adelante" && ti < i) return toma;
+                                  const omit = new Set(toma.omitirVfxEscena ?? []);
+                                  if (modo === "esta") {
+                                    if (omit.has(vfxId)) omit.delete(vfxId);
+                                    else omit.add(vfxId);
+                                  } else {
+                                    omit.add(vfxId);
+                                  }
+                                  return { ...toma, omitirVfxEscena: [...omit] };
+                                }),
+                              };
+                            }),
+                          }));
+                        }}
+                        onSoloEnEstaToma={(vfxId) => {
+                          mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => {
+                              if (s.id !== sc.id) return s;
+                              const capa = (s.vfx ?? []).find((v) => v.id === vfxId);
+                              if (!capa) return s;
+                              const copia = {
+                                ...capa,
+                                id: nanoid(6),
+                                params: { ...capa.params },
+                                nodes: capa.nodes.map((n) => ({ ...n })),
+                              };
+                              return {
+                                ...s,
+                                vfx: (s.vfx ?? []).filter((v) => v.id !== vfxId),
+                                shots: s.shots.map((toma) =>
+                                  toma.id !== sh.id
+                                    ? {
+                                        ...toma,
+                                        omitirVfxEscena: (toma.omitirVfxEscena ?? []).filter((id) => id !== vfxId),
+                                      }
+                                    : {
+                                        ...toma,
+                                        vfx: [...(toma.vfx ?? []), copia],
+                                        omitirVfxEscena: (toma.omitirVfxEscena ?? []).filter((id) => id !== vfxId),
+                                      },
+                                ),
+                              };
+                            }),
+                          }));
+                          setStatus("Efecto pasado solo a esta toma ✓");
+                        }}
                         onSelectVfx={(id) => {
                           setSelShot(sh.id);
                           setSelVfx(id);
-                          // Al abrir otro efecto se vuelve a "poner": quedarse en
-                          // modo borrar sin darte cuenta hace que el primer toque
-                          // en el nuevo no cree nada.
                           setBorrandoVfx(false);
-                          // Al abrir un efecto se lleva el reproductor a su toma:
-                          // si no, la capa para colocar sitios no sale porque el
-                          // vídeo está en otro sitio.
                           if (id) engineRef.current?.seekToShot(sh.id);
                         }}
                         onSelectOverlay={(id) => {
