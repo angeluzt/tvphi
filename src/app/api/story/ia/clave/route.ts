@@ -1,14 +1,18 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { cifrar, pista, pareceClaveOpenAi, MODELOS_POR_DEFECTO } from "@/lib/story/credenciales";
+import {
+  MODELOS_POR_DEFECTO,
+  hayOpenAi,
+  preferenciasModelos,
+  guardarModelos,
+  IA_NO_DISPONIBLE,
+} from "@/lib/story/credenciales";
+import { esAdminHistorias } from "@/lib/story/cupo";
 
-// La clave de OpenAI del usuario. Se guarda cifrada y NO se devuelve nunca:
-// lo único que sale de aquí es si hay una puesta y sus cuatro últimos caracteres.
+// Estado de IA para la interfaz.
+// Modelos: el usuario normal usa los de por defecto; solo el admin los cambia.
 
-// Un modelo por tarea: no todos hacen de todo. Los baratos de texto no generan
-// audio, así que tener uno solo no vale.
 const modelos = z.object({
   texto: z.string().max(80),
   imagen: z.string().max(80),
@@ -16,67 +20,56 @@ const modelos = z.object({
   vozNombre: z.string().max(40),
 });
 const guardar = z.object({
-  key: z.string().min(20).max(300).optional(),
+  key: z.string().max(300).optional(),
   models: modelos.partial().optional(),
 });
 
-
-// GET -> ¿hay clave? ¿cuál es?  (sin la clave)
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  const c = await prisma.aiCredential.findUnique({
-    where: { userId: user.id },
-    select: { provider: true, hint: true, models: true, updatedAt: true },
-  });
+  const admin = esAdminHistorias(user.email);
+  const models = await preferenciasModelos(user.id, user.email);
   return NextResponse.json({
-    configurada: !!c, provider: c?.provider ?? null, pista: c?.hint ?? null,
-    models: { ...MODELOS_POR_DEFECTO, ...((c?.models as any) ?? {}) },
+    configurada: hayOpenAi(),
+    admin,
+    models: { ...MODELOS_POR_DEFECTO, ...models },
   });
 }
 
-// POST -> guarda o reemplaza la clave.
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const parsed = guardar.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
-  const { key, models } = parsed.data;
 
-  // Se pueden cambiar solo los modelos, sin volver a escribir la clave.
-  if (!key) {
-    if (!models) return NextResponse.json({ error: "No hay nada que guardar" }, { status: 400 });
-    const hay = await prisma.aiCredential.findUnique({ where: { userId: user.id }, select: { models: true } });
-    if (!hay) return NextResponse.json({ error: "Pon primero tu clave" }, { status: 400 });
-    const fusion = { ...MODELOS_POR_DEFECTO, ...((hay.models as any) ?? {}), ...models };
-    await prisma.aiCredential.update({ where: { userId: user.id }, data: { models: fusion as any } });
-    return NextResponse.json({ ok: true, configurada: true, models: fusion });
+  if (parsed.data.key) {
+    return NextResponse.json({ error: "No se aceptan claves desde el navegador." }, { status: 400 });
+  }
+  if (!parsed.data.models) {
+    return NextResponse.json({ error: "No hay nada que guardar" }, { status: 400 });
+  }
+  if (!esAdminHistorias(user.email)) {
+    return NextResponse.json({ error: "Solo el administrador puede cambiar los modelos." }, { status: 403 });
+  }
+  if (!hayOpenAi()) {
+    return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
   }
 
-  const limpia = key.trim();
-  if (!pareceClaveOpenAi(limpia)) {
-    return NextResponse.json({ error: "Eso no parece una clave de OpenAI (empiezan por «sk-»)" }, { status: 400 });
+  try {
+    const fusion = await guardarModelos(user.id, user.email, parsed.data.models);
+    return NextResponse.json({
+      ok: true,
+      configurada: true,
+      admin: true,
+      models: fusion,
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "No se pudo guardar" }, { status: 403 });
   }
-  const datos = { provider: "openai", encrypted: cifrar(limpia), hint: pista(limpia) };
-  // Los modelos que vengan se FUNDEN con los guardados: cambiar la clave no
-  // debe borrar el modelo de voz que ya estaba puesto.
-  const previos = await prisma.aiCredential.findUnique({ where: { userId: user.id }, select: { models: true } });
-  const fusion = { ...MODELOS_POR_DEFECTO, ...((previos?.models as any) ?? {}), ...(models ?? {}) };
-  const c = await prisma.aiCredential.upsert({
-    where: { userId: user.id },
-    create: { userId: user.id, ...datos, models: fusion as any },
-    update: { ...datos, models: fusion as any },
-  });
-  return NextResponse.json({
-    ok: true, configurada: true, pista: datos.hint,
-    models: { ...MODELOS_POR_DEFECTO, ...((c.models as any) ?? {}) },
-  });
 }
 
-// DELETE -> la borra.
 export async function DELETE() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  await prisma.aiCredential.deleteMany({ where: { userId: user.id } });
-  return NextResponse.json({ ok: true, configurada: false });
+  return NextResponse.json({ ok: true, configurada: hayOpenAi() });
 }

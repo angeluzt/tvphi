@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { estadoCupoHistorias } from "@/lib/story/cupo";
 
 // Metadatos del proyecto (ligeros): texto/movimiento/transición de cada slide y
 // capas de audio. Las imágenes/audios pesados viven en IndexedDB del navegador y
@@ -175,7 +176,8 @@ export async function GET(req: Request) {
     orderBy: { updatedAt: "desc" },
     select: { id: true, name: true, seriesId: true, updatedAt: true },
   });
-  return NextResponse.json({ projects });
+  const cupo = await estadoCupoHistorias(user.id, user.email);
+  return NextResponse.json({ projects, cupo });
 }
 
 // POST -> crea o actualiza (si viene id) un proyecto del usuario.
@@ -197,6 +199,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, project });
   }
 
+  // Crear: sin cupo. El límite de 3/24 h solo aplica a generar con IA
+  // (/api/story/ia/capitulo). Aquí el usuario puede guardar las que quiera.
   const project = await prisma.storyProject.create({
     data: { userId: user.id, name, data: data as any, seriesId: seriesId ?? null },
     select: { id: true, name: true, seriesId: true, updatedAt: true },

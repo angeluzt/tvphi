@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { estadoCupoHistorias } from "@/lib/story/cupo";
 import { StoryApp } from "@/components/story/story-app";
 
 export const dynamic = "force-dynamic";
@@ -9,11 +10,14 @@ export default async function StoryPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/auth/login");
 
-  const rows = await prisma.storyProject.findMany({
-    where: { userId: user.id },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true, name: true, seriesId: true, updatedAt: true },
-  });
+  const [rows, cupo] = await Promise.all([
+    prisma.storyProject.findMany({
+      where: { userId: user.id },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, name: true, seriesId: true, updatedAt: true },
+    }),
+    estadoCupoHistorias(user.id, user.email),
+  ]);
   const projects = rows.map((r) => ({ id: r.id, name: r.name, seriesId: r.seriesId, updatedAt: r.updatedAt.toISOString() }));
 
   return (
@@ -27,7 +31,7 @@ export default async function StoryPage() {
           </p>
         </div>
       </div>
-      <StoryApp initialProjects={projects} />
+      <StoryApp initialProjects={projects} initialCupo={cupo} />
     </div>
   );
 }

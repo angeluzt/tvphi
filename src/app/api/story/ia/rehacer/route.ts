@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { descifrar, MODELOS_POR_DEFECTO, OPENAI } from "@/lib/story/credenciales";
+import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
 import { limpiarNarracion } from "@/lib/story/guion";
+import { esAdminHistorias } from "@/lib/story/cupo";
 
 // Rehacer un trozo suelto: esta frase, esta imagen.
 //
@@ -43,13 +43,15 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
   const { que, actual, contexto, pista } = parsed.data;
 
-  const cred = await prisma.aiCredential.findUnique({ where: { userId: user.id } });
-  if (!cred) return NextResponse.json({ error: "No has puesto tu clave de OpenAI" }, { status: 400 });
-  const key = descifrar(cred.encrypted);
-  if (!key) return NextResponse.json({ error: "La clave guardada no se puede leer. Vuelve a ponerla." }, { status: 400 });
+  const key = claveOpenAi();
+  if (!key) {
+    return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
+  }
 
-  const guardados = { ...MODELOS_POR_DEFECTO, ...((cred.models as any) ?? {}) };
-  const modelo = parsed.data.modelo || guardados.texto || "gpt-4o-mini";
+  const guardados = await preferenciasModelos(user.id, user.email);
+  const modelo = esAdminHistorias(user.email) && parsed.data.modelo
+    ? parsed.data.modelo
+    : guardados.texto;
 
   const comun =
     "Trabajas sobre un capítulo YA ESCRITO. Te dan una pieza que al usuario no le convence y el contexto de alrededor.\n" +
