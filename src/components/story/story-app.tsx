@@ -125,13 +125,17 @@ export function StoryApp({
   // Solo admin ve/elige modelos de IA.
   const [esAdminIa, setEsAdminIa] = useState(false);
   // La escena que se está describiendo para dibujarla.
-  const [dibujo, setDibujo] = useState<{ falta: Falta; texto: string } | null>(null);
-  const [dibujando, setDibujando] = useState(false);
+  // ancla: dónde mostrar el formulario (lista de faltantes o id de escena).
+  const [dibujo, setDibujo] = useState<{
+    falta: Falta; texto: string; ancla: "faltas" | string;
+  } | null>(null);
   // Por dónde va el montaje automático, para poder enseñarlo.
   const [montaje, setMontaje] = useState<
     { fase: "dibujando" | "narrando" | "listo" | "parado"; hechas: number; total: number; detalle: string } | null
   >(null);
   const [montarAlEntrar, setMontarAlEntrar] = useState(false);
+  // Tras montar un borrador de IA, bajar el ZIP con imágenes y audios.
+  const zipTrasMontajeRef = useRef(false);
   // Qué pieza se está rehaciendo ahora mismo.
   const [rehaciendo, setRehaciendo] = useState<string | null>(null);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
@@ -956,29 +960,6 @@ export function StoryApp({
     }
   }
 
-  // Todas las que falten, en fila y parando al primer fallo: cada imagen se
-  // paga, y repetir el mismo error una vez por escena sale caro para nada.
-  async function dibujarTodas() {
-    const pend = faltas.filter((f) => f.tipo === "escena" && descripcionDe(f).trim().length >= 4);
-    if (!pend.length) {
-      setStatus("No hay escenas con descripción que dibujar. Abre una y escríbele qué se ve.");
-      return;
-    }
-    setDibujando(true);
-    let hechas = 0;
-    for (const f of pend) {
-      const bien = await dibujarUna(f, descripcionDe(f));
-      if (!bien) {
-        setStatus(`Se paró en ${hechas} de ${pend.length} para no seguir gastando.`);
-        setDibujando(false);
-        return;
-      }
-      hechas++;
-    }
-    setDibujando(false);
-    setStatus(`${hechas} ${hechas === 1 ? "imagen dibujada" : "imágenes dibujadas"} ✓`);
-  }
-
   // ---------- rehacer un trozo que no convence ----------
   //
   // Regenerar el capítulo entero porque una frase no gusta es tirar el resto
@@ -1055,6 +1036,7 @@ export function StoryApp({
       for (let i = 0; i < pend.length; i++) {
         setMontaje({ fase: "dibujando", hechas: i, total: pend.length, detalle: pend[i].donde.join(" · ") });
         if (!(await dibujarUna(pend[i], descripcionDe(pend[i])))) {
+          zipTrasMontajeRef.current = false;
           setMontaje({ fase: "parado", hechas: i, total: pend.length, detalle: "dibujando las imágenes" });
           return;
         }
@@ -1069,6 +1051,7 @@ export function StoryApp({
         detalle: (d.quien || "narrador") + ": " + d.text.slice(0, 40),
       });
       if (!(await genVoice(sceneId, shotId, d))) {
+        zipTrasMontajeRef.current = false;
         setMontaje({ fase: "parado", hechas: i, total: voces.length, detalle: "generando las voces" });
         return;
       }
@@ -1077,6 +1060,12 @@ export function StoryApp({
     setFaltas(await faltantes(projRef.current));
     setMontaje({ fase: "listo", hechas: voces.length, total: voces.length, detalle: "" });
     setStatus("Capítulo montado ✓ · revísalo y guarda");
+    // Historia con IA: al terminar el montaje se descarga el paquete solo.
+    if (zipTrasMontajeRef.current) {
+      zipTrasMontajeRef.current = false;
+      setStatus("Capítulo montado ✓ · descargando el ZIP…");
+      await exportPaquete();
+    }
   }
 
   // Arranca en cuanto la IA entrega el borrador, no antes: hace falta que el
@@ -1487,6 +1476,43 @@ export function StoryApp({
         onBorrar={(id, nom) => deleteProject({ id, name: nom, updatedAt: "" })}
         onImportarZip={importPaquete}
         onCupo={setCupo}
+        onMoverSerie={async (capId, nuevaSerieId) => {
+          setBusy("load");
+          try {
+            const res = await fetch(`/api/story?id=${capId}`);
+            const j = await res.json();
+            if (!res.ok) throw new Error(j.error || "No se pudo leer el capítulo");
+            const r = await fetch("/api/story", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                id: capId,
+                name: j.project.name,
+                data: j.project.data,
+                seriesId: nuevaSerieId,
+              }),
+            });
+            if (!r.ok) {
+              const e = await r.json().catch(() => ({}));
+              throw new Error(e.error || "No se pudo mover");
+            }
+            await Promise.all([
+              fetch("/api/story").then((r) => r.json()).then((l) => {
+                setProjects(l.projects ?? []);
+                if (l.cupo) setCupo(l.cupo);
+              }),
+              cargarSeries(),
+            ]);
+            setStatus(
+              nuevaSerieId == null
+                ? "Capítulo suelto (sin serie)"
+                : "Capítulo movido a la serie",
+            );
+          } catch (err: any) {
+            setStatus("No se pudo cambiar la serie: " + (err?.message ?? ""));
+          }
+          setBusy(null);
+        }}
         // Lo que escribe la IA se abre en el editor SIN guardar: es un borrador
         // hasta que el usuario decida. Sus imágenes saldrán como faltantes.
         onGenerado={(nom, p) => {
@@ -1504,7 +1530,8 @@ export function StoryApp({
           seek(0);
           setStatus(`Borrador de la IA: ${data.scenes.length} escenas. Montando…`);
           // Sin esperar a que el usuario pida nada: se dibuja y se narra solo,
-          // y él lo va viendo aparecer.
+          // y él lo va viendo aparecer. Al acabar, el ZIP se descarga solo.
+          zipTrasMontajeRef.current = true;
           setMontarAlEntrar(true);
         }}
       />
@@ -1712,75 +1739,63 @@ export function StoryApp({
         )}
 
         <MissingAssets
-          faltas={faltas} reponiendo={reponiendo} onReponer={reponer}
-          onDibujar={iaImagen ? (f) => setDibujo({ falta: f, texto: descripcionDe(f) }) : undefined}
+          faltas={faltas}
+          reponiendo={reponiendo}
+          onReponer={reponer}
+          forzarAbierto={dibujo?.ancla === "faltas"}
+          onDibujar={iaImagen ? (f) => setDibujo({ falta: f, texto: descripcionDe(f), ancla: "faltas" }) : undefined}
+          onGenerarTodoIa={iaImagen || vozOpenAi ? () => void montarTodo() : undefined}
+          generandoTodo={!!montaje && montaje.fase !== "listo" && montaje.fase !== "parado"}
+          dibujoId={dibujo?.ancla === "faltas" ? dibujo.falta.id : null}
+          panelDibujo={dibujo?.ancla === "faltas" ? (
+            <div className="rounded-lg border border-accent/40 bg-surface p-2.5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 shrink-0 text-accent" />
+                <span className="label text-xs">Dibujar {dibujo.falta.donde.join(" · ")}</span>
+                <button type="button" onClick={() => setDibujo(null)} className="ml-auto text-muted hover:text-fg">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <textarea
+                className="input mt-2 h-24 w-full text-sm"
+                value={dibujo.texto}
+                onChange={(e) => setDibujo((d) => (d ? { ...d, texto: e.target.value } : d))}
+                aria-label="Cómo es esta imagen"
+                placeholder="Qué se ve, encuadre, luz y ambiente. Sin letras dentro de la imagen."
+              />
+              <p className="mt-1 text-[11px] text-muted">
+                Se dibuja en {project.aspect}, el formato del video. Repite la descripción de los
+                personajes tal cual en cada escena: es lo único que hace que se parezcan entre sí.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void rehacerDescripcion(dibujo.falta, dibujo.texto)}
+                  disabled={rehaciendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
+                  className="btn-ghost flex-1 text-xs disabled:opacity-40"
+                  title="Otra forma de describir la misma escena"
+                >
+                  {rehaciendo === dibujo.falta.id
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : <RefreshCw className="h-4 w-4 text-accent" />}
+                  Otra descripción
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const d = dibujo;
+                    setDibujo(null);
+                    await dibujarUna(d.falta, d.texto);
+                  }}
+                  disabled={reponiendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
+                  className="btn-brand flex-1 text-sm disabled:opacity-40"
+                >
+                  <Sparkles className="h-4 w-4" /> Dibujarla
+                </button>
+              </div>
+            </div>
+          ) : null}
         />
-
-        {/* Dibujarlas todas de una vez: un capítulo escrito por la IA llega con
-            todas las escenas vacías, y reponerlas de una en una era el trabajo
-            que precisamente sobraba. */}
-        {iaImagen && faltas.some((f) => f.tipo === "escena") && (
-          <div className="card flex flex-wrap items-center gap-2 p-3">
-            <span className="text-xs text-muted">
-              {faltas.filter((f) => f.tipo === "escena").length} escenas sin imagen
-            </span>
-            <button onClick={() => void dibujarTodas()} disabled={dibujando}
-              className="btn-brand ml-auto text-xs disabled:opacity-40">
-              {dibujando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              Dibujar las que tengan descripción
-            </button>
-          </div>
-        )}
-
-        {/* Antes de gastar, se enseña qué se va a pedir y se puede corregir. */}
-        {dibujo && (
-          <div className="card border-accent/50 p-3">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 shrink-0 text-accent" />
-              <span className="label">Dibujar {dibujo.falta.donde.join(" · ")}</span>
-              <button onClick={() => setDibujo(null)} className="ml-auto text-muted hover:text-fg">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <textarea
-              className="input mt-2 h-28 w-full text-sm"
-              value={dibujo.texto}
-              onChange={(e) => setDibujo((d) => (d ? { ...d, texto: e.target.value } : d))}
-              aria-label="Cómo es esta imagen"
-              placeholder="Qué se ve, encuadre, luz y ambiente. Sin letras dentro de la imagen."
-            />
-            <p className="mt-1 text-[11px] text-muted">
-              Se dibuja en {project.aspect}, el formato del video. Repite la descripción de los
-              personajes tal cual en cada escena: es lo único que hace que se parezcan entre sí.
-            </p>
-            <div className="mt-2 flex gap-2">
-              {/* Otra descripción de la MISMA escena, por si la que escribió la
-                  IA no convence. Sale más barato que rehacer el capítulo. */}
-              <button
-                onClick={() => void rehacerDescripcion(dibujo.falta, dibujo.texto)}
-                disabled={rehaciendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
-                className="btn-ghost flex-1 text-xs disabled:opacity-40"
-                title="Otra forma de describir la misma escena"
-              >
-                {rehaciendo === dibujo.falta.id
-                  ? <Loader2 className="h-4 w-4 animate-spin" />
-                  : <RefreshCw className="h-4 w-4 text-accent" />}
-                Otra descripción
-              </button>
-              <button
-                onClick={async () => {
-                  const d = dibujo;
-                  setDibujo(null);
-                  await dibujarUna(d.falta, d.texto);
-                }}
-                disabled={reponiendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
-                className="btn-brand flex-1 text-sm disabled:opacity-40"
-              >
-                <Sparkles className="h-4 w-4" /> Dibujarla
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Escenas */}
         <div className="card p-3">
@@ -1927,6 +1942,7 @@ export function StoryApp({
                                   sceneIds: [sc.id],
                                 },
                                 texto: sc.prompt ?? "",
+                                ancla: sc.id,
                               })}
                             >
                               <Sparkles className="h-3.5 w-3.5" />
@@ -1995,13 +2011,60 @@ export function StoryApp({
                           />
                         </label>
                       </div>
+                      {dibujo?.ancla === sc.id && (
+                        <div className="mt-2 rounded-lg border border-accent/40 bg-surface p-2.5">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="h-4 w-4 shrink-0 text-accent" />
+                            <span className="label text-xs">Dibujar {dibujo.falta.donde.join(" · ")}</span>
+                            <button type="button" onClick={() => setDibujo(null)} className="ml-auto text-muted hover:text-fg">
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <textarea
+                            className="input mt-2 h-24 w-full text-sm"
+                            value={dibujo.texto}
+                            onChange={(e) => setDibujo((d) => (d ? { ...d, texto: e.target.value } : d))}
+                            aria-label="Cómo es esta imagen"
+                            placeholder="Qué se ve, encuadre, luz y ambiente. Sin letras dentro de la imagen."
+                          />
+                          <p className="mt-1 text-[11px] text-muted">
+                            Se dibuja en {project.aspect}, el formato del video. Repite la descripción de los
+                            personajes tal cual en cada escena: es lo único que hace que se parezcan entre sí.
+                          </p>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void rehacerDescripcion(dibujo.falta, dibujo.texto)}
+                              disabled={rehaciendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
+                              className="btn-ghost flex-1 text-xs disabled:opacity-40"
+                            >
+                              {rehaciendo === dibujo.falta.id
+                                ? <Loader2 className="h-4 w-4 animate-spin" />
+                                : <RefreshCw className="h-4 w-4 text-accent" />}
+                              Otra descripción
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const d = dibujo;
+                                setDibujo(null);
+                                await dibujarUna(d.falta, d.texto);
+                              }}
+                              disabled={reponiendo === dibujo.falta.id || dibujo.texto.trim().length < 4}
+                              className="btn-brand flex-1 text-sm disabled:opacity-40"
+                            >
+                              <Sparkles className="h-4 w-4" /> Dibujarla
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Efectos de la FOTO: una vez, encima de las tomas. */}
                     <div className="rounded-lg border border-accent/30 bg-accent/5 p-2">
                       <VfxEditor
                         titulo="Efectos de la escena"
-                        pista="Portal, fuego, humo… de la foto. Se colocan una vez; todas las tomas los ven al hacer zoom."
+                        pista="Portal, fuego, humo… compartidos por todas las tomas de esta foto. Si los cambias aquí, el cambio se ve en todas; en cada toma puedes apagarlos si no hacen falta."
                         vfx={sc.vfx ?? []}
                         dur={Math.max(2, ...sc.shots.map((s) => shotDur(s)))}
                         seleccionado={selVfx}
@@ -2151,6 +2214,7 @@ export function StoryApp({
             <select
               className="input mt-1 w-full text-sm"
               value={seriesId ?? ""}
+              title="Asigna este capítulo a una serie, muévelo a otra, o déjalo suelto"
               onChange={async (e) => {
                 const v = e.target.value;
                 if (v === "__nueva") {
@@ -2168,12 +2232,15 @@ export function StoryApp({
                 setDirty(true);
               }}
             >
-              <option value="">Sin serie</option>
+              <option value="">Sin serie (capítulo suelto)</option>
               {series.map((x) => (
                 <option key={x.id} value={x.id}>{x.name} · {x.capitulos} cap.</option>
               ))}
               <option value="__nueva">+ Serie nueva…</option>
             </select>
+            <p className="mt-1 text-[11px] text-muted">
+              Si te equivocaste: cámbialo aquí o desde la lista de inicio. Al guardar, el capítulo queda en esa serie.
+            </p>
           </label>
           <div className="mt-2 flex gap-2">
             <button onClick={save} disabled={busy === "save"} className="btn-brand flex-1"><Save className="h-4 w-4" /> Guardar</button>

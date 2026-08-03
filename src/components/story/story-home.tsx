@@ -15,6 +15,8 @@ import type { CupoHistorias } from "./story-app";
 //
 // Dos pasos: series → capítulos de esa serie. Lo que no pertenece a ninguna
 // serie tiene su propio sitio, para que nada quede escondido.
+// Desde aquí también se asigna, mueve o suelta un capítulo si el usuario se
+// equivocó de sitio.
 
 export interface SerieMeta { id: string; name: string; capitulos: number; personajes: number }
 export interface CapMeta { id: string; name: string; updatedAt: string; seriesId?: string | null }
@@ -31,6 +33,7 @@ function textoCupo(cupo: CupoHistorias) {
 export function StoryHome({
   series, proyectos, cupo, busy,
   onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar, onGenerado, onImportarZip, onCupo,
+  onMoverSerie,
 }: {
   series: SerieMeta[];
   proyectos: CapMeta[];
@@ -43,6 +46,8 @@ export function StoryHome({
   onGenerado: (name: string, project: unknown) => void;
   onImportarZip: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onCupo?: (c: CupoHistorias) => void;
+  /** Asignar a una serie, mover a otra, o null = dejar suelto. */
+  onMoverSerie?: (capId: string, seriesId: string | null) => void;
 }) {
   // null = viendo las series; una cadena (o "") = dentro de esa serie.
   const [dentro, setDentro] = useState<string | null>(null);
@@ -66,7 +71,8 @@ export function StoryHome({
           </div>
           <p className="mt-1 text-[11px] text-muted">
             Una serie agrupa los capítulos de una misma historia y sus personajes. Un video suelto
-            no necesita ninguna.
+            no necesita ninguna. Si un capítulo está en el sitio equivocado, puedes moverlo o soltarlo
+            desde su fila.
           </p>
 
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -112,8 +118,16 @@ export function StoryHome({
               <input type="file" accept=".zip,application/zip" className="hidden" onChange={onImportarZip} />
             </label>
           </div>
-          <Lista items={sueltos} busy={busy} onAbrir={onAbrir} onBorrar={onBorrar}
-            vacio="Nada suelto. Todo lo tuyo está dentro de una serie." />
+          <Lista
+            items={sueltos}
+            series={series}
+            serieActual={null}
+            busy={busy}
+            onAbrir={onAbrir}
+            onBorrar={onBorrar}
+            onMoverSerie={onMoverSerie}
+            vacio="Nada suelto. Todo lo tuyo está dentro de una serie."
+          />
         </div>
 
         <IaPanel onGenerado={onGenerado} cupo={cupo} onCupo={onCupo} />
@@ -147,24 +161,38 @@ export function StoryHome({
             <Plus className="h-4 w-4" /> Capítulo nuevo
           </button>
         </div>
-        <Lista items={caps} busy={busy} onAbrir={onAbrir} onBorrar={onBorrar}
-          vacio="Esta serie aún no tiene capítulos. Crea el primero." />
+        <Lista
+          items={caps}
+          series={series}
+          serieActual={dentro}
+          busy={busy}
+          onAbrir={onAbrir}
+          onBorrar={onBorrar}
+          onMoverSerie={onMoverSerie}
+          vacio="Esta serie aún no tiene capítulos. Crea el primero."
+        />
       </div>
     </div>
   );
 }
 
 function Lista({
-  items, busy, onAbrir, onBorrar, vacio,
+  items, series, serieActual, busy, onAbrir, onBorrar, onMoverSerie, vacio,
 }: {
-  items: CapMeta[]; busy: boolean; vacio: string;
-  onAbrir: (id: string) => void; onBorrar: (id: string, name: string) => void;
+  items: CapMeta[];
+  series: SerieMeta[];
+  serieActual: string | null;
+  busy: boolean;
+  vacio: string;
+  onAbrir: (id: string) => void;
+  onBorrar: (id: string, name: string) => void;
+  onMoverSerie?: (capId: string, seriesId: string | null) => void;
 }) {
   if (!items.length) return <p className="mt-3 text-[11px] text-muted">{vacio}</p>;
   return (
     <div className="mt-3 space-y-1.5">
       {items.map((p) => (
-        <div key={p.id} className="flex items-center gap-2 rounded-lg border border-border hover:border-accent">
+        <div key={p.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border hover:border-accent">
           <button
             onClick={() => onAbrir(p.id)}
             disabled={busy}
@@ -178,6 +206,28 @@ function Lista({
               </span>
             </span>
           </button>
+          {onMoverSerie && (
+            <label className="sr-only" htmlFor={`serie-${p.id}`}>Serie del capítulo</label>
+          )}
+          {onMoverSerie && (
+            <select
+              id={`serie-${p.id}`}
+              className="input mr-1 max-w-[10.5rem] py-1 text-[11px]"
+              disabled={busy}
+              value={serieActual ?? ""}
+              title="Mover a otra serie o dejar suelto"
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                const v = e.target.value;
+                onMoverSerie(p.id, v === "" ? null : v);
+              }}
+            >
+              <option value="">Sin serie</option>
+              {series.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          )}
           <button
             onClick={() => onBorrar(p.id, p.name)}
             className="mr-2 shrink-0 text-muted hover:text-danger"
