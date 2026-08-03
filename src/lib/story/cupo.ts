@@ -93,3 +93,23 @@ export function mensajeCupoAgotado(cupo: CupoHistorias): string {
     : "dentro de 24 horas";
   return `Has generado ${cupo.limite} historias con IA en las últimas 24 horas. Podrás generar otra a partir de ${cuando}. Los videos a mano no tienen límite.`;
 }
+
+/**
+ * Portero para TODA ruta que gaste tokens del servidor.
+ *
+ * Con el cupo agotado no se llama a OpenAI para NADA: ni escribir, ni dibujar,
+ * ni narrar, ni rehacer una frase. Antes solo se miraba al escribir el
+ * capítulo, así que quien se quedaba sin historias podía seguir pidiendo
+ * imágenes —lo más caro de todo— sin límite ninguno, y lo pagaba el dueño de la
+ * clave.
+ *
+ * Lo que sigue funcionando sin cupo: el editor entero y la voz del navegador,
+ * que es gratis y no toca el servidor.
+ *
+ * Devuelve null si puede pasar, o el motivo si no.
+ */
+export async function cupoAgotado(userId: string, email: string): Promise<string | null> {
+  const cupo = await estadoCupoHistorias(userId, email);
+  if (cupo.exento || cupo.quedan > 0) return null;
+  return mensajeCupoAgotado(cupo);
+}
