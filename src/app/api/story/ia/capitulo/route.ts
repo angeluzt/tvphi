@@ -4,8 +4,30 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { descifrar, OPENAI } from "@/lib/story/credenciales";
 import { referenciaCompacta } from "@/lib/story/catalogo";
-import { migrateProject } from "@/lib/story/model";
+import { migrateProject, quienesHablan } from "@/lib/story/model";
 import { limpiarCapitulo } from "@/lib/story/guion";
+import { VOCES } from "@/lib/story/modelos";
+
+// Si la IA no rellenó project.voices, se asigna una voz distinta por hablante
+// para que Nora y Tomás no suenen iguales al narrar.
+function asegurarVocesCapitulo(project: ReturnType<typeof migrateProject>) {
+  const voces = { ...(project.voices ?? {}) };
+  const pool = VOCES.filter((v) => v !== "verse"); // verse a veces falla en TTS
+  let i = 0;
+  for (const quien of quienesHablan(project)) {
+    const actual = (voces[quien] ?? "").trim();
+    if (actual && pool.includes(actual)) continue;
+    // Narrador → onyx de serie; el resto rotando el catálogo.
+    if (quien === "" && !actual) {
+      voces[""] = "onyx";
+      continue;
+    }
+    while (pool[i % pool.length] === (voces[""] || "onyx") && pool.length > 1) i++;
+    voces[quien] = pool[i % pool.length];
+    i++;
+  }
+  project.voices = voces;
+}
 
 // Escribir un capítulo con IA a partir de un texto del usuario.
 //
@@ -26,27 +48,45 @@ const cuerpo = z.object({
 const INSTRUCCIONES = `Escribes el montaje de un video narrado, en JSON, para la aplicación TVPHI.
 
 Devuelve SOLO un objeto JSON con esta forma:
-{"name": "título", "project": {"aspect":"16:9","narrationVolume":1,"audioLayers":[],"intro":null,"outro":null,"scenes":[...]}}
+{"name": "título", "project": {"aspect":"16:9","narrationVolume":1,"audioLayers":[],"intro":null,"outro":null,"voices":{"":"onyx"},"scenes":[...]}}
 
 Cada escena es UNA imagen:
-{"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen","shots":[...]}
+{"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen",
+ "vfx":[/* anclas de la FOTO: portal, fuego, humo… */],"shots":[...]}
 
 Cada toma es un encuadre sobre esa imagen:
-{"id":"s1a","autoDuration":true,"durationSec":6,"holdSec":0.4,"motionMode":"preset",
+{"id":"s1a","autoDuration":true,"durationSec":6,"holdSec":0,"motionMode":"preset",
  "preset":{"kind":"in","cx":0.5,"cy":0.5,"w":1,"distance":0.25},
- "transition":"fade","transitionDur":1,
- "dialogues":[{"id":"d1","text":"...","quien":"","dur":0,"gapSec":0.5,"effect":"none","speed":1,"pitch":1,"stale":false}],
+ "transition":"cut","transitionDur":0,"usarVfxEscena":true,"omitirVfxEscena":[],
+ "dialogues":[{"id":"d1","text":"...","quien":"","dur":0,"gapSec":0,"effect":"none","speed":1,"pitch":1,"stale":false}],
  "sfx":[],"overlays":[],"audioOverrides":[],"vfx":[]}
 
 Reglas que NO puedes saltarte:
 - Los identificadores de imagen ("imageId") son inventados y descriptivos: uno distinto por escena.
 - "prompt" describe la imagen de esa escena para poder dibujarla: qué se ve, encuadre, luz, ambiente y estilo. Concreto y visual, 1-3 frases, sin texto ni letras dentro de la imagen. Mantén los mismos personajes y el mismo estilo entre escenas describiéndolos igual cada vez: es lo único que las mantiene unidas.
+- Si hay portal en scenes[].vfx, el prompt no debe meter caras dentro del vano. Fuego/antorcha/lámpara: la gente SÍ puede estar delante; lo incorrecto es el efecto tapando la cara como si la persona quedara detrás.
 - "kind" de preset: fixed, left, right, up, down, in, out. Para un primer plano baja "w" (1 = imagen entera, 0.35 = primer plano).
-- Los efectos van en "vfx" y SOLO puedes usar los "id" del catálogo que se te da. Respeta las formas admitidas de cada uno y los rangos de sus ajustes.
-- Para los sitios de un efecto usa SIEMPRE "espacio":"imagen" y coordenadas 0..1 sobre la foto.
+- Los efectos pegados a la foto (portal, fuego, humo, lámpara, aura…) van UNA SOLA VEZ en "scenes[].vfx", con "espacio":"imagen" y "follow":true. NO los copies en cada toma.
+- En "shots[].vfx" solo lo de ESA toma: lluvia/nieve/niebla con forma "arriba", o un golpe puntual (explosión, destello) con timing "range".
+- "usarVfxEscena":true (casi siempre) hace que la toma vea los efectos de la escena al hacer zoom. Pon false solo si esa toma debe verse sin NINGUNO de ellos.
+- "omitirVfxEscena":[] lista ids concretos de scenes[].vfx que esa toma no pinta (el resto sí). Úsalo si un plano no debe mostrar, por ejemplo, un fuego concreto; deja [] si no omite nada.
+- Los efectos SOLO pueden usar los "id" del catálogo. Respeta formas y rangos.
+- Para los sitios usa SIEMPRE "espacio":"imagen" y coordenadas 0..1 sobre la foto (salvo forma "arriba").
 - Escribe los diálogos en el idioma del encargo del usuario, con frases que se puedan narrar en voz alta.
-- "quien" dice quién habla: cadena vacía para el narrador, y el nombre del personaje cuando habla él. Usa el mismo nombre siempre para el mismo personaje: es lo que permite darle su propia voz.
-- Varias tomas por escena quedan mejor que una: un plano abierto y un primer plano sobre la misma imagen.
+- "quien" dice quién habla: cadena vacía para el narrador, y el nombre del personaje cuando habla él. Usa el mismo nombre siempre para el mismo personaje.
+- Varias tomas por escena quedan mejor que una: un plano abierto y un primer plano sobre la misma imagen (mismos vfx de escena, distinto encuadre).
+
+VOCES (importante — no improvises con efectos de tono):
+- En "project" incluye "voices": un mapa nombre→voz OpenAI. Voces válidas: alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse, marin, cedar.
+- Ejemplo: "voices":{"":"onyx","Nora":"nova","Tomás":"echo","Eco":"fable"} ("" = narrador).
+- Cada personaje distinto DEBE tener una voz distinta. El narrador también.
+- "effect" NO sirve para distinguir personajes. effect es un filtro de audio: none (casi siempre), robot (IA/máquina), cave/radio/whisper/deep/demon solo si la trama lo pide (eco, megáfono, susurro…). NUNCA uses effect "high" o "deep" para “hacer de mujer/hombre”: eso lo hace la voz OpenAI.
+- Campo opcional "voz" en un diálogo: solo si ESA frase debe sonar distinta a la de su personaje.
+
+RITMO (prioridad: diálogo fluido):
+- gapSec por defecto 0. Primera frase de toma: 0. Entre frases: 0 salvo un respiro dramático puntual (máx ~0.25).
+- holdSec: 0. Entre tomas de la misma escena: transition "cut". Fundido ≤0.35 solo al cambiar de escena.
+- No alargues con silencios. Mejor frases encadenadas que pausas de relleno.
 
 LO QUE SE NARRA (esto es lo que más se rompe, léelo dos veces):
 - El campo "text" de cada diálogo es EXACTAMENTE lo que se va a oír en el video. Se lee tal cual, palabra por palabra.
@@ -130,6 +170,7 @@ export async function POST(req: Request) {
   // pedir no es garantizar. Lo que se cuela aquí se acabaría oyendo en el vídeo
   // («¿te gustó cómo quedó?»), y para entonces ya está pagado.
   const { quitadas } = limpiarCapitulo(project);
+  asegurarVocesCapitulo(project);
 
   return NextResponse.json({
     ok: true,

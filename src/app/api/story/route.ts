@@ -104,6 +104,10 @@ const shotSchema = z.object({
   audioOverrides: z.array(audioOverrideSchema).max(30),
   overlays: z.array(overlaySchema).max(20),
   vfx: z.array(vfxSchema).max(20).optional(),
+  // Si false, esta toma no enseña los efectos de la escena (anclas de la foto).
+  usarVfxEscena: z.boolean().optional(),
+  // Ids de efectos de la escena que esta toma no pinta.
+  omitirVfxEscena: z.array(z.string()).max(40).optional(),
 });
 const sceneSchema = z.object({
   id: z.string(),
@@ -111,6 +115,8 @@ const sceneSchema = z.object({
   imgW: z.number(),
   imgH: z.number(),
   shots: z.array(shotSchema).max(50),
+  // Efectos pegados a la imagen; las tomas los reutilizan al hacer zoom.
+  vfx: z.array(vfxSchema).max(20).optional(),
   // Descripción de la imagen, para poder dibujarla después.
   prompt: z.string().max(2000).optional(),
 });

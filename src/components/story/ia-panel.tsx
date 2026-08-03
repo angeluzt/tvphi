@@ -161,11 +161,11 @@ export function IaPanel({
             {ocupado === "generar" ? "Escribiendo…" : "Escribir el capítulo"}
           </button>
 
-          <p className="text-[11px] text-muted">
-            Escribe el montaje: escenas, tomas, narración y efectos. <strong>Las imágenes las pones
-            tú</strong>: al abrirlo saldrán como faltantes y se reponen con «Buscar». Nada se guarda
-            hasta que tú lo abras.
-          </p>
+            <p className="text-[11px] text-muted">
+              Escribe el montaje: escenas, tomas, narración y efectos. Si tienes
+              modelo de imagen elegido, al abrirlo intentará dibujarlas solo;
+              si no, saldrán como faltantes y las repones con «Buscar» o «Dibujar».
+            </p>
 
           {aviso && <p className="text-sm text-accent">{aviso}</p>}
         </div>

@@ -110,5 +110,36 @@ export function limpiarCapitulo(project: any): { quitadas: string[] } {
       sh.dialogues = sh.dialogues.filter((d: any) => (d?.text ?? "").trim().length > 0);
     }
   }
+  // La IA tiende a gapSec/holdSec largos (0.5–1 s) y fundidos de 1 s: se oye
+  // como un documental pausado. Aquí se acerca a un ritmo de narración natural.
+  ritmarCapitulo(project);
   return { quitadas };
+}
+
+// Acorta solo pausas ABSURDAS de un capítulo recién generado.
+// Prioridad: audio fluido. gapSec 0 es válido y deseable; la IA pone pausas
+// solo cuando la trama lo pide. No se inventa un mínimo entre frases.
+export function ritmarCapitulo(project: any) {
+  for (const sc of project?.scenes ?? []) {
+    for (const sh of sc?.shots ?? []) {
+      const hold = Number(sh.holdSec) || 0;
+      // hold largo entre tomas = silencio muerto; se recorta.
+      sh.holdSec = hold > 0.2 ? 0 : Math.max(0, hold);
+
+      const td = Number(sh.transitionDur) || 0;
+      if (sh.transition === "fade" || sh.transition === "slide") {
+        if (td > 0.45) sh.transitionDur = 0.35;
+      } else if (sh.transition === "cut") {
+        sh.transitionDur = 0;
+      }
+
+      const dials = Array.isArray(sh.dialogues) ? sh.dialogues : [];
+      dials.forEach((d: any) => {
+        let g = Number(d.gapSec);
+        if (!Number.isFinite(g) || g < 0) g = 0;
+        // Solo se toca lo exagerado (≥0.45 s). 0–0.35 lo decide la IA/usuario.
+        d.gapSec = g >= 0.45 ? 0.2 : g;
+      });
+    }
+  }
 }

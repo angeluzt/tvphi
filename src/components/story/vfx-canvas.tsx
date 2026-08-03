@@ -65,7 +65,7 @@ export function VfxTools({
               className={`${btn} ${!borrando ? "bg-accent/25 text-accent" : "text-muted hover:bg-surface-2"}`}
               title={layer.shape === "punto"
                 ? "Tocar para poner uno; tocar uno que ya esté y arrastrar para moverlo"
-                : "Arrastrar para trazar; arrastrar uno que ya esté para moverlo"}
+                : "Arrastrar para trazar una línea; arrastrar una que ya esté para moverla"}
             >
               <MousePointer2 className="h-3 w-3" /> Poner
             </button>
@@ -92,18 +92,54 @@ export function VfxTools({
   );
 }
 
+function GuiaSitio({ n }: { n: VfxNode }) {
+  const punto = Math.hypot(n.x2 - n.x, n.y2 - n.y) < 0.02;
+  if (punto) {
+    return (
+      <g>
+        <circle cx={n.x * 100} cy={n.y * 100} r={2.6} fill="none"
+          className="stroke-black/70" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+        <circle cx={n.x * 100} cy={n.y * 100} r={2.6} fill="none"
+          className="stroke-accent" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+        <circle cx={n.x * 100} cy={n.y * 100} r={0.9} className="fill-accent" />
+      </g>
+    );
+  }
+  // Línea guía del sitio. Solo visible mientras "Colocando" está activo.
+  return (
+    <g>
+      <line x1={n.x * 100} y1={n.y * 100} x2={n.x2 * 100} y2={n.y2 * 100}
+        className="stroke-black/70" strokeWidth={5} strokeLinecap="round"
+        vectorEffect="non-scaling-stroke" />
+      <line x1={n.x * 100} y1={n.y * 100} x2={n.x2 * 100} y2={n.y2 * 100}
+        className="stroke-accent" strokeWidth={2.5} strokeLinecap="round"
+        vectorEffect="non-scaling-stroke" />
+      <circle cx={n.x * 100} cy={n.y * 100} r={1.6} fill="none"
+        className="stroke-black/70" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+      <circle cx={n.x * 100} cy={n.y * 100} r={1.6} fill="none"
+        className="stroke-accent" strokeWidth={1.3} vectorEffect="non-scaling-stroke" />
+      <circle cx={n.x2 * 100} cy={n.y2 * 100} r={1.6} fill="none"
+        className="stroke-black/70" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+      <circle cx={n.x2 * 100} cy={n.y2 * 100} r={1.6} fill="none"
+        className="stroke-accent" strokeWidth={1.3} vectorEffect="non-scaling-stroke" />
+    </g>
+  );
+}
+
 export function VfxCanvas({
   layer,
   borrando,
   onChange,
+  onSettled,
 }: {
   layer: VfxLayer;
   borrando: boolean;
   onChange: (nodes: VfxNode[]) => void;
+  /** Al soltar un arrastre / terminar un trazo: reiniciar partículas. */
+  onSettled?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [trazo, setTrazo] = useState<VfxNode | null>(null);
-  const libre = useRef<VfxNode[]>([]);
   const modo = useRef<"nada" | "crear" | "mover">("nada");
   const mover = useRef<{ i: number; ox: number; oy: number; n: VfxNode } | null>(null);
 
@@ -132,7 +168,10 @@ export function VfxCanvas({
     const { x, y } = pos(e);
     if (borrando) {
       const i = indiceCerca(x, y);
-      if (i >= 0) onChange(layer.nodes.filter((_, k) => k !== i));
+      if (i >= 0) {
+        onChange(layer.nodes.filter((_, k) => k !== i));
+        onSettled?.();
+      }
       return;
     }
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -148,9 +187,10 @@ export function VfxCanvas({
     if (forma === "punto") {
       onChange([...base, { x, y, x2: x, y2: y }]);
       modo.current = "nada";
+      onSettled?.();
       return;
     }
-    libre.current = [];
+    // Línea y mano alzada: un solo trazo A→B (no trocitos = muchos emisores).
     setTrazo({ x, y, x2: x, y2: y });
   }
 
@@ -165,36 +205,30 @@ export function VfxCanvas({
       return;
     }
     if (modo.current !== "crear" || !trazo) return;
-    if (forma === "libre") {
-      // A mano alzada: se va guardando el trazo por trocitos, sin llenarlo de
-      // segmentos de un pixel (que serían cientos de emisores por nada).
-      if (Math.hypot(x - trazo.x2, y - trazo.y2) > 0.03) {
-        libre.current.push({ x: trazo.x2, y: trazo.y2, x2: x, y2: y });
-        setTrazo({ ...trazo, x2: x, y2: y });
-        return;
-      }
-    }
     setTrazo({ ...trazo, x2: x, y2: y });
   }
 
   function up(e: React.PointerEvent) {
     try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
-    if (modo.current === "mover") { modo.current = "nada"; mover.current = null; return; }
+    if (modo.current === "mover") {
+      modo.current = "nada";
+      mover.current = null;
+      onSettled?.();
+      return;
+    }
     if (modo.current !== "crear") return;
     modo.current = "nada";
     if (!trazo) return;
-    if (forma === "libre") {
-      onChange([...base, ...(libre.current.length ? libre.current : [trazo])]);
-    } else {
-      // Una línea de dos píxeles no es una línea: se toma como punto.
-      const corta = Math.hypot(trazo.x2 - trazo.x, trazo.y2 - trazo.y) < 0.02;
-      onChange([...base, corta ? { ...trazo, x2: trazo.x, y2: trazo.y } : trazo]);
-    }
-    libre.current = [];
+    // Una línea de dos píxeles no es una línea: se toma como punto.
+    const corta = Math.hypot(trazo.x2 - trazo.x, trazo.y2 - trazo.y) < 0.02;
+    onChange([...base, corta ? { ...trazo, x2: trazo.x, y2: trazo.y } : trazo]);
     setTrazo(null);
+    onSettled?.();
   }
 
-  const dibujables: VfxNode[] = trazo ? [...base, trazo] : layer.nodes;
+  // Guías solo mientras este canvas está montado (= "Colocando" activo).
+  // Al desactivar "Colocando" desaparecen y queda solo la animación.
+  const sitios = trazo ? [...(layer.auto ? [] : layer.nodes), trazo] : layer.nodes;
 
   return (
     <div
@@ -208,29 +242,9 @@ export function VfxCanvas({
       style={{ touchAction: "none" }}
     >
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
-        {dibujables.map((n, i) => {
-          const punto = Math.hypot(n.x2 - n.x, n.y2 - n.y) < 0.02;
-          return punto ? (
-            <g key={i}>
-              {/* Aro exterior: se ve sobre cualquier fondo y marca la zona que
-                  responde al dedo. */}
-              <circle cx={n.x * 100} cy={n.y * 100} r={2.6} fill="none"
-                className="stroke-black/70" strokeWidth={3} vectorEffect="non-scaling-stroke" />
-              <circle cx={n.x * 100} cy={n.y * 100} r={2.6} fill="none"
-                className="stroke-accent" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-              <circle cx={n.x * 100} cy={n.y * 100} r={0.9} className="fill-accent" />
-            </g>
-          ) : (
-            <g key={i}>
-              <line x1={n.x * 100} y1={n.y * 100} x2={n.x2 * 100} y2={n.y2 * 100}
-                className="stroke-black/70" strokeWidth={5} strokeLinecap="round"
-                vectorEffect="non-scaling-stroke" />
-              <line x1={n.x * 100} y1={n.y * 100} x2={n.x2 * 100} y2={n.y2 * 100}
-                className="stroke-accent" strokeWidth={2.5} strokeLinecap="round"
-                vectorEffect="non-scaling-stroke" />
-            </g>
-          );
-        })}
+        {sitios.map((n, i) => (
+          <GuiaSitio key={trazo && i === sitios.length - 1 ? "trazo" : i} n={n} />
+        ))}
       </svg>
     </div>
   );

@@ -28,7 +28,7 @@ export default function RegisterPage() {
     const data = await res.json();
     setLoading(false);
     if (!res.ok) return setError(data.error ?? "Error");
-    router.push(`/studio`);
+    router.push("/story");
     router.refresh();
   }
 
