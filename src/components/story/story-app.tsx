@@ -8,6 +8,8 @@ import {
   Settings2, AlertTriangle, Sparkles, Check, RefreshCw, Image as ImageIcon,
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
+import { BibliotecaMusica } from "./biblioteca-musica";
+import { refPista, esDeBiblioteca, type Pista } from "@/lib/story/musica";
 import { VOCES_INFO } from "@/lib/story/modelos";
 import { MissingAssets } from "./missing-assets";
 import { StoryHome, StoryBreadcrumb } from "./story-home";
@@ -172,6 +174,7 @@ export function StoryApp({
   const zipTrasMontajeRef = useRef(false);
   // Qué pieza se está rehaciendo ahora mismo.
   const [rehaciendo, setRehaciendo] = useState<string | null>(null);
+  const [verBiblioteca, setVerBiblioteca] = useState(false);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
   // editor. La URL (?id= / ?serie=) recuerda el sitio para que un reload no
   // te tire al inicio.
@@ -796,6 +799,19 @@ export function StoryApp({
     };
     mut((p) => ({ ...p, audioLayers: [...p.audioLayers, layer] }));
   }
+  // Añadir una pista de la biblioteca de la app. No se copia nada al navegador:
+  // se guarda solo la referencia "lib:<id>", y el archivo lo sirve la propia
+  // aplicación desde /musica.
+  function addPistaBiblioteca(pista: Pista) {
+    const layer: AudioLayer = {
+      id: nanoid(6), kind: "music", audioId: refPista(pista), name: pista.titulo,
+      volume: 0.35, startSec: 0, loop: true,
+    };
+    mut((p) => ({ ...p, audioLayers: [...p.audioLayers, layer] }));
+    setVerBiblioteca(false);
+    setStatus(`«${pista.titulo}» añadida ✓`);
+  }
+
   function updLayer(id: string, patch: Partial<AudioLayer>) {
     mut((p) => ({ ...p, audioLayers: p.audioLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)) }));
   }
@@ -1165,6 +1181,9 @@ export function StoryApp({
       for (const r of refs) {
         if (vistos.has(r.id)) continue;
         vistos.add(r.id);
+        // Las pistas de la biblioteca no se meten: ya viajan dentro de la app,
+        // así que copiarlas engordaría el paquete para nada.
+        if (esDeBiblioteca(r.id)) continue;
         const blob = await getAsset(r.id);
         if (!blob) { sinArchivo++; continue; }
         const ext = (blob.type.split("/")[1] || "bin").replace(/[^\w]/g, "").slice(0, 5);
@@ -2488,14 +2507,22 @@ export function StoryApp({
 
         <div className="card p-3">
           <span className="label">Música y sonido global</span>
+          {/* La biblioteca primero: es lo que resuelve el caso normal sin que
+              nadie tenga que buscar un archivo. Subir la tuya sigue igual. */}
+          <button onClick={() => setVerBiblioteca(true)} className="btn-brand mt-2 w-full text-xs">
+            <Music className="h-4 w-4" /> Elegir música de la biblioteca
+          </button>
           <div className="mt-2 flex gap-2">
-            <label className="btn-ghost flex-1 cursor-pointer text-xs"><Music className="h-4 w-4 text-accent" /> Música
+            <label className="btn-ghost flex-1 cursor-pointer text-xs"><Music className="h-4 w-4 text-accent" /> Subir música
               <input type="file" accept="audio/*" className="hidden" onChange={(e) => addAudioLayer("music", e)} />
             </label>
             <label className="btn-ghost flex-1 cursor-pointer text-xs"><Volume2 className="h-4 w-4 text-accent" /> Efecto
               <input type="file" accept="audio/*" className="hidden" onChange={(e) => addAudioLayer("sfx", e)} />
             </label>
           </div>
+          {verBiblioteca && (
+            <BibliotecaMusica onElegir={addPistaBiblioteca} onCerrar={() => setVerBiblioteca(false)} />
+          )}
           <div className="mt-2 space-y-2">
             {project.audioLayers.map((l) => (
               <div key={l.id} className="rounded-lg border border-border p-2 text-sm">

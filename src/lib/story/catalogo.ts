@@ -1,4 +1,5 @@
 import { VFX, SHAPE_LABEL, GROUP_LABEL, vfxDefaults } from "./vfx";
+import { catalogoMusicaIA } from "./musica";
 
 // El catálogo de efectos, en un sitio solo: lo sirve /api/story/efectos y viaja
 // también dentro de los JSON que se exportan.
@@ -300,6 +301,10 @@ export function referenciaParaIA() {
     ejemploDeEscena: ejemploDeEscena(),
     fallosTipicos: fallosTipicos(),
     efectos: catalogoEfectos(),
+    musica: {
+      comoSeUsa: "Pon la pista en audioLayers con audioId igual al identificador (empieza por «lib:»), kind:\"music\", loop:true, volume 0.25-0.4, startSec 0.",
+      pistas: catalogoMusicaIA(),
+    },
   };
 }
 
@@ -313,6 +318,10 @@ export function referenciaCompacta() {
     ejemploDeEscena: ejemploDeEscena(),
     fallosTipicos: fallosTipicos(),
     efectos: catalogoCompacto(),
+    musica: {
+      comoSeUsa: "Pon la pista en audioLayers con audioId igual al identificador de abajo (empieza por «lib:»), kind:\"music\", loop:true, volume 0.25-0.4 para que no tape la narración, startSec 0. Los archivos ya están en la app: no hacen falta subirlos.",
+      pistas: catalogoMusicaIA(),
+    },
     ejemploDeEfecto: ejemploDe("fuego", "punto", "#ff8a3d"),
   };
 }
