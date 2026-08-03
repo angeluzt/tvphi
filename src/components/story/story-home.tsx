@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Plus, Folder, FolderOpen, Film, ChevronLeft, Trash2, Loader2, Users, FileUp } from "lucide-react";
 import { IaPanel } from "./ia-panel";
 import type { CupoHistorias } from "./story-app";
@@ -8,15 +8,8 @@ import type { CupoHistorias } from "./story-app";
 // Pantalla de entrada: primero se elige DÓNDE se va a trabajar, y solo después
 // se abre el editor.
 //
-// Antes se caía directamente en el editor y la lista de proyectos vivía en la
-// columna de la derecha, que en un móvil acaba debajo de todo: quedaba a
-// kilómetros de la escena que estabas tocando y mezclaba capítulos de series
-// distintas.
-//
-// Dos pasos: series → capítulos de esa serie. Lo que no pertenece a ninguna
-// serie tiene su propio sitio, para que nada quede escondido.
-// Desde aquí también se asigna, mueve o suelta un capítulo si el usuario se
-// equivocó de sitio.
+// Asignar / mover / soltar un capítulo siempre pasa por una ventana: se elige
+// qué hacer y se confirma. Así no se mueve nada por un toque accidental.
 
 export interface SerieMeta { id: string; name: string; capitulos: number; personajes: number }
 export interface CapMeta { id: string; name: string; updatedAt: string; seriesId?: string | null }
@@ -33,7 +26,7 @@ function textoCupo(cupo: CupoHistorias) {
 export function StoryHome({
   series, proyectos, cupo, busy,
   onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar, onGenerado, onImportarZip, onCupo,
-  onMoverSerie,
+  onMoverSerie, serieInicial, onSerieVista,
 }: {
   series: SerieMeta[];
   proyectos: CapMeta[];
@@ -48,11 +41,20 @@ export function StoryHome({
   onCupo?: (c: CupoHistorias) => void;
   /** Asignar a una serie, mover a otra, o null = dejar suelto. */
   onMoverSerie?: (capId: string, seriesId: string | null) => void;
+  /** Serie abierta al cargar (p. ej. tras un reload con ?serie=). */
+  serieInicial?: string | null;
+  /** Avisa al padre qué carpeta de serie se está viendo (para la URL). */
+  onSerieVista?: (seriesId: string | null) => void;
 }) {
-  // null = viendo las series; una cadena (o "") = dentro de esa serie.
-  const [dentro, setDentro] = useState<string | null>(null);
+  // null = viendo las series; una cadena = dentro de esa serie.
+  const [dentro, setDentro] = useState<string | null>(serieInicial ?? null);
   const sueltos = proyectos.filter((p) => !p.seriesId);
   const avisoCupo = textoCupo(cupo);
+
+  function irSerie(id: string | null) {
+    setDentro(id);
+    onSerieVista?.(id);
+  }
 
   if (dentro === null) {
     return (
@@ -71,15 +73,14 @@ export function StoryHome({
           </div>
           <p className="mt-1 text-[11px] text-muted">
             Una serie agrupa los capítulos de una misma historia y sus personajes. Un video suelto
-            no necesita ninguna. Si un capítulo está en el sitio equivocado, puedes moverlo o soltarlo
-            desde su fila.
+            no necesita ninguna. Si un capítulo está en el sitio equivocado, usa «Asignar» o «Cambiar serie».
           </p>
 
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             {series.map((s) => (
               <button
                 key={s.id}
-                onClick={() => setDentro(s.id)}
+                onClick={() => irSerie(s.id)}
                 className="flex items-center gap-3 rounded-xl border border-border p-3 text-left hover:border-accent hover:bg-surface-2"
               >
                 <Folder className="h-5 w-5 shrink-0 text-accent" />
@@ -146,7 +147,7 @@ export function StoryHome({
       )}
       <div className="card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => setDentro(null)} className="btn-ghost text-xs">
+          <button onClick={() => irSerie(null)} className="btn-ghost text-xs">
             <ChevronLeft className="h-4 w-4" /> Series
           </button>
           <span className="label ml-1 min-w-0 truncate">{serie?.name ?? "Serie"}</span>
@@ -188,6 +189,8 @@ function Lista({
   onBorrar: (id: string, name: string) => void;
   onMoverSerie?: (capId: string, seriesId: string | null) => void;
 }) {
+  const [dialogo, setDialogo] = useState<CapMeta | null>(null);
+
   if (!items.length) return <p className="mt-3 text-[11px] text-muted">{vacio}</p>;
   return (
     <div className="mt-3 space-y-1.5">
@@ -207,26 +210,16 @@ function Lista({
             </span>
           </button>
           {onMoverSerie && (
-            <label className="sr-only" htmlFor={`serie-${p.id}`}>Serie del capítulo</label>
-          )}
-          {onMoverSerie && (
-            <select
-              id={`serie-${p.id}`}
-              className="input mr-1 max-w-[10.5rem] py-1 text-[11px]"
+            <button
+              type="button"
               disabled={busy}
-              value={serieActual ?? ""}
-              title="Mover a otra serie o dejar suelto"
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => {
-                const v = e.target.value;
-                onMoverSerie(p.id, v === "" ? null : v);
-              }}
+              className="btn-ghost shrink-0 text-xs disabled:opacity-40"
+              title={serieActual ? "Desasignar o mover a otra serie" : "Asignar este capítulo a una serie"}
+              onClick={(e) => { e.stopPropagation(); setDialogo(p); }}
             >
-              <option value="">Sin serie</option>
-              {series.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
+              <Folder className="h-3.5 w-3.5 text-accent" />
+              {serieActual ? "Cambiar serie" : "Asignar a serie"}
+            </button>
           )}
           <button
             onClick={() => onBorrar(p.id, p.name)}
@@ -237,6 +230,157 @@ function Lista({
           </button>
         </div>
       ))}
+
+      {dialogo && onMoverSerie && (
+        <DialogoSerie
+          capitulo={dialogo}
+          series={series}
+          serieActual={serieActual}
+          busy={busy}
+          onCancelar={() => setDialogo(null)}
+          onAceptar={(seriesId) => {
+            const id = dialogo.id;
+            setDialogo(null);
+            onMoverSerie(id, seriesId);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function DialogoSerie({
+  capitulo, series, serieActual, busy, onCancelar, onAceptar,
+}: {
+  capitulo: CapMeta;
+  series: SerieMeta[];
+  serieActual: string | null;
+  busy: boolean;
+  onCancelar: () => void;
+  onAceptar: (seriesId: string | null) => void;
+}) {
+  const tituloId = useId();
+  const tieneSerie = !!serieActual;
+  const otras = series.filter((s) => s.id !== serieActual);
+  // Destino: "" = desasignar; id = esa serie. Por defecto, primera opción útil.
+  const [elegida, setElegida] = useState<string>(
+    tieneSerie ? (otras[0]?.id ?? "") : (series[0]?.id ?? ""),
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancelar(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancelar]);
+
+  const destinoValido = elegida === ""
+    ? tieneSerie
+    : series.some((s) => s.id === elegida && s.id !== serieActual);
+  const puedeAceptar = !busy && destinoValido;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="presentation"
+      onClick={onCancelar}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={tituloId}
+        className="card w-full max-w-md space-y-3 p-4 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id={tituloId} className="text-sm font-semibold text-fg">
+          {tieneSerie ? "¿Qué hacer con este capítulo?" : "¿A qué serie lo asignas?"}
+        </h2>
+        <p className="text-xs text-muted">
+          <span className="font-medium text-fg">{capitulo.name}</span>
+          {tieneSerie
+            ? " · Confirma si lo desasignas o lo mueves a otra serie."
+            : " · Elige una serie y pulsa Aceptar."}
+        </p>
+
+        {!tieneSerie && !series.length ? (
+          <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
+            Aún no hay series. Crea una primero y vuelve a intentarlo.
+          </p>
+        ) : tieneSerie && !otras.length ? (
+          <fieldset className="space-y-1.5" disabled={busy}>
+            <legend className="sr-only">Destino del capítulo</legend>
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-surface-2 has-[:checked]:border-accent has-[:checked]:bg-accent/5">
+              <input
+                type="radio"
+                name="destino-serie"
+                className="mt-1"
+                checked={elegida === ""}
+                onChange={() => setElegida("")}
+              />
+              <span>
+                <span className="block font-medium">Desasignar</span>
+                <span className="block text-[11px] text-muted">Queda suelto, sin serie</span>
+              </span>
+            </label>
+            <p className="px-1 text-[11px] text-muted">No hay otra serie a la que moverlo.</p>
+          </fieldset>
+        ) : (
+          <fieldset className="space-y-1.5" disabled={busy}>
+            <legend className="sr-only">Destino del capítulo</legend>
+            {tieneSerie && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-surface-2 has-[:checked]:border-accent has-[:checked]:bg-accent/5">
+                <input
+                  type="radio"
+                  name="destino-serie"
+                  className="mt-1"
+                  checked={elegida === ""}
+                  onChange={() => setElegida("")}
+                />
+                <span>
+                  <span className="block font-medium">Desasignar</span>
+                  <span className="block text-[11px] text-muted">Queda suelto, sin serie</span>
+                </span>
+              </label>
+            )}
+            {(tieneSerie ? otras : series).map((s) => (
+              <label
+                key={s.id}
+                className="flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-surface-2 has-[:checked]:border-accent has-[:checked]:bg-accent/5"
+              >
+                <input
+                  type="radio"
+                  name="destino-serie"
+                  className="mt-1"
+                  checked={elegida === s.id}
+                  onChange={() => setElegida(s.id)}
+                />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">
+                    {tieneSerie ? `Mover a «${s.name}»` : s.name}
+                  </span>
+                  <span className="block text-[11px] text-muted">
+                    {s.capitulos} {s.capitulos === 1 ? "capítulo" : "capítulos"}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button type="button" className="btn-ghost flex-1 text-sm" onClick={onCancelar} disabled={busy}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn-brand flex-1 text-sm disabled:opacity-40"
+            disabled={!puedeAceptar}
+            onClick={() => onAceptar(elegida === "" ? null : elegida)}
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Aceptar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

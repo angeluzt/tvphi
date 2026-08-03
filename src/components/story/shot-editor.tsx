@@ -844,39 +844,53 @@ export function ShotEditor({
         {shot.usarVfxEscena !== false && sceneVfx.length > 0 && (
           <div className="rounded-lg border border-border p-2">
             <p className="text-[11px] text-muted">
-              Efectos de la foto (compartidos). Quítalos aquí solo en esta toma si no hacen falta.
+              Efectos de la foto (compartidos). Puedes quitarlos solo aquí o desde esta toma en adelante.
             </p>
             <ul className="mt-1 space-y-1.5">
               {sceneVfx.map((v) => {
                 const omitido = (shot.omitirVfxEscena ?? []).includes(v.id);
                 return (
                   <li key={v.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <label className="flex min-w-0 flex-1 items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={!omitido}
-                        onChange={() => onOmitirEfectoEscena(v.id, "esta")}
-                      />
-                      <span className={`truncate ${omitido ? "text-muted line-through" : ""}`}>
-                        {vfxSpec(v.kind).label}
-                      </span>
-                    </label>
-                    <button
-                      type="button"
-                      className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
-                      title="Ocultar este efecto en esta toma y en las siguientes"
-                      onClick={() => onOmitirEfectoEscena(v.id, "adelante")}
-                    >
-                      De aquí en adelante
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
-                      title="Sacar de la escena y dejarlo solo en esta toma"
-                      onClick={() => onSoloEnEstaToma(v.id)}
-                    >
-                      Solo aquí
-                    </button>
+                    <span className={`min-w-0 flex-1 truncate font-medium ${omitido ? "text-muted line-through" : ""}`}>
+                      {vfxSpec(v.kind).label}
+                    </span>
+                    {omitido ? (
+                      <button
+                        type="button"
+                        className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                        title="Volver a mostrar este efecto en esta toma"
+                        onClick={() => onOmitirEfectoEscena(v.id, "esta")}
+                      >
+                        Mostrar aquí
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                          title="Quitar este efecto solo en esta toma"
+                          onClick={() => onOmitirEfectoEscena(v.id, "esta")}
+                        >
+                          Quitar aquí
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                          title="Quitar este efecto en esta toma y en las siguientes"
+                          onClick={() => onOmitirEfectoEscena(v.id, "adelante")}
+                        >
+                          Desde aquí
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2"
+                          title="Sacarlo de la escena compartida y dejarlo solo en esta toma"
+                          onClick={() => onSoloEnEstaToma(v.id)}
+                        >
+                          Solo esta toma
+                        </button>
+                      </>
+                    )}
                   </li>
                 );
               })}

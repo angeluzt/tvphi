@@ -50,6 +50,22 @@ export type CupoHistorias = {
 // para no perder trabajo, y bastante largo para no guardar en cada tecla.
 const AUTOGUARDADO = 8000;
 
+// La vista (inicio / serie / capítulo) vive en la URL para que un reload no
+// te mande siempre al principio. replaceState: sin recargar la app.
+function storyPath(opts: { id?: string | null; serie?: string | null } = {}) {
+  const q = new URLSearchParams();
+  if (opts.id) q.set("id", opts.id);
+  else if (opts.serie) q.set("serie", opts.serie);
+  const s = q.toString();
+  return s ? `/story?${s}` : "/story";
+}
+function syncStoryUrl(opts: { id?: string | null; serie?: string | null } = {}) {
+  if (typeof window === "undefined") return;
+  const next = storyPath(opts);
+  const cur = window.location.pathname + window.location.search;
+  if (cur !== next) window.history.replaceState(window.history.state, "", next);
+}
+
 // Rectángulo con la forma real del video, para reconocerlo de un vistazo.
 function FormaVideo({ ratio }: { ratio: number }) {
   return (
@@ -100,14 +116,20 @@ function imageSize(file: Blob): Promise<{ w: number; h: number }> {
 export function StoryApp({
   initialProjects,
   initialCupo,
+  initialOpenId = null,
+  initialSerie = null,
 }: {
   initialProjects: ProjMeta[];
   initialCupo: CupoHistorias;
+  /** Capítulo a abrir al montar (viene de ?id= en la URL). */
+  initialOpenId?: string | null;
+  /** Carpeta de serie a mostrar en el inicio (?serie=). */
+  initialSerie?: string | null;
 }) {
   const [project, setProject] = useState<StoryProject>(emptyProject());
   const [projects, setProjects] = useState<ProjMeta[]>(initialProjects);
   const [cupo, setCupo] = useState<CupoHistorias>(initialCupo);
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(initialOpenId);
   // Series: agrupan capítulos y personajes. Todo opcional — un video suelto no
   // necesita ninguna, y lo que ya existe se queda "sin serie".
   const [series, setSeries] = useState<{ id: string; name: string; capitulos: number; personajes: number }[]>([]);
@@ -139,9 +161,10 @@ export function StoryApp({
   // Qué pieza se está rehaciendo ahora mismo.
   const [rehaciendo, setRehaciendo] = useState<string | null>(null);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
-  // editor. Antes se caía directamente en el editor y elegir proyecto quedaba en
-  // la columna de la derecha, que en un móvil acaba debajo de todo.
-  const [vista, setVista] = useState<"inicio" | "editor">("inicio");
+  // editor. La URL (?id= / ?serie=) recuerda el sitio para que un reload no
+  // te tire al inicio.
+  const [vista, setVista] = useState<"inicio" | "editor">(initialOpenId ? "editor" : "inicio");
+  const abrioInicialRef = useRef(false);
 
   // La clave/modelos se guardan en otro panel; si solo se leían al montar,
   // el editor se quedaba sin «Dibujar» aunque la DB ya tuviera gpt-image-2.
@@ -261,6 +284,14 @@ export function StoryApp({
   const cargarSeries = () =>
     fetch("/api/story/series").then((r) => r.json()).then((j) => setSeries(j.series ?? [])).catch(() => {});
   useEffect(() => { void cargarSeries(); }, []);
+
+  // Reload con ?id=: reabrir el mismo capítulo en el editor.
+  useEffect(() => {
+    if (!initialOpenId || abrioInicialRef.current) return;
+    abrioInicialRef.current = true;
+    void load(initialOpenId, { silencioso: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialOpenId]);
 
   // Qué archivos le faltan a este proyecto en este navegador. Se recalcula solo
   // cuando cambia la LISTA de archivos usados, no en cada retoque, que si no
@@ -823,6 +854,7 @@ export function StoryApp({
         ...prev.filter((p) => p.id !== j.project.id),
       ]);
       setDirty(false);
+      syncStoryUrl({ id: j.project.id });
       setStatus(`Guardado automático ✓ · ${new Date().toLocaleTimeString()}`);
     } catch {
       // Sin red o sin sesión: se calla y lo intentará al siguiente cambio. El
@@ -850,6 +882,7 @@ export function StoryApp({
         ...prev.filter((p) => p.id !== j.project.id),
       ]);
       setDirty(false);
+      syncStoryUrl({ id: j.project.id });
       setStatus("Proyecto guardado ✓");
     } catch (err: any) {
       setStatus("Error al guardar: " + (err?.message ?? ""));
@@ -1163,6 +1196,7 @@ export function StoryApp({
       setSection(null);
       setDirty(true);
       setVista("editor");
+      syncStoryUrl({});
       seek(0);
       const f2 = await faltantes(data);
       setFaltas(f2);
@@ -1254,8 +1288,8 @@ export function StoryApp({
     }
   }
 
-  async function load(id: string) {
-    if (dirty && !confirm("Tienes cambios sin guardar. ¿Cargar otro proyecto igualmente?")) return;
+  async function load(id: string, opts?: { silencioso?: boolean }) {
+    if (!opts?.silencioso && dirty && !confirm("Tienes cambios sin guardar. ¿Cargar otro proyecto igualmente?")) return;
     setBusy("load");
     try {
       const res = await fetch(`/api/story?id=${id}`);
@@ -1273,6 +1307,7 @@ export function StoryApp({
       setName(j.project.name);
       setSeriesId(j.project.seriesId ?? null);
       setVista("editor");
+      syncStoryUrl({ id: j.project.id });
       // Si la primera escena está bloqueada, se respeta y no se abre sola.
       const primera = data.scenes[0];
       const abrible = primera && !loadLocks()[primera.id] ? primera : null;
@@ -1280,9 +1315,15 @@ export function StoryApp({
       setSelShot(abrible?.shots[0]?.id ?? null);
       setDirty(false);
       seek(0);
-      setStatus("Proyecto cargado ✓");
+      setStatus(opts?.silencioso ? null : "Proyecto cargado ✓");
     } catch (err: any) {
       setStatus("Error al cargar: " + (err?.message ?? ""));
+      // Si venía de la URL y falló, vuelve al inicio limpio.
+      if (opts?.silencioso) {
+        setVista("inicio");
+        setProjectId(null);
+        syncStoryUrl({});
+      }
     }
     setBusy(null);
   }
@@ -1331,6 +1372,8 @@ export function StoryApp({
         setSection(null);
         setDirty(false);
         seek(0);
+        setVista("inicio");
+        syncStoryUrl({});
       }
       setStatus(`"${p.name}" borrado ✓`);
     } catch (err: any) {
@@ -1358,6 +1401,7 @@ export function StoryApp({
     setDirty(false);
     setCreando(false);
     setVista("editor");
+    syncStoryUrl({});
     seek(0);
     setStatus(`Proyecto nuevo en ${aspectInfo(a).label} (${aspectInfo(a).w}×${aspectInfo(a).h})`);
   }
@@ -1461,9 +1505,16 @@ export function StoryApp({
         proyectos={projects}
         cupo={cupo}
         busy={busy === "load" || busy === "delete"}
+        serieInicial={initialSerie}
+        onSerieVista={(sid) => syncStoryUrl({ serie: sid })}
         onAbrir={(id) => void load(id)}
         // Se entra al editor y ahí se pregunta la forma del video.
-        onNuevoCapitulo={(sid) => { setSeriesId(sid); setVista("editor"); newProject(); }}
+        onNuevoCapitulo={(sid) => {
+          setSeriesId(sid);
+          setVista("editor");
+          syncStoryUrl({});
+          newProject();
+        }}
         onNuevaSerie={async () => {
           const nom = prompt("Nombre de la serie nueva");
           if (!nom?.trim()) return;
@@ -1527,6 +1578,7 @@ export function StoryApp({
           setSection(null);
           setDirty(true);
           setVista("editor");
+          syncStoryUrl({});
           seek(0);
           setStatus(`Borrador de la IA: ${data.scenes.length} escenas. Montando…`);
           // Sin esperar a que el usuario pida nada: se dibuja y se narra solo,
@@ -1546,7 +1598,12 @@ export function StoryApp({
         <StoryBreadcrumb
           serie={series.find((x) => x.id === seriesId)?.name ?? null}
           capitulo={name}
-          onVolver={() => { void cargarSeries(); setVista("inicio"); }}
+          onVolver={() => {
+            void cargarSeries();
+            setVista("inicio");
+            // Si el capítulo era de una serie, vuelve a esa carpeta.
+            syncStoryUrl({ serie: seriesId });
+          }}
         />
 
         {/* Previsualización del video entero. Va en el flujo de la página y se
@@ -2270,7 +2327,13 @@ export function StoryApp({
               </div>
               <button // Si se echa atrás sin nada abierto, se vuelve al inicio en vez de
                 // dejarle un editor vacío delante.
-                onClick={() => { setCreando(false); if (!projectId && !projRef.current.scenes.length) setVista("inicio"); }} className="btn-ghost mt-2 w-full text-[11px]">
+                onClick={() => {
+                  setCreando(false);
+                  if (!projectId && !projRef.current.scenes.length) {
+                    setVista("inicio");
+                    syncStoryUrl({ serie: seriesId });
+                  }
+                }} className="btn-ghost mt-2 w-full text-[11px]">
                 Cancelar
               </button>
             </div>
