@@ -136,6 +136,18 @@ export function StoryApp({
   const [seriesId, setSeriesId] = useState<string | null>(null);
   // Si hay clave y modelo de voz puestos, la narración la hace OpenAI.
   const [vozOpenAi, setVozOpenAi] = useState(false);
+  // Motivo por el que la IA del servidor está cerrada hoy. Se enseña una vez;
+  // el editor sigue entero y la voz del navegador sigue funcionando.
+  const [sinCupoIa, setSinCupoIa] = useState<string | null>(null);
+
+  // ¿La respuesta es un "se te acabó la IA de hoy"? Si lo es, se apunta el
+  // motivo para enseñarlo una vez y se corta lo que estuviera en marcha: seguir
+  // intentándolo son llamadas que ya se sabe que van a fallar.
+  function esSinCupo(r: Response, j: any): boolean {
+    if (r.status !== 429 || !j?.sinCupo) return false;
+    setSinCupoIa(j.error || "Se acabaron tus historias con IA de hoy.");
+    return true;
+  }
   // Cuando la narración falla POR EL MODELO, se guarda el motivo para poder
   // ofrecer cambiarlo sin salir del editor.
   const [vozRota, setVozRota] = useState<string | null>(null);
@@ -581,6 +593,15 @@ export function StoryApp({
           body: JSON.stringify({ texto: d.text, voz: vozDe(projRef.current, d, "") || undefined }),
         }).then(async (r) => {
           const j = await r.json();
+          // Sin cupo NO es un error: es que se acabaron las historias con IA de
+          // hoy. La voz del navegador es gratis y no toca el servidor, así que
+          // se sigue por ahí en vez de dejar al usuario sin narración.
+          if (r.status === 429 && j?.sinCupo) {
+            setSinCupoIa(j.error || "Se acabaron tus historias con IA de hoy.");
+            setStatus("Sin IA por hoy · narrando con la voz del navegador");
+            return synthesize(d.text, voice, (st) =>
+              setVoiceJobs((jo) => (jo[d.id] ? { ...jo, [d.id]: st } : jo)));
+          }
           if (!r.ok) {
             const e: any = new Error(j.error || "Error");
             // Si el problema es el modelo elegido, se marca para poder ofrecer
@@ -963,6 +984,7 @@ export function StoryApp({
         }),
       });
       const j = await r.json();
+      if (esSinCupo(r, j)) { setStatus(j.error); return false; }
       if (!r.ok) throw new Error(j.error || "Error");
       const bin = atob(j.imagen);
       const arr = new Uint8Array(bin.length);
@@ -1023,6 +1045,7 @@ export function StoryApp({
         }),
       });
       const j = await r.json();
+      if (esSinCupo(r, j)) { setStatus(j.error); return; }
       if (!r.ok) throw new Error(j.error || "Error");
       if (j.igual) { setStatus("Ha devuelto lo mismo. Prueba otra vez o cámbialo a mano."); return; }
       // La voz que había ya no corresponde al texto: se marca para regenerarla.
@@ -1043,6 +1066,7 @@ export function StoryApp({
         body: JSON.stringify({ que: "imagen", actual: texto, contexto: { titulo: name } }),
       });
       const j = await r.json();
+      if (esSinCupo(r, j)) { setStatus(j.error); return; }
       if (!r.ok) throw new Error(j.error || "Error");
       setDibujo((v) => (v ? { ...v, texto: j.texto } : v));
       setStatus(j.igual ? "Ha devuelto lo mismo." : "Otra descripción ✓ · revísala y dibújala");
@@ -1712,6 +1736,28 @@ export function StoryApp({
         {/* Lo que falta, en cuanto falta: va justo debajo del reproductor porque
             es lo primero que hay que resolver al abrir un proyecto de otro sitio. */}
         {/* Ver cómo se construye, en vez de esperar mirando una barra. */}
+        {/* Se acabó la IA de hoy. Se dice UNA vez y en claro, con lo que sí
+            se puede seguir haciendo: si no, el usuario ve botones que no
+            responden y cree que la app está rota. */}
+        {sinCupoIa && (
+          <div className="card border-gold/60 bg-gold/5 p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-gold">{sinCupoIa}</p>
+                <p className="mt-1 text-[11px] text-muted">
+                  Mientras tanto puedes seguir montando el capítulo entero a mano: encuadres,
+                  tiempos, efectos, música y stickers. La voz sigue funcionando con el modelo
+                  del navegador, que es gratis.
+                </p>
+              </div>
+              <button onClick={() => setSinCupoIa(null)} className="shrink-0 text-muted hover:text-fg">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {montaje && (
           <div className={`card p-3 ${montaje.fase === "parado" ? "border-danger/50" : "border-accent/50"}`}>
             <div className="flex items-center gap-2">

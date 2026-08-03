@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, OPENAI, IA_NO_DISPONIBLE, preferenciasModelos } from "@/lib/story/credenciales";
 import { referenciaCompacta } from "@/lib/story/catalogo";
 import { migrateProject, quienesHablan } from "@/lib/story/model";
-import { limpiarCapitulo } from "@/lib/story/guion";
+import { prepararCapituloGenerado } from "@/lib/story/guion";
 import { VOCES } from "@/lib/story/modelos";
 import { estadoCupoHistorias, mensajeCupoAgotado, registrarUsoIaCapitulo, esAdminHistorias } from "@/lib/story/cupo";
 
@@ -178,7 +178,7 @@ export async function POST(req: Request) {
   // Red de seguridad: el prompt PIDE que no meta frases de presentador, pero
   // pedir no es garantizar. Lo que se cuela aquí se acabaría oyendo en el vídeo
   // («¿te gustó cómo quedó?»), y para entonces ya está pagado.
-  const { quitadas } = limpiarCapitulo(project);
+  const { quitadas } = prepararCapituloGenerado(project);
   asegurarVocesCapitulo(project);
 
   await registrarUsoIaCapitulo(user.id);

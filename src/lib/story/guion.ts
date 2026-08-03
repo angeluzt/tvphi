@@ -90,8 +90,12 @@ export function limpiarNarracion(texto: string): { texto: string; quitadas: stri
   return { texto: dejar.join(" ").trim(), quitadas };
 }
 
-// Limpia el capítulo entero que devuelve la IA. Devuelve cuántas frases se han
-// quitado, para poder decírselo al usuario en vez de hacerlo a escondidas.
+// Quita del capítulo las frases que no son historia. SOLO toca texto: no roza
+// ni una duración, ni una pausa, ni un fundido. Es seguro llamarla sobre
+// cualquier cosa.
+//
+// Lo que sí toca tiempos vive en prepararCapituloGenerado(), aparte y con
+// guardia, porque no es lo mismo corregir una frase que reescribir el montaje.
 export function limpiarCapitulo(project: any): { quitadas: string[] } {
   const quitadas: string[] = [];
   for (const sc of project?.scenes ?? []) {
@@ -110,16 +114,33 @@ export function limpiarCapitulo(project: any): { quitadas: string[] } {
       sh.dialogues = sh.dialogues.filter((d: any) => (d?.text ?? "").trim().length > 0);
     }
   }
-  // La IA tiende a gapSec/holdSec largos (0.5–1 s) y fundidos de 1 s: se oye
-  // como un documental pausado. Aquí se acerca a un ritmo de narración natural.
-  ritmarCapitulo(project);
   return { quitadas };
 }
 
-// Acorta solo pausas ABSURDAS de un capítulo recién generado.
-// Prioridad: audio fluido. gapSec 0 es válido y deseable; la IA pone pausas
-// solo cuando la trama lo pide. No se inventa un mínimo entre frases.
-export function ritmarCapitulo(project: any) {
+// ¿Este capítulo ya está trabajado?
+//
+// La señal más fiable es que alguna frase tenga voz generada: en cuanto hay
+// audio, las duraciones de las tomas están cuadradas contra ese audio y las
+// pausas ya son decisiones de alguien. Un capítulo recién salido de la IA no
+// tiene ni un audio.
+function yaTrabajado(project: any): boolean {
+  for (const sc of project?.scenes ?? [])
+    for (const sh of sc?.shots ?? [])
+      for (const d of sh?.dialogues ?? []) if (d?.audioId) return true;
+  return false;
+}
+
+// Acorta pausas ABSURDAS de un capítulo RECIÉN GENERADO.
+//
+// La IA tiende a poner gapSec y holdSec de medio segundo largo y fundidos de un
+// segundo: se oye como un documental pausado. Esto lo acerca a un ritmo de
+// narración normal.
+//
+// NO se exporta, y es a propósito. Esto reescribe los tiempos del montaje, así
+// que soltarlo sobre un capítulo que alguien ya ha ajustado le borraría el
+// trabajo sin avisar. La única puerta de entrada es prepararCapituloGenerado(),
+// que además comprueba que el capítulo no esté ya trabajado.
+function ritmarCapitulo(project: any) {
   for (const sc of project?.scenes ?? []) {
     for (const sh of sc?.shots ?? []) {
       const hold = Number(sh.holdSec) || 0;
@@ -142,4 +163,20 @@ export function ritmarCapitulo(project: any) {
       });
     }
   }
+}
+
+// Lo ÚNICO que debe llamarse sobre lo que devuelve la IA, y solo sobre eso.
+//
+// Hace dos cosas de naturaleza distinta y conviene tenerlas claras:
+//   · limpiar el guion (quitar frases de presentador) es seguro siempre;
+//   · ritmar (tocar pausas, holds y fundidos) NO lo es, porque reescribe
+//     tiempos que pueden ser de alguien.
+//
+// Por eso el ritmo solo se aplica si el capítulo está recién nacido. Si ya
+// tiene voces generadas, se limpia el texto y se dejan los tiempos en paz.
+export function prepararCapituloGenerado(project: any): { quitadas: string[]; ritmado: boolean } {
+  const { quitadas } = limpiarCapitulo(project);
+  if (yaTrabajado(project)) return { quitadas, ritmado: false };
+  ritmarCapitulo(project);
+  return { quitadas, ritmado: true };
 }
