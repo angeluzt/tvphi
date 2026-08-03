@@ -1,69 +1,109 @@
-import crypto from "node:crypto";
 import { env } from "@/lib/env";
+import { prisma } from "@/lib/prisma";
+import { esAdminHistorias } from "@/lib/story/cupo";
 
-// Guardar la clave de OpenAI de cada usuario.
-//
-// Es una credencial de un tercero, así que va cifrada en la base y NUNCA sale
-// de aquí: la interfaz solo llega a saber si hay una puesta y sus cuatro
-// últimos caracteres, para que el usuario reconozca cuál es.
-//
-// Se cifra con AES-256-GCM. La clave sale de AUTH_SECRET, que ya existe en el
-// servidor; GCM además detecta si el texto cifrado ha sido manipulado.
-//
-// Aviso honesto: si AUTH_SECRET cambia, las claves guardadas dejan de poder
-// descifrarse y hay que volver a ponerlas. No se pierde nada más.
+// Credenciales de OpenAI: SOLO en el servidor (OPENAI_API_KEY al desplegar).
+// El usuario normal no elige modelos ni ve claves: usa los de abajo.
+// Solo el admin (STORY_QUOTA_EXEMPT_EMAILS) puede cambiar modelos en la UI.
 
-const clave = () => crypto.createHash("sha256").update(`openai:${env.authSecret}`).digest();
+/** Mensaje genérico si la IA del servidor no responde. Sin detalles técnicos. */
+export const IA_NO_DISPONIBLE =
+  "La IA no está disponible ahora. Inténtalo más tarde.";
 
-export function cifrar(texto: string): string {
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv("aes-256-gcm", clave(), iv);
-  const dato = Buffer.concat([c.update(texto, "utf8"), c.final()]);
-  // iv.tag.dato, todo en base64: un solo campo de texto en la base.
-  return [iv.toString("base64"), c.getAuthTag().toString("base64"), dato.toString("base64")].join(".");
+/** Clave del servidor. null si no está configurada en el entorno. */
+export function claveOpenAi(): string | null {
+  const k = env.openaiApiKey;
+  return k || null;
 }
 
-export function descifrar(guardado: string): string | null {
-  try {
-    const [iv, tag, dato] = guardado.split(".");
-    if (!iv || !tag || !dato) return null;
-    const d = crypto.createDecipheriv("aes-256-gcm", clave(), Buffer.from(iv, "base64"));
-    d.setAuthTag(Buffer.from(tag, "base64"));
-    return Buffer.concat([d.update(Buffer.from(dato, "base64")), d.final()]).toString("utf8");
-  } catch {
-    // Manipulada, o cifrada con otro AUTH_SECRET.
-    return null;
-  }
+export function hayOpenAi(): boolean {
+  return !!claveOpenAi();
 }
 
-// Lo único que puede ver la interfaz: que hay clave y cómo acaba.
-export function pista(texto: string) {
-  const limpio = texto.trim();
-  return limpio.length <= 8 ? "••••" : `••••${limpio.slice(-4)}`;
-}
-
-// Una clave de OpenAI empieza por "sk-". No se valida más: el formato lo cambian
-// ellos cuando quieren, y quien manda es la primera llamada de verdad.
-export function pareceClaveOpenAi(texto: string) {
-  const t = texto.trim();
-  return t.startsWith("sk-") && t.length >= 20 && !/\s/.test(t);
-}
-
-// Un modelo por tarea: no todos hacen de todo. Los modelos baratos de texto no
-// generan audio, así que tener uno solo no vale. Vacío = usar el de siempre.
-export const MODELOS_POR_DEFECTO = { texto: "", imagen: "", voz: "", vozNombre: "alloy" };
+// Modelos fijos para todo el mundo (salvo override de admin / env).
+export const MODELOS_POR_DEFECTO = {
+  texto: "gpt-5.6-luna",
+  imagen: "gpt-image-2",
+  voz: "gpt-4o-mini-tts",
+  vozNombre: "alloy",
+};
 export type Modelos = typeof MODELOS_POR_DEFECTO;
 
-// A dónde se llama. Es api.openai.com salvo que se diga otra cosa.
-//
-// Existe por dos razones: poder probar de verdad estas rutas contra un servidor
-// falso (las llamadas salen del servidor, así que el navegador no puede
-// interceptarlas y no había forma de comprobarlas), y por si alguien pone la
-// app detrás de una pasarela compatible. Sin la variable, se comporta igual que
-// antes.
-// OJO con la forma de leerla: Next sustituye `process.env.ALGO` por su valor
-// EN EL MOMENTO DE COMPILAR, así que escrito con punto quedaba clavado al valor
-// por defecto y la variable no servía de nada. Con corchetes se lee de verdad
-// al ejecutar.
+/** Overrides opcionales del despliegue (Railway). */
+export function modelosEnv(): Partial<Modelos> {
+  return {
+    texto: (process.env["OPENAI_MODEL_TEXTO"] ?? "").trim(),
+    imagen: (process.env["OPENAI_MODEL_IMAGEN"] ?? "").trim(),
+    voz: (process.env["OPENAI_MODEL_VOZ"] ?? "").trim(),
+    vozNombre: (process.env["OPENAI_VOICE"] ?? "").trim() || undefined,
+  };
+}
+
+function baseModelos(): Modelos {
+  const e = modelosEnv();
+  return {
+    texto: e.texto || MODELOS_POR_DEFECTO.texto,
+    imagen: e.imagen || MODELOS_POR_DEFECTO.imagen,
+    voz: e.voz || MODELOS_POR_DEFECTO.voz,
+    vozNombre: e.vozNombre || MODELOS_POR_DEFECTO.vozNombre,
+  };
+}
+
+/**
+ * Modelos a usar.
+ * Usuario normal → siempre los de por defecto (o env del deploy).
+ * Admin → puede tener preferencias guardadas encima.
+ */
+export async function preferenciasModelos(userId: string, email: string): Promise<Modelos> {
+  const base = baseModelos();
+  if (!esAdminHistorias(email)) return base;
+
+  const cred = await prisma.aiCredential.findUnique({
+    where: { userId },
+    select: { models: true },
+  });
+  const userMods = (cred?.models as Partial<Modelos> | null) ?? {};
+  const pick = (k: keyof Modelos) =>
+    (typeof userMods[k] === "string" && userMods[k]!.trim()) || base[k];
+  return {
+    texto: pick("texto"),
+    imagen: pick("imagen"),
+    voz: pick("voz"),
+    vozNombre: pick("vozNombre") || "alloy",
+  };
+}
+
+/** Solo admin puede guardar elección de modelos. */
+export async function guardarModelos(
+  userId: string,
+  email: string,
+  models: Partial<Modelos>,
+) {
+  if (!esAdminHistorias(email)) {
+    throw new Error("Solo el administrador puede cambiar los modelos.");
+  }
+  const previos = await prisma.aiCredential.findUnique({
+    where: { userId },
+    select: { models: true },
+  });
+  const fusion = {
+    ...baseModelos(),
+    ...((previos?.models as object) ?? {}),
+    ...models,
+  };
+  await prisma.aiCredential.upsert({
+    where: { userId },
+    create: {
+      userId,
+      provider: "openai",
+      encrypted: "env",
+      hint: "servidor",
+      models: fusion as object,
+    },
+    update: { models: fusion as object },
+  });
+  return fusion as Modelos & Record<string, unknown>;
+}
+
 export const OPENAI = (ruta: string) =>
   `${(process.env["OPENAI_BASE_URL"] || "https://api.openai.com").replace(/\/+$/, "")}${ruta}`;

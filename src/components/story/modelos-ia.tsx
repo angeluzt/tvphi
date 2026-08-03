@@ -79,8 +79,8 @@ export function ModelosIa({
 }: {
   tareas: Tarea[];
   titulo?: string;
-  // Sube de número para pedir que vuelva a mirar la cuenta (p. ej. al guardar
-  // una clave nueva: hasta entonces no hay forma de saber qué modelos tiene).
+  // Sube de número para pedir que vuelva a mirar la cuenta (p. ej. al montar
+  // el panel: hasta entonces no hay forma de saber qué modelos tiene el servidor).
   recargar?: number;
   onGuardado?: (mods: any) => void;
   // Avisa de lo elegido aunque aún no se haya guardado: quien encarga el
@@ -186,7 +186,7 @@ export function ModelosIa({
     } finally { setProbando(false); }
   }
 
-  // Al cambiar la clave, la lista de la cuenta ya es otra.
+  // Al pedir recarga (p. ej. al abrir el panel), la lista del servidor se refresca.
   useEffect(() => { if (recargar) void leerLista(); }, [recargar]);
 
   const avisar = useRef(onCambio);
@@ -207,8 +207,8 @@ export function ModelosIa({
       </div>
       <p className="mt-1 text-[11px] text-muted">
         {deLaCuenta
-          ? "Esta lista sale de tu propia cuenta de OpenAI: son los que tu clave puede usar."
-          : "Lista de referencia. En cuanto guardes tu clave se sustituye por los que tenga tu cuenta."}
+          ? "Modelos de tu cuenta OpenAI (admin)."
+          : "Lista de referencia."}
       </p>
 
       <div className="mt-2 space-y-2">

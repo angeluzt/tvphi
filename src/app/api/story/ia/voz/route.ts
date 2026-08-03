@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { descifrar, MODELOS_POR_DEFECTO, OPENAI } from "@/lib/story/credenciales";
+import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
+import { esAdminHistorias } from "@/lib/story/cupo";
 
 // Narrar un texto con la voz de OpenAI.
 //
@@ -44,19 +44,18 @@ export async function POST(req: Request) {
   const parsed = cuerpo.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
 
-  const cred = await prisma.aiCredential.findUnique({ where: { userId: user.id } });
-  if (!cred) return NextResponse.json({ error: "No has puesto tu clave de OpenAI" }, { status: 400 });
-  const key = descifrar(cred.encrypted);
+  const key = claveOpenAi();
   if (!key) {
-    return NextResponse.json({ error: "La clave guardada no se puede leer. Vuelve a ponerla." }, { status: 400 });
+    return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
   }
 
-  const guardados = { ...MODELOS_POR_DEFECTO, ...((cred.models as any) ?? {}) };
-  const modelo = parsed.data.modelo || guardados.voz;
+  const guardados = await preferenciasModelos(user.id, user.email);
+  const modelo = esAdminHistorias(user.email) && parsed.data.modelo
+    ? parsed.data.modelo
+    : guardados.voz;
   const voz = parsed.data.voz || guardados.vozNombre || "alloy";
   if (!modelo) {
-    return NextResponse.json(
-      { error: "No has elegido modelo de voz. Cópialo de platform.openai.com." }, { status: 400 });
+    return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 400 });
   }
 
   // Un modelo de CHAT no deja de ser un chat aunque le pidas que solo lea.

@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { descifrar, OPENAI } from "@/lib/story/credenciales";
+import { claveOpenAi, OPENAI, IA_NO_DISPONIBLE, preferenciasModelos } from "@/lib/story/credenciales";
 import { referenciaCompacta } from "@/lib/story/catalogo";
 import { migrateProject, quienesHablan } from "@/lib/story/model";
 import { limpiarCapitulo } from "@/lib/story/guion";
 import { VOCES } from "@/lib/story/modelos";
+import { estadoCupoHistorias, mensajeCupoAgotado, registrarUsoIaCapitulo, esAdminHistorias } from "@/lib/story/cupo";
 
 // Si la IA no rellenó project.voices, se asigna una voz distinta por hablante
 // para que Nora y Tomás no suenen iguales al narrar.
@@ -104,16 +104,25 @@ export async function POST(req: Request) {
 
   const parsed = cuerpo.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
-  const { prompt, escenas = 6, modelo = "gpt-4o-mini" } = parsed.data;
+  const { prompt, escenas = 6 } = parsed.data;
 
-  const cred = await prisma.aiCredential.findUnique({ where: { userId: user.id } });
-  if (!cred) {
-    return NextResponse.json({ error: "No has puesto tu clave de OpenAI" }, { status: 400 });
-  }
-  const key = descifrar(cred.encrypted);
+  const key = claveOpenAi();
   if (!key) {
-    return NextResponse.json(
-      { error: "La clave guardada no se puede leer. Vuelve a ponerla." }, { status: 400 });
+    return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
+  }
+
+  const prefs = await preferenciasModelos(user.id, user.email);
+  const modelo = esAdminHistorias(user.email) && parsed.data.modelo
+    ? parsed.data.modelo
+    : prefs.texto;
+
+  const cupo = await estadoCupoHistorias(user.id, user.email);
+  if (!cupo.exento && cupo.quedan <= 0) {
+    return NextResponse.json({
+      error: mensajeCupoAgotado(cupo),
+      cupo,
+      codigo: "cupo_ia",
+    }, { status: 429 });
   }
 
   // La compacta: dice lo mismo con muchos menos tokens, y los paga el usuario
@@ -172,6 +181,9 @@ export async function POST(req: Request) {
   const { quitadas } = limpiarCapitulo(project);
   asegurarVocesCapitulo(project);
 
+  await registrarUsoIaCapitulo(user.id);
+  const cupoTras = await estadoCupoHistorias(user.id, user.email);
+
   return NextResponse.json({
     ok: true,
     // Se dice lo que se ha quitado en vez de hacerlo a escondidas.
@@ -180,5 +192,6 @@ export async function POST(req: Request) {
     project,
     // Para que la interfaz pueda decir cuántas imágenes va a pedir.
     imagenes: project.scenes.length,
+    cupo: cupoTras,
   });
 }

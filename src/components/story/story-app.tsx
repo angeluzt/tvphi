@@ -38,6 +38,14 @@ import { exportDialogues, applyDialogues } from "@/lib/story/dialogues";
 
 interface ProjMeta { id: string; name: string; updatedAt: string; seriesId?: string | null }
 
+export type CupoHistorias = {
+  exento: boolean;
+  usadas: number;
+  limite: number;
+  quedan: number;
+  retryAt: string | null;
+};
+
 // Cuánto se espera desde el último cambio para guardar solo. Bastante corto
 // para no perder trabajo, y bastante largo para no guardar en cada tecla.
 const AUTOGUARDADO = 8000;
@@ -89,9 +97,16 @@ function imageSize(file: Blob): Promise<{ w: number; h: number }> {
   });
 }
 
-export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
+export function StoryApp({
+  initialProjects,
+  initialCupo,
+}: {
+  initialProjects: ProjMeta[];
+  initialCupo: CupoHistorias;
+}) {
   const [project, setProject] = useState<StoryProject>(emptyProject());
   const [projects, setProjects] = useState<ProjMeta[]>(initialProjects);
+  const [cupo, setCupo] = useState<CupoHistorias>(initialCupo);
   const [projectId, setProjectId] = useState<string | null>(null);
   // Series: agrupan capítulos y personajes. Todo opcional — un video suelto no
   // necesita ninguna, y lo que ya existe se queda "sin serie".
@@ -107,6 +122,8 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
   const [iaImagen, setIaImagen] = useState(false);
   // Con clave puesta se puede pedir otra versión de una frase.
   const [iaTexto, setIaTexto] = useState(false);
+  // Solo admin ve/elige modelos de IA.
+  const [esAdminIa, setEsAdminIa] = useState(false);
   // La escena que se está describiendo para dibujarla.
   const [dibujo, setDibujo] = useState<{ falta: Falta; texto: string } | null>(null);
   const [dibujando, setDibujando] = useState(false);
@@ -124,10 +141,12 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
 
   // La clave/modelos se guardan en otro panel; si solo se leían al montar,
   // el editor se quedaba sin «Dibujar» aunque la DB ya tuviera gpt-image-2.
-  function aplicarCapacidadesIa(j: { configurada?: boolean; models?: { imagen?: string; voz?: string } } | null) {
-    setVozOpenAi(!!j?.configurada && !!j?.models?.voz);
-    setIaImagen(!!j?.configurada && !!j?.models?.imagen);
-    setIaTexto(!!j?.configurada);
+  function aplicarCapacidadesIa(j: { configurada?: boolean; admin?: boolean; models?: { imagen?: string; voz?: string; texto?: string } } | null) {
+    setEsAdminIa(!!j?.admin);
+    const ok = !!j?.configurada;
+    setVozOpenAi(ok);
+    setIaImagen(ok);
+    setIaTexto(ok);
   }
   async function refrescarCapacidadesIa() {
     try {
@@ -772,6 +791,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       body: JSON.stringify({ id: id ?? undefined, name: nombre, data }),
     });
     const j = await res.json().catch(() => ({}));
+    if (j.cupo) setCupo(j.cupo);
     if (!res.ok) throw new Error(j.error || "Error");
     setProjects((prev) => [
       { id: j.project.id, name: j.project.name, updatedAt: j.project.updatedAt },
@@ -791,6 +811,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         body: JSON.stringify({ id: projectId ?? undefined, name, data: projRef.current, seriesId }),
       });
       const j = await res.json();
+      if (j.cupo) setCupo(j.cupo);
       if (!res.ok) return;
       setProjectId(j.project.id);
       setProjects((prev) => [
@@ -816,6 +837,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         body: JSON.stringify({ id: projectId ?? undefined, name, data: project, seriesId }),
       });
       const j = await res.json();
+      if (j.cupo) setCupo(j.cupo);
       if (!res.ok) throw new Error(j.error || "Error");
       setProjectId(j.project.id);
       void cargarSeries();
@@ -1208,6 +1230,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       setSeriesId(sid);
       const l = await (await fetch("/api/story")).json();
       setProjects(l.projects ?? []);
+      if (l.cupo) setCupo(l.cupo);
       setStatus(`Saga importada ✓ · ${crudo.capitulos.length} capítulos. Ábrelos y repón sus imágenes.`);
     } catch (e: any) { setStatus("No se pudo importar la saga: " + (e?.message ?? "")); }
     setBusy(null);
@@ -1447,6 +1470,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
       <StoryHome
         series={series}
         proyectos={projects}
+        cupo={cupo}
         busy={busy === "load" || busy === "delete"}
         onAbrir={(id) => void load(id)}
         // Se entra al editor y ahí se pregunta la forma del video.
@@ -1462,6 +1486,7 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         }}
         onBorrar={(id, nom) => deleteProject({ id, name: nom, updatedAt: "" })}
         onImportarZip={importPaquete}
+        onCupo={setCupo}
         // Lo que escribe la IA se abre en el editor SIN guardar: es un borrador
         // hasta que el usuario decida. Sus imágenes saldrán como faltantes.
         onGenerado={(nom, p) => {
@@ -2225,16 +2250,13 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
         <div className="card p-3">
           <div className="flex items-center gap-2">
             <span className="label">Voz (narración)</span>
-            {vozOpenAi && (
+            {vozOpenAi && esAdminIa && (
               <button onClick={() => setVerModelosVoz((v) => !v)} className="btn-ghost ml-auto text-[11px]">
                 <Settings2 className="h-3.5 w-3.5 text-accent" /> Modelo
               </button>
             )}
           </div>
-          {/* El modelo se cambia AQUÍ, sin salir del capítulo. Si la narración
-              falla porque han retirado el modelo, salir a la pantalla de inicio
-              a cambiarlo dejaba al usuario encerrado y ya habiendo pagado. */}
-          {vozOpenAi && (verModelosVoz || vozRota) && (
+          {vozOpenAi && esAdminIa && (verModelosVoz || vozRota) && (
             <div className="mt-2 space-y-2">
               {vozRota && (
                 <p className="flex items-start gap-1.5 rounded-lg border border-danger/40 bg-danger/10 p-2 text-[11px] text-danger">
@@ -2248,6 +2270,9 @@ export function StoryApp({ initialProjects }: { initialProjects: ProjMeta[] }) {
                 onGuardado={() => { setVozRota(null); setStatus("Modelo cambiado ✓ · vuelve a darle a narrar"); }}
               />
             </div>
+          )}
+          {vozRota && !esAdminIa && (
+            <p className="mt-2 text-[11px] text-danger">{vozRota}</p>
           )}
           {!vozOpenAi && (
             <label className="mt-2 block space-y-1 text-sm">

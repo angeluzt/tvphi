@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, Folder, FolderOpen, Film, ChevronLeft, Trash2, Loader2, Users, FileUp } from "lucide-react";
 import { IaPanel } from "./ia-panel";
+import type { CupoHistorias } from "./story-app";
 
 // Pantalla de entrada: primero se elige DÓNDE se va a trabajar, y solo después
 // se abre el editor.
@@ -18,12 +19,22 @@ import { IaPanel } from "./ia-panel";
 export interface SerieMeta { id: string; name: string; capitulos: number; personajes: number }
 export interface CapMeta { id: string; name: string; updatedAt: string; seriesId?: string | null }
 
+function textoCupo(cupo: CupoHistorias) {
+  if (cupo.exento) return null;
+  if (cupo.quedan > 0) {
+    return `Historias con IA: te quedan ${cupo.quedan} de ${cupo.limite} en 24 h. Crear a mano no tiene límite.`;
+  }
+  const cuando = cupo.retryAt ? new Date(cupo.retryAt).toLocaleString() : "más tarde";
+  return `Ya usaste tus ${cupo.limite} historias con IA de hoy. Podrás generar otra a partir de ${cuando}. Crear a mano sigue libre.`;
+}
+
 export function StoryHome({
-  series, proyectos, busy,
-  onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar, onGenerado, onImportarZip,
+  series, proyectos, cupo, busy,
+  onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar, onGenerado, onImportarZip, onCupo,
 }: {
   series: SerieMeta[];
   proyectos: CapMeta[];
+  cupo: CupoHistorias;
   busy: boolean;
   onAbrir: (id: string) => void;
   onNuevoCapitulo: (seriesId: string | null) => void;
@@ -31,14 +42,21 @@ export function StoryHome({
   onBorrar: (id: string, name: string) => void;
   onGenerado: (name: string, project: unknown) => void;
   onImportarZip: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onCupo?: (c: CupoHistorias) => void;
 }) {
   // null = viendo las series; una cadena (o "") = dentro de esa serie.
   const [dentro, setDentro] = useState<string | null>(null);
   const sueltos = proyectos.filter((p) => !p.seriesId);
+  const avisoCupo = textoCupo(cupo);
 
   if (dentro === null) {
     return (
       <div className="tool-ui space-y-4">
+        {avisoCupo && (
+          <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
+            {avisoCupo}
+          </p>
+        )}
         <div className="card p-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="label">Tus series</span>
@@ -76,21 +94,19 @@ export function StoryHome({
           </div>
         </div>
 
-        {/* Lo que no está en ninguna serie: visible desde el principio, para que
-            nada de lo que ya tenías parezca haberse perdido. */}
         <div className="card p-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="label">Sin serie</span>
-            <button onClick={() => onNuevoCapitulo(null)} disabled={busy} className="btn-ghost ml-auto text-xs disabled:opacity-40">
+            <button
+              onClick={() => onNuevoCapitulo(null)}
+              disabled={busy}
+              className="btn-ghost ml-auto text-xs disabled:opacity-40"
+            >
               <Plus className="h-4 w-4 text-accent" /> Video nuevo
             </button>
-            {/* Los personajes que no son de ninguna serie. */}
             <a href="/story/personajes" className="btn-ghost text-xs">
               <Users className="h-4 w-4 text-accent" /> Personajes
             </a>
-            {/* Traer un capítulo entero desde un paquete. Va aquí porque hace
-                falta ANTES de tener nada abierto: es como se empieza en un
-                equipo nuevo. */}
             <label className="btn-ghost cursor-pointer text-xs">
               <FileUp className="h-4 w-4 text-accent" /> Importar .zip
               <input type="file" accept=".zip,application/zip" className="hidden" onChange={onImportarZip} />
@@ -100,7 +116,7 @@ export function StoryHome({
             vacio="Nada suelto. Todo lo tuyo está dentro de una serie." />
         </div>
 
-        <IaPanel onGenerado={onGenerado} />
+        <IaPanel onGenerado={onGenerado} cupo={cupo} onCupo={onCupo} />
       </div>
     );
   }
@@ -109,17 +125,25 @@ export function StoryHome({
   const caps = proyectos.filter((p) => p.seriesId === dentro);
   return (
     <div className="tool-ui space-y-4">
+      {avisoCupo && (
+        <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
+          {avisoCupo}
+        </p>
+      )}
       <div className="card p-4">
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setDentro(null)} className="btn-ghost text-xs">
             <ChevronLeft className="h-4 w-4" /> Series
           </button>
           <span className="label ml-1 min-w-0 truncate">{serie?.name ?? "Serie"}</span>
-          {/* Los personajes son de la serie: se entra a los suyos desde aquí. */}
           <a href={`/story/personajes?serie=${dentro}`} className="btn-ghost ml-auto text-xs">
             <Users className="h-4 w-4 text-accent" /> Personajes
           </a>
-          <button onClick={() => onNuevoCapitulo(dentro)} disabled={busy} className="btn-brand text-xs disabled:opacity-40">
+          <button
+            onClick={() => onNuevoCapitulo(dentro)}
+            disabled={busy}
+            className="btn-brand text-xs disabled:opacity-40"
+          >
             <Plus className="h-4 w-4" /> Capítulo nuevo
           </button>
         </div>
