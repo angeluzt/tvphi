@@ -18,10 +18,9 @@ import { StoryHome, StoryBreadcrumb } from "./story-home";
 import { faltantes, referencias, type Falta } from "@/lib/story/missing";
 import { crearReferenciaVfx } from "@/lib/story/vfx-image-reference";
 import { crearZip, leerZip, nombreArchivo, idDeNombre } from "@/lib/story/zip";
-import { getAsset } from "@/lib/story/store";
+import { getAsset, putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
-import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
 import { VfxEditor } from "./vfx-editor";
 import { VfxCanvas, VfxTools } from "./vfx-canvas";
@@ -631,6 +630,7 @@ export function StoryApp({
       .then(async (blob) => {
         const audioId = nanoid(10);
         await putAsset(audioId, blob);
+        engineRef.current?.invalidateAsset(audioId);
         const secs = await audioDuration(blob);
         patchDialogue(sceneId, shotId, d.id, { audioId, dur: secs, stale: false });
         // Al regenerar, la voz anterior ya no la usa nadie: se quita para no ir
@@ -968,6 +968,7 @@ export function StoryApp({
     setReponiendo(falta.id);
     try {
       await putAsset(falta.id, file);
+      engineRef.current?.invalidateAsset(falta.id);
       // Una imagen de escena manda en la proporción: los encuadres se guardan en
       // tanto por uno, así que si la nueva imagen no mide igual hay que rehacer
       // las medidas o el encuadre sale torcido.
@@ -1043,6 +1044,7 @@ export function StoryApp({
       // Se guarda con el MISMO identificador, igual que al reponerla a mano: si
       // esa imagen se usaba en varios sitios, todos quedan arreglados de una vez.
       await putAsset(falta.id, blob);
+      engineRef.current?.invalidateAsset(falta.id);
       const medidas = await medirImagen(blob);
       mut((p) => ({
         ...p,
@@ -1125,6 +1127,36 @@ export function StoryApp({
     } finally { setRehaciendo(null); }
   }
 
+  // Si el JSON trae durationSec corto pero autoDuration y las voces ya están,
+  // la línea de tiempo la marca dialogue.dur (vía shotDur). Si dur quedó viejo
+  // o a 0, el playhead corre de más/de menos respecto al audio. Se alinea con
+  // lo que realmente dura cada archivo en este navegador.
+  async function alinearDursConAudio(p: StoryProject): Promise<StoryProject> {
+    let cambio = false;
+    const scenes = [];
+    for (const sc of p.scenes) {
+      const shots = [];
+      for (const sh of sc.shots) {
+        const dialogues = [];
+        for (const d of sh.dialogues) {
+          if (!d.audioId) { dialogues.push(d); continue; }
+          const blob = await getAsset(d.audioId);
+          if (!blob) { dialogues.push(d); continue; }
+          const secs = await audioDuration(blob).catch(() => 0);
+          if (secs < 0.05 || Math.abs((d.dur || 0) - secs) < 0.2) {
+            dialogues.push(d);
+            continue;
+          }
+          cambio = true;
+          dialogues.push({ ...d, dur: secs });
+        }
+        shots.push({ ...sh, dialogues });
+      }
+      scenes.push({ ...sc, shots });
+    }
+    return cambio ? { ...p, scenes } : p;
+  }
+
   // ---------- montar el capítulo entero, a la vista ----------
   //
   // Antes, al escribir un capítulo con IA, salía un borrador con todas las
@@ -1163,6 +1195,11 @@ export function StoryApp({
     }
 
     setFaltas(await faltantes(projRef.current));
+    const alineado = await alinearDursConAudio(projRef.current);
+    if (alineado !== projRef.current) {
+      setProject(alineado);
+      engineRef.current?.update(alineado);
+    }
     setMontaje({ fase: "listo", hechas: voces.length, total: voces.length, detalle: "" });
     setStatus("Capítulo montado ✓ · revísalo y guarda");
   }
@@ -1263,11 +1300,13 @@ export function StoryApp({
         if (!id) continue;
         // Se copia a un búfer propio: la porción del ZIP apunta al original.
         await putAsset(id, new Blob([new Uint8Array(x.datos)]));
+        engineRef.current?.invalidateAsset(id);
         puestos++;
       }
       const crudo = JSON.parse(new TextDecoder().decode(meta.datos));
-      const data = migrateProject(crudo?.project ?? crudo);
+      let data = migrateProject(crudo?.project ?? crudo);
       if (!data.scenes.length) throw new Error("ese proyecto no tiene escenas");
+      data = await alinearDursConAudio(data);
       setProject(data);
       setProjectId(null);
       if (crudo?.name) setName(String(crudo.name));
@@ -1377,7 +1416,8 @@ export function StoryApp({
       const res = await fetch(`/api/story?id=${id}`);
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || "Error");
-      const data = migrateProject(j.project.data);
+      const data0 = migrateProject(j.project.data);
+      const data = await alinearDursConAudio(data0);
       const ids = new Set<string>();
       for (const sc of data.scenes) {
         ids.add(sc.imageId);

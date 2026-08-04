@@ -18,6 +18,9 @@ function openDb(): Promise<IDBDatabase> {
 }
 
 export async function putAsset(id: string, blob: Blob): Promise<void> {
+  // Si se sustituye el archivo, la URL antigua ya no vale: si no se olvida,
+  // el motor sigue pintando/sonando la versión anterior (mismo id).
+  forgetUrl(id);
   const db = await openDb();
   await new Promise<void>((res, rej) => {
     const t = db.transaction(STORE, "readwrite");
@@ -81,4 +84,12 @@ export async function assetUrl(id: string): Promise<string | null> {
 }
 export function cachedUrl(id: string): string | null {
   return urlCache.get(id) ?? null;
+}
+/** Olvida la object URL de un id (p. ej. tras reemplazar el blob). */
+export function forgetUrl(id: string) {
+  const url = urlCache.get(id);
+  if (url) {
+    try { URL.revokeObjectURL(url); } catch {}
+    urlCache.delete(id);
+  }
 }

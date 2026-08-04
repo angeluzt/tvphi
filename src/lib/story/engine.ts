@@ -175,6 +175,18 @@ export class StoryEngine {
     if (!this.playing) this.render();
   }
 
+  /** Tras reemplazar un archivo en el almacén: olvidar la copia en memoria. */
+  invalidateAsset(id: string) {
+    this.images.delete(id);
+    this.buffers.delete(id);
+    this.anims.delete(id);
+    // Estirados/cosidos de ese audio también quedan obsoletos.
+    for (const k of [...this.estirados.keys()]) {
+      if (k.startsWith(id + ":")) this.estirados.delete(k);
+    }
+    this.cosidos.delete(id);
+  }
+
   private async ensureAssets(p: StoryProject) {
     const imgIds = new Set<string>();
     const audioIds = new Set<string>();
@@ -193,17 +205,25 @@ export class StoryEngine {
 
     await Promise.all([
       ...[...imgIds].map(async (id) => {
-        if (this.images.has(id)) return;
+        if (!id) return;
+        const ya = this.images.get(id);
+        // Solo se reutiliza si cargó de verdad. Una entrada rota (0×0) bloqueaba
+        // el reintento y el play se oía sin imagen.
+        if (ya && ya.complete && ya.naturalWidth > 0) return;
+        this.images.delete(id);
         const url = await assetUrl(id);
         if (!url) return;
         const img = new Image();
         img.src = url;
         this.images.set(id, img);
-        // Repinta en cuanto la imagen esté lista (si no se está reproduciendo).
-        img.decode?.().then(() => { if (!this.playing) this.render(); }).catch(() => {});
+        // Repinta en cuanto la imagen esté lista (también durante el play:
+        // si no, la primera generación con IA dejaba el lienzo negro hasta pausar).
+        img.decode?.().then(() => { this.render(); }).catch(() => {});
+        img.onload = () => { this.render(); };
         void this.loadAnim(id);
       }),
       ...[...audioIds].map(async (id) => {
+        if (!id) return;
         if (this.buffers.has(id)) return;
         const blob = await getAsset(id);
         if (!blob) return;
@@ -711,45 +731,51 @@ export class StoryEngine {
     this.running = true;
     const loop = () => {
       if (!this.running) return;
-      if (this.playing && this.audioCtx) {
-        this.playhead = this.audioStartHead + (this.audioCtx.currentTime - this.audioStartCtx);
-        const limit = Math.min(this.duration(), this.rangeEnd);
-        if (this.playhead >= limit) {
-          if (this.looping) {
-            // Vuelta a empezar sin cortar: se reprograma el sonido desde el inicio.
-            this.playhead = this.rangeStart;
-            this.stopSources();
-            this.scheduleAudio(this.playhead);
+      try {
+        if (this.playing && this.audioCtx) {
+          this.playhead = this.audioStartHead + (this.audioCtx.currentTime - this.audioStartCtx);
+          const limit = Math.min(this.duration(), this.rangeEnd);
+          if (this.playhead >= limit) {
+            if (this.looping) {
+              // Vuelta a empezar sin cortar: se reprograma el sonido desde el inicio.
+              this.playhead = this.rangeStart;
+              this.stopSources();
+              this.scheduleAudio(this.playhead);
+              this.onTime?.(this.playhead);
+              this.render();
+              this.raf = requestAnimationFrame(loop);
+              return;
+            }
+            this.playhead = limit;
+            this.pause(); // avisa por onPlaying
             this.onTime?.(this.playhead);
+            this.onEnded?.();
             this.render();
             this.raf = requestAnimationFrame(loop);
             return;
           }
-          this.playhead = limit;
-          this.pause(); // avisa por onPlaying
           this.onTime?.(this.playhead);
-          this.onEnded?.();
           this.render();
-          this.raf = requestAnimationFrame(loop);
-          return;
-        }
-        this.onTime?.(this.playhead);
-        this.render();
-      } else if (this.vfxLive && this.project && this.flat.length) {
-        // ~30 fps: bastante para ver el efecto al colocar; no satura como a 60.
-        const now = performance.now();
-        if (!this.lastVfxFrame) this.lastVfxFrame = now;
-        if (now - this.lastVfxFrame >= 33) {
-          this.vfxExtra += (now - this.lastVfxFrame) / 1000;
-          this.lastVfxFrame = now;
-          // Antes de MAX_PASOS (15 s): reinicio suave para que no “desaparezcan”
-          // ni salten al ponerse al día de golpe.
-          if (this.vfxExtra > 12) {
-            this.vfxScenes.clear();
-            this.vfxExtra = 0.8;
+        } else if (this.vfxLive && this.project && this.flat.length) {
+          // ~30 fps: bastante para ver el efecto al colocar; no satura como a 60.
+          const now = performance.now();
+          if (!this.lastVfxFrame) this.lastVfxFrame = now;
+          if (now - this.lastVfxFrame >= 33) {
+            this.vfxExtra += (now - this.lastVfxFrame) / 1000;
+            this.lastVfxFrame = now;
+            // Antes de MAX_PASOS (15 s): reinicio suave para que no “desaparezcan”
+            // ni salten al ponerse al día de golpe.
+            if (this.vfxExtra > 12) {
+              this.vfxScenes.clear();
+              this.vfxExtra = 0.8;
+            }
+            this.render();
           }
-          this.render();
         }
+      } catch (e) {
+        // Un efecto mal formado no puede tumbar el bucle: si se para el rAF,
+        // el audio de Web Audio sigue y parece que «solo suena sin imagen».
+        console.warn("Error al pintar el fotograma", e);
       }
       this.raf = requestAnimationFrame(loop);
     };
@@ -1008,7 +1034,7 @@ export class StoryEngine {
     escena.setZoomScale(zoomScale);
     let clave = f.shot.id + sufijo;
     for (const v of capas) {
-      clave += `|${v.id},${v.kind},${v.shape},${v.nodes.length},${v.timing},${v.startSec},${v.endSec}`;
+      clave += `|${v.id},${v.kind},${v.shape},${(v.nodes ?? []).length},${v.timing},${v.startSec},${v.endSec}`;
     }
     // En pausa el reloj extra no debe “salirse” del final de la toma (si no,
     // montar da de baja todo). Y se recicla antes de MAX_PASOS para no hacer
