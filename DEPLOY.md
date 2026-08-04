@@ -51,6 +51,8 @@ APP_URL=https://tvphi.com
 AUTH_SECRET=<genera uno: openssl rand -base64 32>
 DATABASE_URL=<la de Neon del Paso 1>
 MEDIA_PROVIDER=mock        # cámbialo a "cloudflare" tras el Paso 4
+RESEND_API_KEY=<opcional: correo de restablecer contraseña>
+EMAIL_FROM=TVPHI <noreply@tudominio.com>
 ```
 
 Railway define `PORT` automáticamente; el servidor ya lo respeta (no lo fijes tú).
@@ -70,6 +72,10 @@ y ven **Uso** en la cabecera → `/admin` (estadísticas + cupo IA editable).
 Tras guardarlas, Railway redepliega. Cuando el deploy quede en verde, abre la URL temporal
 de Railway (algo como `https://tvphi-production.up.railway.app`) y comprueba `…/api/health`
 → debe responder `{"ok":true,...}`.
+
+Para que el enlace de «restablecer contraseña» abra bien, `APP_URL` debe ser la URL pública
+real (p. ej. `https://tvphi.com`). Sin `RESEND_API_KEY`, en desarrollo el enlace se imprime
+en los logs del servidor.
 
 ---
 

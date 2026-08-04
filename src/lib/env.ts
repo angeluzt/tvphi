@@ -13,6 +13,13 @@ export const env = {
   get openaiApiKey() {
     return (process.env["OPENAI_API_KEY"] ?? "").trim();
   },
+  /** Resend: correo de restablecer contraseña. Sin clave, en dev se imprime el enlace. */
+  get resendApiKey() {
+    return (process.env["RESEND_API_KEY"] ?? "").trim();
+  },
+  get emailFrom() {
+    return (process.env["EMAIL_FROM"] ?? "TVPHI <onboarding@resend.dev>").trim();
+  },
 };
 
 export const isProd = env.nodeEnv === "production";
