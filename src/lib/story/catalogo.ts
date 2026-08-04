@@ -303,7 +303,7 @@ export function referenciaParaIA() {
     fallosTipicos: fallosTipicos(),
     efectos: catalogoEfectos(),
     musica: {
-      comoSeUsa: "Pon la pista en audioLayers con audioId igual al identificador (empieza por «lib:»), kind:\"music\", loop:true, volume 0.25-0.4, startSec 0.",
+      comoSeUsa: "PREFERENTE: música por escena, no global. Se pone como sonido de la PRIMERA toma de la escena, en shots[].sfx con loop:true y audioId «lib:…», y se corta al empezar la escena siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. Así cada escena tiene la suya y se mueve con las tomas. Global (audioLayers, kind:\"music\", loop:true, startSec 0) SOLO para una cama única de todo el video, y NUNCA más de una. volume 0.08-0.15: la música se aparta sola mientras se narra, ese número es el de los silencios.",
       pistas: catalogoMusicaIA(),
     },
     sonidos: {
@@ -324,7 +324,7 @@ export function referenciaCompacta() {
     fallosTipicos: fallosTipicos(),
     efectos: catalogoCompacto(),
     musica: {
-      comoSeUsa: "Pon la pista en audioLayers con audioId igual al identificador de abajo (empieza por «lib:»), kind:\"music\", loop:true, volume 0.25-0.4 para que no tape la narración, startSec 0. Los archivos ya están en la app: no hacen falta subirlos.",
+      comoSeUsa: "PREFERENTE: música por ESCENA. Va en shots[].sfx de la primera toma de la escena, con loop:true, audioId «lib:…», volume 0.08-0.15, y se corta al empezar la escena siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. Global (audioLayers kind:\"music\", loop:true, startSec 0) solo para una cama única de todo el video y NUNCA más de una: dos suenan +3 dB y tapan la voz. El volumen es el de los silencios; bajo la narración la música se aparta sola. Los archivos ya están en la app.",
       pistas: catalogoMusicaIA(),
     },
     sonidos: {

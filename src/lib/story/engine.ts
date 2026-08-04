@@ -8,8 +8,22 @@ import {
 import { VfxScene, type VfxInput } from "./vfx";
 import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
+import { esDeBiblioteca } from "./musica";
 import { Recorder } from "@/lib/studio/recorder";
 
+
+// La música se aparta cuando alguien habla.
+//
+// Es la única forma de que un porcentaje fijo funcione. La música de la
+// biblioteca está masterizada a -14 dBFS y una narración TTS suena bastante
+// más bajo, así que un volumen que se oye bien en un silencio tapa la voz en
+// cuanto empieza a hablar. Poner la música tan baja que nunca moleste es
+// dejarla inaudible el resto del tiempo. Bajándola solo mientras se narra, el
+// mismo número sirve para las dos cosas.
+const DUCK = 0.3;        // a cuánto se queda mientras hay voz (-10.5 dB)
+const DUCK_ENTRA = 0.25; // lo que tarda en apartarse, antes de la primera sílaba
+const DUCK_SALE = 0.45;  // y en volver, ya acabada la frase
+const JUNTAR_VOZ = 1.2;  // huecos más cortos que esto no la dejan volver a subir
 
 // Motor de "Historias narradas": anima el encuadre de cada toma sobre su imagen,
 // encadena transiciones, dibuja los stickers, mezcla el audio (diálogos + efectos
@@ -29,6 +43,8 @@ export class StoryEngine {
   private gains = new Map<string, GainNode>();
   private audioStartCtx = 0;
   private audioStartHead = 0;
+  // Tramos en los que se está narrando, ya unidos los huecos cortos.
+  private ventanasVoz: { a: number; b: number }[] = [];
 
   private images = new Map<string, HTMLImageElement>();
   private buffers = new Map<string, AudioBuffer>();
@@ -352,9 +368,45 @@ export class StoryEngine {
     const now = this.audioCtx.currentTime;
     for (const f of this.flat) {
       for (const d of f.shot.dialogues) this.gains.get(`dlg:${d.id}`)?.gain.setTargetAtTime(p.narrationVolume, now, 0.02);
-      for (const s of f.shot.sfx) this.gains.get(`sfx:${s.id}`)?.gain.setTargetAtTime(s.volume, now, 0.02);
+      for (const s of f.shot.sfx) {
+        const g = this.gains.get(`sfx:${s.id}`);
+        if (!g) continue;
+        // Si es música, mover la barra tiene que reescribir toda la curva: si
+        // no, el valor nuevo se queda peleando con el ducking ya programado.
+        if (s.loop && esDeBiblioteca(s.audioId)) this.curvaMusica(g, s.volume);
+        else g.gain.setTargetAtTime(s.volume, now, 0.02);
+      }
     }
-    for (const l of p.audioLayers) this.gains.get(`lay:${l.id}`)?.gain.setTargetAtTime(l.volume, now, 0.02);
+    for (const l of p.audioLayers) {
+      const g = this.gains.get(`lay:${l.id}`);
+      if (!g) continue;
+      if (l.kind === "music") this.curvaMusica(g, l.volume);
+      else g.gain.setTargetAtTime(l.volume, now, 0.02);
+    }
+  }
+
+  // La automatización de una pista de música: su volumen normal, y DUCK veces
+  // ese volumen mientras se narra. Se reescribe entera cada vez —cancelando lo
+  // que hubiera— para que mover la barra durante la reproducción no deje media
+  // curva vieja por delante.
+  private curvaMusica(g: GainNode, base: number) {
+    const ctx = this.audioCtx;
+    if (!ctx) return;
+    const ahora = ctx.currentTime;
+    // El instante de la historia en el que estamos ahora mismo.
+    const cabeza = this.audioStartHead + (ahora - this.audioStartCtx);
+    const bajo = base * DUCK;
+    g.gain.cancelScheduledValues(ahora);
+    const hablandoYa = this.ventanasVoz.some((v) => cabeza >= v.a - DUCK_ENTRA && cabeza < v.b + DUCK_SALE);
+    g.gain.setValueAtTime(hablandoYa ? bajo : base, ahora);
+    for (const v of this.ventanasVoz) {
+      const fin = ahora + (v.b - cabeza);
+      if (fin < ahora) continue; // ya pasó
+      // setTargetAtTime hace la bajada exponencial, que es como se oye natural.
+      // Con tau = tiempo/3 llega al 95% en ese tiempo.
+      g.gain.setTargetAtTime(bajo, Math.max(ahora, ahora + (v.a - cabeza) - DUCK_ENTRA), DUCK_ENTRA / 3);
+      g.gain.setTargetAtTime(base, Math.max(ahora, fin), DUCK_SALE / 3);
+    }
   }
 
   private scheduleAudio(fromT: number) {
@@ -379,6 +431,10 @@ export class StoryEngine {
       narracion?: boolean;
       // Si se corta antes de acabar, se baja el volumen en vez de segarlo.
       desvanecer?: boolean;
+      // Es música: se aparta sola mientras se narra.
+      musica?: boolean;
+      // Lo que ocupa en la línea de tiempo (la voz ya lo sabe del modelo).
+      duracion: number;
     }
     const events: Ev[] = [];
 
@@ -399,6 +455,7 @@ export class StoryEngine {
           key: `dlg:${d.id}`, t: f.start + dStarts[k], audioId: d.audioId,
           gain: this.project!.narrationVolume, loop: false, until: Infinity,
           effect: efecto, rate, alpha: tono / vel, narracion: true,
+          duracion: dialogueDur(d),
         });
       });
       const sStarts = sfxStarts(f.shot);
@@ -410,11 +467,15 @@ export class StoryEngine {
           events.push({
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
             gain: s.volume, loop: true, until: span.end, changes: span.changes,
+            duracion: s.dur || 0,
+            // Una pista de la biblioteca puesta en bucle dentro de una toma es
+            // música de esa escena: se aparta bajo la voz igual que la global.
+            musica: esDeBiblioteca(s.audioId),
           });
         } else {
           events.push({
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
-            gain: s.volume, loop: false, until: Infinity,
+            gain: s.volume, loop: false, until: Infinity, duracion: s.dur || 0,
           });
         }
       });
@@ -426,14 +487,17 @@ export class StoryEngine {
         const v = ventanas[k];
         events.push({
           key: `ovl:${o.id}`, t: f.start + overlaySoundStart(o, v), audioId: o.soundId,
-          gain: o.soundVolume ?? 0.9, loop: !!o.soundLoop,
+          gain: o.soundVolume ?? 0.9, loop: !!o.soundLoop, duracion: 0,
           until: o.soundLoop ? f.start + v.end : Infinity,
         });
       });
     });
 
     for (const l of this.project.audioLayers) {
-      events.push({ key: `lay:${l.id}`, t: l.startSec, audioId: l.audioId, gain: l.volume, loop: l.loop, until: Infinity });
+      events.push({
+        key: `lay:${l.id}`, t: l.startSec, audioId: l.audioId, gain: l.volume,
+        loop: l.loop, until: Infinity, duracion: 0, musica: l.kind === "music",
+      });
     }
 
     // Dos voces a la vez no es una mezcla, es ruido: no se entiende ninguna de
@@ -449,6 +513,17 @@ export class StoryEngine {
     for (let i = 0; i < voces.length - 1; i++) {
       voces[i].until = Math.min(voces[i].until, voces[i + 1].t);
       voces[i].desvanecer = true;
+    }
+
+    // Cuándo se está narrando, para que la música se aparte. Se juntan los
+    // huecos cortos: entre dos frases seguidas la música no debe subir y volver
+    // a bajar, que se oye como un bombeo.
+    this.ventanasVoz = [];
+    for (const v of voces) {
+      const fin = isFinite(v.until) ? v.until : v.t + v.duracion;
+      const ult = this.ventanasVoz[this.ventanasVoz.length - 1];
+      if (ult && v.t - ult.b < JUNTAR_VOZ) ult.b = Math.max(ult.b, fin);
+      else this.ventanasVoz.push({ a: v.t, b: fin });
     }
 
     for (const ev of events) {
@@ -495,6 +570,11 @@ export class StoryEngine {
         if (isFinite(endT)) src.stop(now + Math.max(0, endT - fromT));
         this.sources.push(src);
         this.gains.set(ev.key, g);
+        // La música se aparta bajo la voz. Va al final, ya con la fuente en
+        // marcha, para que la curva se escriba sobre la ganancia definitiva.
+        // Un bucle con cambios de volumen por toma se queda como estaba: ahí
+        // manda lo que el usuario puso en cada toma.
+        if (ev.musica && !ev.changes?.length && this.ventanasVoz.length) this.curvaMusica(g, ev.gain);
       } catch {}
     }
   }

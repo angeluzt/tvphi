@@ -805,7 +805,9 @@ export function StoryApp({
   function addPistaBiblioteca(pista: Pista) {
     const layer: AudioLayer = {
       id: nanoid(6), kind: "music", audioId: refPista(pista), name: pista.titulo,
-      volume: 0.35, startSec: 0, loop: true,
+      // La música se aparta sola bajo la voz (ver DUCK en engine.ts), así que
+      // este número es el de los silencios, no el que compite con la narración.
+      volume: 0.12, startSec: 0, loop: true,
     };
     mut((p) => ({ ...p, audioLayers: [...p.audioLayers, layer] }));
     setVerBiblioteca(false);
@@ -2523,6 +2525,30 @@ export function StoryApp({
           {verBiblioteca && (
             <BibliotecaMusica onElegir={addPistaBiblioteca} onCerrar={() => setVerBiblioteca(false)} />
           )}
+          {/* Dos camas de música a la vez suman +3 dB y se comen la narración.
+              Casi siempre es un descuido, así que se dice y se ofrece quitar
+              la de más en vez de dejar que el usuario lo descubra oyéndolo. */}
+          {project.audioLayers.filter((l) => l.kind === "music").length > 1 && (
+            <div className="mt-2 rounded-lg border border-gold/50 bg-gold/10 p-2 text-[11px]">
+              <p className="flex items-start gap-1.5 font-medium text-gold">
+                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                Hay {project.audioLayers.filter((l) => l.kind === "music").length} músicas de fondo sonando a la vez.
+              </p>
+              <p className="mt-1 text-muted">
+                Suenan sumadas, así que tapan la voz aunque cada una esté baja. Deja una sola,
+                o pon la música dentro de cada escena para que cambie con ella.
+              </p>
+              <button
+                onClick={() => mut((p) => {
+                  const primera = p.audioLayers.find((l) => l.kind === "music");
+                  return { ...p, audioLayers: p.audioLayers.filter((l) => l.kind !== "music" || l.id === primera?.id) };
+                })}
+                className="btn-ghost mt-1.5 px-2 py-1 text-[11px]"
+              >
+                Dejar solo la primera
+              </button>
+            </div>
+          )}
           <div className="mt-2 space-y-2">
             {project.audioLayers.map((l) => (
               <div key={l.id} className="rounded-lg border border-border p-2 text-sm">
@@ -2545,6 +2571,14 @@ export function StoryApp({
                     min={0} max={3600} step={0.5}
                   />
                 </div>
+                {/* Sin esto el número engaña: no es el volumen con el que se
+                    oye bajo la voz, sino el de los huecos entre frases. */}
+                {l.kind === "music" && (
+                  <p className="mt-1 text-[10px] leading-tight text-muted">
+                    Es el volumen en los silencios. Mientras se narra baja sola a{" "}
+                    <span className="text-accent">{Math.round(l.volume * 30)}%</span> para no tapar la voz.
+                  </p>
+                )}
                 <label className="mt-1 flex items-center gap-2 text-[11px] text-muted">
                   <input type="checkbox" checked={l.loop} onChange={(e) => updLayer(l.id, { loop: e.target.checked })} />
                   Repetir en bucle todo el video
