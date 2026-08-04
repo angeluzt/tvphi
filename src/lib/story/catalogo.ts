@@ -307,7 +307,7 @@ export function referenciaParaIA() {
       pistas: catalogoMusicaIA(),
     },
     sonidos: {
-      comoSeUsa: "Van DENTRO de la toma, en shot.sfx. Hay dos clases y no se usan igual. GOLPE (1-6 s): {id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}; ponle el sonido al efecto que dibujas — si hay un rayo, que truene. BUCLE (los marcados como tal, 20-30 s): ambiente que suena bajo toda la escena, con loop:true y volume 0.35 porque va debajo de la voz; arranca en la PRIMERA toma de la escena y se corta al empezar la siguiente con audioOverrides:[{sfxId,stop:true,volume:null}].",
+      comoSeUsa: "Van DENTRO de la toma, en shot.sfx. Hay dos clases y no se usan igual. GOLPE (1-6 s): {id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}; ponle el sonido al efecto que dibujas — si hay un rayo, que truene. BUCLE (los marcados como tal, 20-30 s): ambiente que suena bajo toda la escena, con loop:true y volume 0.08-0.15 (no más) porque suena bajo la voz toda la escena; además se aparta sola al narrar; arranca en la PRIMERA toma de la escena y se corta al empezar la siguiente con audioOverrides:[{sfxId,stop:true,volume:null}].",
       sonidos: catalogoSonidosIA(),
     },
   };
@@ -328,7 +328,7 @@ export function referenciaCompacta() {
       pistas: catalogoMusicaIA(),
     },
     sonidos: {
-      comoSeUsa: "Dentro de la toma, en shot.sfx. GOLPE (1-6 s): {id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}; úsalos para que suene lo que dibujas (rayo → trueno, portal → portal). BUCLE (los marcados, 20-30 s): ambiente de la escena entera, loop:true y volume 0.35 porque va bajo la voz; empieza en la primera toma de la escena y se corta al cambiar de escena con audioOverrides:[{sfxId,stop:true,volume:null}].",
+      comoSeUsa: "Dentro de la toma, en shot.sfx. GOLPE (1-6 s): {id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}; úsalos para que suene lo que dibujas (rayo → trueno, portal → portal). BUCLE (los marcados, 20-30 s): ambiente de la escena entera, loop:true y volume 0.08-0.15 porque suena bajo la voz toda la escena; además se aparta sola al narrar; empieza en la primera toma de la escena y se corta al cambiar de escena con audioOverrides:[{sfxId,stop:true,volume:null}].",
       sonidos: catalogoSonidosIA(),
     },
     ejemploDeEfecto: ejemploDe("fuego", "punto", "#ff8a3d"),

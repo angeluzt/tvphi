@@ -25,6 +25,9 @@ const DUCK_ENTRA = 0.25; // lo que tarda en apartarse, antes de la primera síla
 const DUCK_SALE = 0.45;  // y en volver, ya acabada la frase
 const JUNTAR_VOZ = 1.2;  // huecos más cortos que esto no la dejan volver a subir
 
+// Fondo de la app: música o ambiente en bucle. Es lo que se aparta al narrar.
+const esAmbienteDeApp = (id: string) => esDeBiblioteca(id) || esDeBibliotecaSonido(id);
+
 // Motor de "Historias narradas": anima el encuadre de cada toma sobre su imagen,
 // encadena transiciones, dibuja los stickers, mezcla el audio (diálogos + efectos
 // por toma + música global) y exporta re-grabando la composición.
@@ -108,6 +111,9 @@ export class StoryEngine {
   // El motor es quien manda sobre si suena o no; la interfaz solo lo refleja.
   onPlaying: ((v: boolean) => void) | null = null;
   private starting = false; // evita programar el audio dos veces a la vez
+  // Cancelar una exportación a medias. No se puede "deshacer" lo grabado, así
+  // que lo que se hace es parar la reproducción y tirar lo que haya salido.
+  private abortarExport = false;
 
   // Tamaño del lienzo: lo marca el formato del proyecto (horizontal, vertical
   // o cuadrado). Todo lo que se dibuja se mide sobre estos dos números.
@@ -373,7 +379,7 @@ export class StoryEngine {
         if (!g) continue;
         // Si es música, mover la barra tiene que reescribir toda la curva: si
         // no, el valor nuevo se queda peleando con el ducking ya programado.
-        if (s.loop && esDeBiblioteca(s.audioId)) this.curvaMusica(g, s.volume);
+        if (s.loop && esAmbienteDeApp(s.audioId)) this.curvaMusica(g, s.volume);
         else g.gain.setTargetAtTime(s.volume, now, 0.02);
       }
     }
@@ -468,9 +474,12 @@ export class StoryEngine {
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
             gain: s.volume, loop: true, until: span.end, changes: span.changes,
             duracion: s.dur || 0,
-            // Una pista de la biblioteca puesta en bucle dentro de una toma es
-            // música de esa escena: se aparta bajo la voz igual que la global.
-            musica: esDeBiblioteca(s.audioId),
+            // Cualquier cosa de la app puesta en BUCLE dentro de una toma es
+            // fondo: una pista de música, sí, pero también la lluvia o una
+            // taberna. Todas suenan bajo la narración de principio a fin, así
+            // que todas tienen que apartarse cuando alguien habla. Un GOLPE no
+            // entra aquí: dura dos segundos y se supone que se oye.
+            musica: esAmbienteDeApp(s.audioId),
           });
         } else {
           events.push({
@@ -973,7 +982,16 @@ export class StoryEngine {
       const nodes = v.nodes ?? [];
       return {
         id: v.id, kind: v.kind, shape: v.shape,
-        nodes: (v.follow || v.espacio === "imagen")
+        // Los sitios se mueven con la cámara... salvo con forma "arriba".
+        //
+        // Ahí los nodos no son un punto de la foto: son «el borde de arriba del
+        // cuadro», de donde nace la lluvia o la nieve. Si se pasan por la
+        // cámara, al acercarse la línea de nacimiento se estira mucho más allá
+        // de la pantalla y casi todas las gotas nacen fuera: se ve la misma
+        // lluvia con una cuarta parte de gotas (medido: 1.5% de pantalla
+        // mojada al abierto contra 0.4% al acercar). Por eso "arriba" se deja
+        // siempre en coordenadas de cuadro, igual que hace esVfxDeEscena.
+        nodes: (v.shape !== "arriba" && (v.follow || v.espacio === "imagen"))
           ? nodes.map((n) => seguir(n, v.espacio === "imagen"))
           : nodes,
         colorHex: v.colorHex, params: v.params,
@@ -1075,6 +1093,7 @@ export class StoryEngine {
     await new Promise<void>((res) => {
       let fin = false;
       const acabar = () => { if (!fin) { fin = true; clearInterval(vigía); res(); } };
+      // Si se cancela, este clip deja de pintarse y se sale.
       v.onended = acabar;
       // Red de seguridad por atasco, no por duración: hay videos que no dicen
       // cuánto duran, así que se corta solo si el tiempo deja de avanzar.
@@ -1085,6 +1104,7 @@ export class StoryEngine {
       }, 5000);
       const pintar = () => {
         if (fin) return;
+        if (this.abortarExport) { acabar(); return; }
         this.drawVideoFrame(v);
         onTime?.(v.currentTime);
         if (v.ended) { acabar(); return; }
@@ -1111,10 +1131,14 @@ export class StoryEngine {
         this.onEnded = prevEnded;
         this.onTime = prevTime;
         clearTimeout(watchdog);
+        limpiar();
         this.pause();
         resolve();
       };
       const watchdog = setTimeout(finish, Math.ceil(dur * 1000) + 5000);
+      // Se mira si han cancelado; el bucle de pintado no pasa por aquí.
+      const vigilante = setInterval(() => { if (this.abortarExport) finish(); }, 200);
+      const limpiar = () => clearInterval(vigilante);
       try {
         this.playhead = 0;
         this.scheduleAudio(0);
@@ -1125,6 +1149,7 @@ export class StoryEngine {
         this.onTime = (t) => { prevTime?.(t); onTime?.(t); };
       } catch (e) {
         clearTimeout(watchdog);
+        limpiar();
         this.onEnded = prevEnded;
         this.onTime = prevTime;
         reject(e);
@@ -1132,8 +1157,12 @@ export class StoryEngine {
     });
   }
 
+  /** Corta una exportación en marcha. Lo grabado hasta ahí se descarta. */
+  cancelarExport() { this.abortarExport = true; }
+
   async export(mimeType: string, onProgress?: (p: number) => void): Promise<Blob> {
     if (!this.project) throw new Error("Sin proyecto");
+    this.abortarExport = false;
     this.pause();
     this.clearRange(); // se exporta siempre el video entero
     this.ensureAudio();
@@ -1162,13 +1191,17 @@ export class StoryEngine {
     const avisar = (t: number) => onProgress?.(total ? Math.min(1, (hecho + t) / total) : 0);
     mr.start(1000);
     try {
-      if (vIntro) { await this.playClip(vIntro, avisar); hecho += intro!.dur; avisar(0); }
-      if (dur > 0) { await this.playStory(avisar); hecho += dur; avisar(0); }
-      if (vOutro) { await this.playClip(vOutro, avisar); hecho += outro!.dur; }
+      if (vIntro && !this.abortarExport) { await this.playClip(vIntro, avisar); hecho += intro!.dur; avisar(0); }
+      if (dur > 0 && !this.abortarExport) { await this.playStory(avisar); hecho += dur; avisar(0); }
+      if (vOutro && !this.abortarExport) { await this.playClip(vOutro, avisar); hecho += outro!.dur; }
     } finally {
       this.pause();
       if (mr.state !== "inactive") mr.stop();
     }
-    return cerrado;
+    const blob = await cerrado;
+    // Se espera igualmente a que el grabador cierre —si no, quedan pistas
+    // vivas— pero lo cancelado no se devuelve como si fuera un vídeo bueno.
+    if (this.abortarExport) throw new Error("CANCELADO");
+    return blob;
   }
 }
