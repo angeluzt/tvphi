@@ -25,6 +25,7 @@ import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
 import { VfxEditor } from "./vfx-editor";
 import { VfxCanvas, VfxTools } from "./vfx-canvas";
+import { MoverEfectos, desplazar } from "./mover-efectos";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
 import { NumberInput } from "./number-input";
@@ -786,6 +787,29 @@ export function StoryApp({
       vfx: curFlat.shot.vfx.map((v) => (v.id === id ? { ...v, nodes, auto: false } : v)),
     });
   }
+  // Desplazar varios efectos a la vez, sean de la escena o de la toma. Se hace
+  // en UNA sola actualización: hacerlo capa a capa dispararía un render por
+  // efecto y las flechas del teclado irían a tirones.
+  function moverVfx(ids: string[], dx: number, dy: number) {
+    if (!curFlat || !ids.length) return;
+    const juego = new Set(ids);
+    const mueve = (v: VfxLayer): VfxLayer =>
+      juego.has(v.id) ? { ...v, nodes: desplazar(v.nodes ?? [], dx, dy), auto: false } : v;
+    mut((p) => ({
+      ...p,
+      scenes: p.scenes.map((sc) => {
+        if (sc.id !== curFlat.scene.id) return sc;
+        return {
+          ...sc,
+          vfx: (sc.vfx ?? []).map(mueve),
+          shots: sc.shots.map((sh) =>
+            sh.id !== curFlat.shot.id ? sh : { ...sh, vfx: (sh.vfx ?? []).map(mueve) }),
+        };
+      }),
+    }));
+    engineRef.current?.resetVfx();
+  }
+
   function updOverlayPos(patch: Partial<PngOverlay>) {
     if (!curFlat || !curOverlay) return;
     updShot(curFlat.scene.id, curFlat.shot.id, {
@@ -1758,6 +1782,19 @@ export function StoryApp({
               onChange={(e) => seek(Number(e.target.value))} className="flex-1"
             />
           </div>
+
+          {/* El mando: colocar a dedo sirve para poner algo aproximado, no para
+              afinar ni para mover dos efectos juntos sin descuadrarlos. */}
+          {curFlat && (
+            <MoverEfectos
+              capas={[
+                ...(curFlat.scene.vfx ?? []).map((capa) => ({ capa, deEscena: true })),
+                ...((curFlat.shot.vfx ?? []).map((capa) => ({ capa, deEscena: false }))),
+              ]}
+              onMover={moverVfx}
+              onResaltar={setSelVfx}
+            />
+          )}
 
           {/* Línea de tiempo: escenas agrupadas, tomas dentro */}
           {flat.length > 0 && (
