@@ -163,7 +163,7 @@ export const PISTAS: Pista[] = [
 
 // Prefijo que distingue una pista de la biblioteca de un archivo del usuario.
 export const PREFIJO = "lib:";
-export const esDeBiblioteca = (id: string) => id.startsWith(PREFIJO);
+export const esDeBiblioteca = (id?: string | null) => !!id && id.startsWith(PREFIJO);
 export const idPista = (id: string) => id.slice(PREFIJO.length);
 export const refPista = (p: Pista) => `${PREFIJO}${p.id}`;
 export const urlPista = (id: string) => `/api/story/audio/musica/${idPista(id)}`;
@@ -358,7 +358,7 @@ export function porFamilia(): { familia: FamiliaSonido; label: string; sonidos: 
 }
 
 export const PREFIJO_SON = "son:";
-export const esDeBibliotecaSonido = (id: string) => id.startsWith(PREFIJO_SON);
+export const esDeBibliotecaSonido = (id?: string | null) => !!id && id.startsWith(PREFIJO_SON);
 export const refSonido = (s: Sonido) => `${PREFIJO_SON}${s.id}`;
 export const urlSonido = (id: string) => `/api/story/audio/sonidos/${id.slice(PREFIJO_SON.length)}`;
 export const buscarSonido = (ref: string) =>

@@ -167,7 +167,12 @@ export async function GET(req: Request) {
       where: { id, userId: user.id },
       select: { id: true, name: true, seriesId: true, data: true, updatedAt: true },
     });
-    if (!project) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    if (!project) {
+      return NextResponse.json(
+        { error: "Ese capítulo no está en tu cuenta. Si solo tienes el .zip, impórtalo y pulsa Guardar." },
+        { status: 404 },
+      );
+    }
     return NextResponse.json({ project });
   }
 
@@ -185,12 +190,21 @@ export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const parsed = saveSchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  if (!parsed.success) {
+    const detalle = parsed.error.issues
+      .slice(0, 6)
+      .map((i) => `${i.path.join(".") || "(raíz)"}: ${i.message}`)
+      .join(" · ");
+    return NextResponse.json(
+      { error: "Datos inválidos", detalle: detalle || undefined },
+      { status: 400 },
+    );
+  }
   const { id, name, data, seriesId } = parsed.data;
 
   if (id) {
     const existing = await prisma.storyProject.findFirst({ where: { id, userId: user.id }, select: { id: true } });
-    if (!existing) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    if (!existing) return NextResponse.json({ error: "Ese capítulo ya no existe en tu cuenta" }, { status: 404 });
     const project = await prisma.storyProject.update({
       where: { id },
       data: { name, data: data as any, ...(seriesId !== undefined ? { seriesId } : {}) },
