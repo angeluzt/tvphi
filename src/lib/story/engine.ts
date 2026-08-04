@@ -979,7 +979,16 @@ export class StoryEngine {
       const nodes = v.nodes ?? [];
       return {
         id: v.id, kind: v.kind, shape: v.shape,
-        nodes: (v.follow || v.espacio === "imagen")
+        // Los sitios se mueven con la cámara... salvo con forma "arriba".
+        //
+        // Ahí los nodos no son un punto de la foto: son «el borde de arriba del
+        // cuadro», de donde nace la lluvia o la nieve. Si se pasan por la
+        // cámara, al acercarse la línea de nacimiento se estira mucho más allá
+        // de la pantalla y casi todas las gotas nacen fuera: se ve la misma
+        // lluvia con una cuarta parte de gotas (medido: 1.5% de pantalla
+        // mojada al abierto contra 0.4% al acercar). Por eso "arriba" se deja
+        // siempre en coordenadas de cuadro, igual que hace esVfxDeEscena.
+        nodes: (v.shape !== "arriba" && (v.follow || v.espacio === "imagen"))
           ? nodes.map((n) => seguir(n, v.espacio === "imagen"))
           : nodes,
         colorHex: v.colorHex, params: v.params,
