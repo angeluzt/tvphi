@@ -32,7 +32,10 @@ export async function GET(
   // salirse de la carpeta: no se construye una ruta con lo que llegue, se
   // comprueba contra una lista cerrada.
   if (!grupo || !grupo.ids.has(params.id)) {
-    return new NextResponse("No encontrado", { status: 404 });
+    return new NextResponse(
+      `Audio de biblioteca no encontrado (${params.tipo}/${params.id}). No está en el catálogo.`,
+      { status: 404 },
+    );
   }
 
   try {
@@ -49,6 +52,9 @@ export async function GET(
       },
     });
   } catch {
-    return new NextResponse("No encontrado", { status: 404 });
+    return new NextResponse(
+      `Falta el archivo de audio en el servidor (assets/${grupo.dir}/${params.id}.mp3).`,
+      { status: 404 },
+    );
   }
 }

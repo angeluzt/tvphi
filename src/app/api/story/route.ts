@@ -167,7 +167,12 @@ export async function GET(req: Request) {
       where: { id, userId: user.id },
       select: { id: true, name: true, seriesId: true, data: true, updatedAt: true },
     });
-    if (!project) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    if (!project) {
+      return NextResponse.json(
+        { error: "Ese capítulo no está en tu cuenta. Si solo tienes el .zip, impórtalo y pulsa Guardar." },
+        { status: 404 },
+      );
+    }
     return NextResponse.json({ project });
   }
 
@@ -190,7 +195,7 @@ export async function POST(req: Request) {
 
   if (id) {
     const existing = await prisma.storyProject.findFirst({ where: { id, userId: user.id }, select: { id: true } });
-    if (!existing) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    if (!existing) return NextResponse.json({ error: "Ese capítulo ya no existe en tu cuenta" }, { status: 404 });
     const project = await prisma.storyProject.update({
       where: { id },
       data: { name, data: data as any, ...(seriesId !== undefined ? { seriesId } : {}) },

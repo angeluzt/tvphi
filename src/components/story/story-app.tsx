@@ -1322,8 +1322,8 @@ export function StoryApp({
       const f2 = await faltantes(data);
       setFaltas(f2);
       setStatus(f2.length
-        ? `Paquete importado ✓ · ${puestos} archivos puestos, faltan ${f2.length}`
-        : `Paquete importado ✓ · ${puestos} archivos puestos, no falta nada`);
+        ? `Paquete importado ✓ · ${puestos} archivos puestos, faltan ${f2.length}. Pulsa Guardar para quedártelo.`
+        : `Paquete importado ✓ · ${puestos} archivos puestos. Pulsa Guardar para quedártelo en tu cuenta.`);
     } catch (e: any) { setStatus("No se pudo importar: " + (e?.message ?? "")); }
     setBusy(null);
   }
@@ -1439,7 +1439,15 @@ export function StoryApp({
       seek(0);
       setStatus(opts?.silencioso ? null : "Proyecto cargado ✓");
     } catch (err: any) {
-      setStatus("Error al cargar: " + (err?.message ?? ""));
+      const msg = String(err?.message ?? "Error");
+      // Suele ser un ?id= de un borrador que nunca se guardó, o un ZIP sin «Guardar».
+      setStatus(
+        /no está en tu cuenta|ya no existe|No encontrado/i.test(msg)
+          ? (msg.includes("Importa") || msg.includes("zip")
+            ? msg
+            : "Ese capítulo no está en tu cuenta. Si lo tienes en un .zip: Importar .zip → luego Guardar.")
+          : "Error al cargar: " + msg,
+      );
       // Si venía de la URL y falló, vuelve al inicio limpio.
       if (opts?.silencioso) {
         setVista("inicio");
