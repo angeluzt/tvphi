@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Play, Pause, X, Search, Check, AlertTriangle } from "lucide-react";
+import { Play, Pause, X, Search, Check, AlertTriangle, Repeat, ArrowDownToLine } from "lucide-react";
 import { porAmbiente, urlPista, refPista, type Pista } from "@/lib/story/musica";
 
 // Elegir música de la biblioteca de la app.
@@ -96,11 +96,23 @@ export function BibliotecaMusica({
                       <p className="text-[10px] leading-tight text-muted">{p.cuando}</p>
                       <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted/70">
                         {Math.round(p.segundos)} s
-                        {/* Aviso honesto: la pista acaba sonando, así que al
-                            repetirse se nota el salto. Mejor saberlo antes. */}
-                        {p.bucle === "corta" && (
+                        {/* Cómo acaba, medido. No es un detalle: decide dónde
+                            ponerla. La que baja a silencio cierra bien una
+                            escena, pero en bucle deja un hueco de silencio en
+                            medio; la que enlaza aguanta un capítulo largo. */}
+                        {p.final === "fade" && (
+                          <span className="flex items-center gap-0.5 text-muted">
+                            <ArrowDownToLine className="h-2.5 w-2.5" /> acaba en silencio
+                          </span>
+                        )}
+                        {p.final === "enlaza" && (
+                          <span className="flex items-center gap-0.5 text-accent/80">
+                            <Repeat className="h-2.5 w-2.5" /> enlaza en bucle
+                          </span>
+                        )}
+                        {p.final === "media" && (
                           <span className="flex items-center gap-0.5 text-gold">
-                            <AlertTriangle className="h-2.5 w-2.5" /> se nota al repetir
+                            <AlertTriangle className="h-2.5 w-2.5" /> acaba a medias
                           </span>
                         )}
                       </p>
