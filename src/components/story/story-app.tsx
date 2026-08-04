@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
 import { BibliotecaMusica } from "./biblioteca-musica";
+import { EscucharAudio } from "./escuchar-audio";
 import { refPista, esDeBiblioteca, esDeBibliotecaSonido, type Pista } from "@/lib/story/musica";
 import { VOCES_INFO } from "@/lib/story/modelos";
 import { MissingAssets } from "./missing-assets";
@@ -2553,6 +2554,7 @@ export function StoryApp({
             {project.audioLayers.map((l) => (
               <div key={l.id} className="rounded-lg border border-border p-2 text-sm">
                 <div className="flex items-center gap-2">
+                  <EscucharAudio audioId={l.audioId} volumen={l.volume} titulo={l.name} />
                   {l.kind === "music" ? <Music className="h-3.5 w-3.5 text-accent" /> : <Volume2 className="h-3.5 w-3.5 text-accent" />}
                   <span className="flex-1 truncate text-xs">{l.name}</span>
                   <button

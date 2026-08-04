@@ -25,6 +25,9 @@ const DUCK_ENTRA = 0.25; // lo que tarda en apartarse, antes de la primera síla
 const DUCK_SALE = 0.45;  // y en volver, ya acabada la frase
 const JUNTAR_VOZ = 1.2;  // huecos más cortos que esto no la dejan volver a subir
 
+// Fondo de la app: música o ambiente en bucle. Es lo que se aparta al narrar.
+const esAmbienteDeApp = (id: string) => esDeBiblioteca(id) || esDeBibliotecaSonido(id);
+
 // Motor de "Historias narradas": anima el encuadre de cada toma sobre su imagen,
 // encadena transiciones, dibuja los stickers, mezcla el audio (diálogos + efectos
 // por toma + música global) y exporta re-grabando la composición.
@@ -373,7 +376,7 @@ export class StoryEngine {
         if (!g) continue;
         // Si es música, mover la barra tiene que reescribir toda la curva: si
         // no, el valor nuevo se queda peleando con el ducking ya programado.
-        if (s.loop && esDeBiblioteca(s.audioId)) this.curvaMusica(g, s.volume);
+        if (s.loop && esAmbienteDeApp(s.audioId)) this.curvaMusica(g, s.volume);
         else g.gain.setTargetAtTime(s.volume, now, 0.02);
       }
     }
@@ -468,9 +471,12 @@ export class StoryEngine {
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
             gain: s.volume, loop: true, until: span.end, changes: span.changes,
             duracion: s.dur || 0,
-            // Una pista de la biblioteca puesta en bucle dentro de una toma es
-            // música de esa escena: se aparta bajo la voz igual que la global.
-            musica: esDeBiblioteca(s.audioId),
+            // Cualquier cosa de la app puesta en BUCLE dentro de una toma es
+            // fondo: una pista de música, sí, pero también la lluvia o una
+            // taberna. Todas suenan bajo la narración de principio a fin, así
+            // que todas tienen que apartarse cuando alguien habla. Un GOLPE no
+            // entra aquí: dura dos segundos y se supone que se oye.
+            musica: esAmbienteDeApp(s.audioId),
           });
         } else {
           events.push({

@@ -2,12 +2,13 @@
 
 import {
   Plus, Trash2, Wand2, Volume2, Sticker, Image as ImageIcon, ChevronUp, ChevronDown, Clock,
-  Loader2, Repeat, Play, Pause, Copy, RefreshCw, Sparkles, AlertTriangle,
+  Loader2, Repeat, Play, Pause, Copy, RefreshCw, Sparkles, AlertTriangle, Minus,
 } from "lucide-react";
 import { useState } from "react";
 import { nanoid } from "nanoid";
 import type { VoiceStatus } from "@/lib/story/tts";
 import { BibliotecaSonidos } from "./biblioteca-sonidos";
+import { EscucharAudio } from "./escuchar-audio";
 import { refSonido } from "@/lib/story/musica";
 import { MotionEditor } from "./motion-editor";
 import { Slider } from "./slider";
@@ -450,8 +451,9 @@ export function ShotEditor({
                   </select>
                 </label>
                 {d.audioId ? (
-                  <span className="text-[11px] text-muted">
-                    🔊 {dialogueDur(d).toFixed(1)}s · empieza en {dStarts[i].toFixed(1)}s
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted">
+                    <EscucharAudio audioId={d.audioId} titulo="la voz" />
+                    {dialogueDur(d).toFixed(1)}s · empieza en {dStarts[i].toFixed(1)}s
                   </span>
                 ) : (
                   <span className="text-[11px] text-muted">sin voz aún</span>
@@ -513,10 +515,13 @@ export function ShotEditor({
             onElegir={(s) => {
               // Referencia, no archivo: lo sirve la app (ver getAsset).
               const nuevo = newSfx(refSonido(s), s.titulo, s.segundos);
-              // Un ambiente entra ya en bucle y más bajo: suena todo el rato
-              // debajo de la voz, así que al 80% la taparía. Un golpe puntual
-              // se queda como está, que para eso es un golpe.
-              if (s.bucle) { nuevo.loop = true; nuevo.volume = 0.35; }
+              // Un ambiente entra ya en bucle y bajo: suena todo el rato
+              // debajo de la voz. Al 35% seguía siendo demasiado —una lluvia
+              // así tapa la narración—, y además ahora se aparta sola cuando
+              // se habla, igual que la música, así que 0.12 es el nivel de los
+              // silencios. Un golpe puntual se queda al 80%: para eso es un
+              // golpe, y dura dos segundos.
+              if (s.bucle) { nuevo.loop = true; nuevo.volume = 0.12; }
               onChange({ ...shot, sfx: [...shot.sfx, nuevo] });
               setVerSonidos(false);
             }}
@@ -527,7 +532,7 @@ export function ShotEditor({
         <div className="mt-2 space-y-1">
           {sueltos.map(({ s, i }) => (
             <div key={s.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-2 py-1 text-xs">
-              <Volume2 className="h-3.5 w-3.5 text-accent" />
+              <EscucharAudio audioId={s.audioId} volumen={s.volume} titulo={s.name} />
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
               <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Pausa antes" />
               <span className="text-[11px] text-muted">en {sStarts[i].toFixed(1)}s</span>
@@ -559,6 +564,7 @@ export function ShotEditor({
             <div className="mt-1 space-y-1">
               {bucles.map(({ s, i }) => (
                 <div key={s.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <EscucharAudio audioId={s.audioId} volumen={s.volume} titulo={s.name} />
                   <span className="min-w-0 flex-1 truncate">{s.name}</span>
                   <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Empieza tras" />
                   <VolumeInput value={s.volume} onChange={(v) => updSfx(s.id, { volume: v })} />
@@ -773,7 +779,9 @@ export function ShotEditor({
                       Cuelga del sticker, así que se mueve con él. */}
                   <div className="rounded-lg border border-border/60 p-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Volume2 className="h-3.5 w-3.5 text-accent" />
+                      {o.soundId
+                        ? <EscucharAudio audioId={o.soundId} volumen={o.soundVolume ?? 0.9} titulo={o.soundName} />
+                        : <Volume2 className="h-3.5 w-3.5 text-accent" />}
                       <span className="flex-1 truncate text-[11px]">
                         {o.soundId ? (o.soundName || "Sonido") : <span className="text-muted">Sonido de este sticker</span>}
                       </span>
@@ -1003,14 +1011,29 @@ const vozPreset = (p: number) => {
 const fuera = (tam: number) => -Math.max(1, tam);
 
 // Volumen con pasos finos (1 %) y el valor a la vista, para poder afinar.
+// El volumen de un sonido, con − y + al lado.
+//
+// Sin ellos la barra es inservible para lo que de verdad se usa: la diferencia
+// entre un ambiente al 8% y al 12% es un píxel de barra, y ese píxel decide si
+// se oye la narración. Cada toque mueve un punto exacto.
 function VolumeInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const mover = (dir: -1 | 1) =>
+    onChange(Number(Math.max(0, Math.min(1, value + dir * 0.01)).toFixed(2)));
+  const btn = "grid h-5 w-5 shrink-0 place-items-center rounded border border-border " +
+    "text-muted hover:bg-surface-2 disabled:opacity-40";
   return (
     <span className="flex items-center gap-1">
+      <button onClick={() => mover(-1)} disabled={value <= 0} className={btn} aria-label="Bajar volumen">
+        <Minus className="h-3 w-3" />
+      </button>
       <input
         type="range" min={0} max={1} step={0.01} value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-20" title="Volumen" aria-label="Volumen"
       />
+      <button onClick={() => mover(1)} disabled={value >= 1} className={btn} aria-label="Subir volumen">
+        <Plus className="h-3 w-3" />
+      </button>
       <span className="w-9 text-right text-[11px] tabular-nums text-muted">{pct(value)}</span>
     </span>
   );
