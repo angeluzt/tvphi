@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, OPENAI, IA_NO_DISPONIBLE, preferenciasModelos } from "@/lib/story/credenciales";
 import { referenciaCompacta } from "@/lib/story/catalogo";
 import { migrateProject, quienesHablan } from "@/lib/story/model";
-import { prepararCapituloGenerado } from "@/lib/story/guion";
+import { prepararCapituloGenerado, ajustarMusicaCapitulo } from "@/lib/story/guion";
 import { VOCES } from "@/lib/story/modelos";
 import { estadoCupoHistorias, mensajeCupoAgotado, registrarUsoIaCapitulo, esAdminHistorias } from "@/lib/story/cupo";
 
@@ -97,9 +97,11 @@ LO QUE SE NARRA (esto es lo que más se rompe, léelo dos veces):
 - La última frase cierra la historia por dentro. No se despide de nadie.
 
 MÚSICA:
-- Elige UNA pista de la biblioteca que se te da y ponla en "audioLayers": {"id":"m1","kind":"music","audioId":"lib:<id>","name":"<título>","volume":0.3,"startSec":0,"loop":true}.
-- Una sola para todo el capítulo, salvo que la historia cambie de tono a la mitad; entonces, dos como mucho.
-- El volumen no pasa de 0.4: por encima se come la narración.
+- La música baja SOLA mientras se narra (a un tercio), así que el volumen que pongas es el de los silencios entre frases, no el que compite con la voz.
+- Elige UNA pista de la biblioteca y ponla en "audioLayers": {"id":"m1","kind":"music","audioId":"lib:<id>","name":"<título>","volume":0.12,"startSec":0,"loop":true}.
+- volume entre 0.08 y 0.15. NUNCA 0.3 ni más: la biblioteca está masterizada alta y a 0.3 tapa la narración.
+- UNA sola capa de música en todo el capítulo. Dos suenan sumadas (+3 dB) y se comen la voz: si la historia cambia de tono, cambia de pista por escena (abajo), no añadas otra global.
+- Si una escena pide su propia música, va como sonido en bucle de su PRIMERA toma —{"audioId":"lib:<id>","loop":true,"volume":0.12}— y se corta al empezar la escena siguiente con audioOverrides:[{"sfxId":"<id>","stop":true,"volume":null}]. Eso es mejor que una cama global: cambia con la historia.
 
 Devuelve el JSON y nada más: sin explicaciones ni vallas de código.`;
 
@@ -185,6 +187,7 @@ export async function POST(req: Request) {
   // («¿te gustó cómo quedó?»), y para entonces ya está pagado.
   const { quitadas } = prepararCapituloGenerado(project);
   asegurarVocesCapitulo(project);
+  const musica = ajustarMusicaCapitulo(project);
 
   await registrarUsoIaCapitulo(user.id);
   const cupoTras = await estadoCupoHistorias(user.id, user.email);
@@ -193,6 +196,8 @@ export async function POST(req: Request) {
     ok: true,
     // Se dice lo que se ha quitado en vez de hacerlo a escondidas.
     quitadas,
+    // Lo mismo con la música que se ha enderezado.
+    musica,
     name: typeof crudo?.name === "string" ? crudo.name : "Capítulo generado",
     project,
     // Para que la interfaz pueda decir cuántas imágenes va a pedir.
