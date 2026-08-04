@@ -375,6 +375,10 @@ export class StoryEngine {
       rate?: number;
       // Cuánto se estira el audio antes de sonar (1 = tal cual).
       alpha?: number;
+      // Es una voz: no puede sonar encima de la voz siguiente.
+      narracion?: boolean;
+      // Si se corta antes de acabar, se baja el volumen en vez de segarlo.
+      desvanecer?: boolean;
     }
     const events: Ev[] = [];
 
@@ -394,7 +398,7 @@ export class StoryEngine {
         events.push({
           key: `dlg:${d.id}`, t: f.start + dStarts[k], audioId: d.audioId,
           gain: this.project!.narrationVolume, loop: false, until: Infinity,
-          effect: efecto, rate, alpha: tono / vel,
+          effect: efecto, rate, alpha: tono / vel, narracion: true,
         });
       });
       const sStarts = sfxStarts(f.shot);
@@ -432,6 +436,21 @@ export class StoryEngine {
       events.push({ key: `lay:${l.id}`, t: l.startSec, audioId: l.audioId, gain: l.volume, loop: l.loop, until: Infinity });
     }
 
+    // Dos voces a la vez no es una mezcla, es ruido: no se entiende ninguna de
+    // las dos. Pasa cuando una toma tiene duración fija más corta que su
+    // narración, y entonces la voz sigue sonando cuando ya arrancó la
+    // siguiente. Que la toma quepa es cosa del proyecto (hay aviso y botón de
+    // arreglarlo en el editor); aquí solo se garantiza que NUNCA se oigan dos
+    // encima, ni en un proyecto viejo ni en uno escrito a mano.
+    //
+    // Se corta con un desvanecido corto en vez de a hachazo: un corte seco a
+    // mitad de palabra hace "clac".
+    const voces = events.filter((e) => e.narracion).sort((a, b) => a.t - b.t);
+    for (let i = 0; i < voces.length - 1; i++) {
+      voces[i].until = Math.min(voces[i].until, voces[i + 1].t);
+      voces[i].desvanecer = true;
+    }
+
     for (const ev of events) {
       const buf = this.estirar(ev.audioId, ev.alpha ?? 1);
       if (!buf) continue;
@@ -465,6 +484,13 @@ export class StoryEngine {
         for (const c of ev.changes ?? []) {
           if (c.at <= fromT) g.gain.value = c.volume;
           else g.gain.setValueAtTime(c.volume, now + (c.at - fromT));
+        }
+        // Solo hay que desvanecer si de verdad se le corta la cola.
+        if (ev.desvanecer && isFinite(endT) && ev.t + dur > endT + 0.01) {
+          const fin = now + Math.max(0, endT - fromT);
+          const rampa = Math.min(0.12, Math.max(0.02, (endT - Math.max(ev.t, fromT)) / 4));
+          g.gain.setValueAtTime(g.gain.value, Math.max(now, fin - rampa));
+          g.gain.linearRampToValueAtTime(0.0001, fin);
         }
         if (isFinite(endT)) src.stop(now + Math.max(0, endT - fromT));
         this.sources.push(src);
