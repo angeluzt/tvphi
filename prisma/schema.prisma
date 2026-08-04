@@ -24,6 +24,10 @@ model User {
   avatarUrl    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  /// Cuándo cambió la contraseña por última vez. Las sesiones firmadas antes
+  /// de esta fecha dejan de valer: es lo que echa a quien tuviera la cuenta
+  /// abierta. Nulo = nunca la ha cambiado, así que no invalida nada.
+  passwordChangedAt DateTime?
 
   channel        Channel?
   templates      Template[]

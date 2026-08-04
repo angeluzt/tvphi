@@ -17,9 +17,24 @@ export async function signSession(userId: string) {
 }
 
 export async function verifySessionToken(token: string): Promise<string | null> {
+  return (await verifySession(token))?.userId ?? null;
+}
+
+/**
+ * Igual que la anterior, pero devuelve también CUÁNDO se firmó.
+ *
+ * Hace falta para poder tirar sesiones: la sesión es un JWT firmado, no hay
+ * ninguna tabla que borrar, así que la única forma de invalidar las viejas es
+ * comparar su fecha de emisión con la del último cambio de contraseña.
+ */
+export async function verifySession(
+  token: string,
+): Promise<{ userId: string; emitido: Date } | null> {
   try {
     const { payload } = await jwtVerify(token, secret);
-    return (payload.sub as string) ?? null;
+    const userId = payload.sub;
+    if (!userId || typeof payload.iat !== "number") return null;
+    return { userId, emitido: new Date(payload.iat * 1000) };
   } catch {
     return null;
   }

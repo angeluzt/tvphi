@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getCurrentUser, hashPassword, verifyPassword } from "@/lib/auth";
+import { createSession, getCurrentUser, hashPassword, verifyPassword } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 const schema = z.object({
@@ -31,14 +31,20 @@ export async function POST(req: Request) {
   }
 
   const passwordHash = await hashPassword(nueva);
+  // La fecha invalida las sesiones firmadas antes: si alguien tenía la cuenta
+  // abierta en otro sitio, cambiar la contraseña ahora sí lo echa.
+  const passwordChangedAt = new Date();
   await prisma.$transaction([
-    prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
+    prisma.user.update({ where: { id: user.id }, data: { passwordHash, passwordChangedAt } }),
     // Invalida enlaces de reset pendientes al cambiar la contraseña.
     prisma.passwordResetToken.updateMany({
       where: { userId: user.id, usedAt: null },
       data: { usedAt: new Date() },
     }),
   ]);
+
+  // Y se vuelve a firmar la de aquí, que si no se echaría a sí mismo.
+  await createSession(user.id);
 
   return NextResponse.json({ ok: true });
 }
