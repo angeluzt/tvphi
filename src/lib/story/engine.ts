@@ -111,6 +111,9 @@ export class StoryEngine {
   // El motor es quien manda sobre si suena o no; la interfaz solo lo refleja.
   onPlaying: ((v: boolean) => void) | null = null;
   private starting = false; // evita programar el audio dos veces a la vez
+  // Cancelar una exportación a medias. No se puede "deshacer" lo grabado, así
+  // que lo que se hace es parar la reproducción y tirar lo que haya salido.
+  private abortarExport = false;
 
   // Tamaño del lienzo: lo marca el formato del proyecto (horizontal, vertical
   // o cuadrado). Todo lo que se dibuja se mide sobre estos dos números.
@@ -1090,6 +1093,7 @@ export class StoryEngine {
     await new Promise<void>((res) => {
       let fin = false;
       const acabar = () => { if (!fin) { fin = true; clearInterval(vigía); res(); } };
+      // Si se cancela, este clip deja de pintarse y se sale.
       v.onended = acabar;
       // Red de seguridad por atasco, no por duración: hay videos que no dicen
       // cuánto duran, así que se corta solo si el tiempo deja de avanzar.
@@ -1100,6 +1104,7 @@ export class StoryEngine {
       }, 5000);
       const pintar = () => {
         if (fin) return;
+        if (this.abortarExport) { acabar(); return; }
         this.drawVideoFrame(v);
         onTime?.(v.currentTime);
         if (v.ended) { acabar(); return; }
@@ -1126,10 +1131,14 @@ export class StoryEngine {
         this.onEnded = prevEnded;
         this.onTime = prevTime;
         clearTimeout(watchdog);
+        limpiar();
         this.pause();
         resolve();
       };
       const watchdog = setTimeout(finish, Math.ceil(dur * 1000) + 5000);
+      // Se mira si han cancelado; el bucle de pintado no pasa por aquí.
+      const vigilante = setInterval(() => { if (this.abortarExport) finish(); }, 200);
+      const limpiar = () => clearInterval(vigilante);
       try {
         this.playhead = 0;
         this.scheduleAudio(0);
@@ -1140,6 +1149,7 @@ export class StoryEngine {
         this.onTime = (t) => { prevTime?.(t); onTime?.(t); };
       } catch (e) {
         clearTimeout(watchdog);
+        limpiar();
         this.onEnded = prevEnded;
         this.onTime = prevTime;
         reject(e);
@@ -1147,8 +1157,12 @@ export class StoryEngine {
     });
   }
 
+  /** Corta una exportación en marcha. Lo grabado hasta ahí se descarta. */
+  cancelarExport() { this.abortarExport = true; }
+
   async export(mimeType: string, onProgress?: (p: number) => void): Promise<Blob> {
     if (!this.project) throw new Error("Sin proyecto");
+    this.abortarExport = false;
     this.pause();
     this.clearRange(); // se exporta siempre el video entero
     this.ensureAudio();
@@ -1177,13 +1191,17 @@ export class StoryEngine {
     const avisar = (t: number) => onProgress?.(total ? Math.min(1, (hecho + t) / total) : 0);
     mr.start(1000);
     try {
-      if (vIntro) { await this.playClip(vIntro, avisar); hecho += intro!.dur; avisar(0); }
-      if (dur > 0) { await this.playStory(avisar); hecho += dur; avisar(0); }
-      if (vOutro) { await this.playClip(vOutro, avisar); hecho += outro!.dur; }
+      if (vIntro && !this.abortarExport) { await this.playClip(vIntro, avisar); hecho += intro!.dur; avisar(0); }
+      if (dur > 0 && !this.abortarExport) { await this.playStory(avisar); hecho += dur; avisar(0); }
+      if (vOutro && !this.abortarExport) { await this.playClip(vOutro, avisar); hecho += outro!.dur; }
     } finally {
       this.pause();
       if (mr.state !== "inactive") mr.stop();
     }
-    return cerrado;
+    const blob = await cerrado;
+    // Se espera igualmente a que el grabador cierre —si no, quedan pistas
+    // vivas— pero lo cancelado no se devuelve como si fuera un vídeo bueno.
+    if (this.abortarExport) throw new Error("CANCELADO");
+    return blob;
   }
 }

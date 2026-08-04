@@ -10,6 +10,7 @@ import {
 import { ModelosIa } from "./modelos-ia";
 import { BibliotecaMusica } from "./biblioteca-musica";
 import { EscucharAudio } from "./escuchar-audio";
+import { PantallaRender } from "./pantalla-render";
 import { refPista, esDeBiblioteca, esDeBibliotecaSonido, type Pista } from "@/lib/story/musica";
 import { VOCES_INFO } from "@/lib/story/modelos";
 import { MissingAssets } from "./missing-assets";
@@ -171,8 +172,6 @@ export function StoryApp({
     { fase: "dibujando" | "narrando" | "listo" | "parado"; hechas: number; total: number; detalle: string } | null
   >(null);
   const [montarAlEntrar, setMontarAlEntrar] = useState(false);
-  // Tras montar un borrador de IA, bajar el ZIP con imágenes y audios.
-  const zipTrasMontajeRef = useRef(false);
   // Qué pieza se está rehaciendo ahora mismo.
   const [rehaciendo, setRehaciendo] = useState<string | null>(null);
   const [verBiblioteca, setVerBiblioteca] = useState(false);
@@ -252,6 +251,11 @@ export function StoryApp({
   const [format, setFormat] = useState<"webm" | "mp4" | "gif" | "mp3">("webm");
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState(0);
+  // Lo que se está haciendo ahora mismo, para decirlo en la pantalla de render.
+  const [etapaRender, setEtapaRender] = useState<string | null>(null);
+  // El paquete ya hecho, esperando a que el usuario decida bajárselo. Antes se
+  // disparaba la descarga sola y aparecía un archivo sin haberlo pedido.
+  const [paquete, setPaquete] = useState<{ blob: Blob; nombre: string; archivos: number } | null>(null);
   const [dirty, setDirty] = useState(false);
 
   // Archivos que el proyecto usa pero que no están en este navegador.
@@ -288,14 +292,17 @@ export function StoryApp({
     const eng = engineRef.current;
     // Si se edita una toma suelta, el canvas está en la ventana flotante.
     // No recolocarlo aquí o se queda negra al dibujar/mover efectos.
-    if (!eng || vista !== "editor" || section) return;
+    // Mientras se exporta, el lienzo vive en la pantalla de render; no hay que
+    // arrancárselo. Al acabar, «exporting» cambia y vuelve a su sitio: por eso
+    // está en las dependencias.
+    if (!eng || vista !== "editor" || section || exporting) return;
     const host = previewRef.current;
     if (host && eng.canvas.parentElement !== host) {
       eng.canvas.className = "h-full w-full object-contain";
       host.appendChild(eng.canvas);
       eng.update(projRef.current);
     }
-  }, [vista, project, section]);
+  }, [vista, project, section, exporting]);
 
   const cargarSeries = () =>
     fetch("/api/story/series").then((r) => r.json()).then((j) => setSeries(j.series ?? [])).catch(() => {});
@@ -1112,7 +1119,6 @@ export function StoryApp({
       for (let i = 0; i < pend.length; i++) {
         setMontaje({ fase: "dibujando", hechas: i, total: pend.length, detalle: pend[i].donde.join(" · ") });
         if (!(await dibujarUna(pend[i], descripcionDe(pend[i])))) {
-          zipTrasMontajeRef.current = false;
           setMontaje({ fase: "parado", hechas: i, total: pend.length, detalle: "dibujando las imágenes" });
           return;
         }
@@ -1127,7 +1133,6 @@ export function StoryApp({
         detalle: (d.quien || "narrador") + ": " + d.text.slice(0, 40),
       });
       if (!(await genVoice(sceneId, shotId, d))) {
-        zipTrasMontajeRef.current = false;
         setMontaje({ fase: "parado", hechas: i, total: voces.length, detalle: "generando las voces" });
         return;
       }
@@ -1136,12 +1141,6 @@ export function StoryApp({
     setFaltas(await faltantes(projRef.current));
     setMontaje({ fase: "listo", hechas: voces.length, total: voces.length, detalle: "" });
     setStatus("Capítulo montado ✓ · revísalo y guarda");
-    // Historia con IA: al terminar el montaje se descarga el paquete solo.
-    if (zipTrasMontajeRef.current) {
-      zipTrasMontajeRef.current = false;
-      setStatus("Capítulo montado ✓ · descargando el ZIP…");
-      await exportPaquete();
-    }
   }
 
   // Arranca en cuanto la IA entrega el borrador, no antes: hace falta que el
@@ -1210,8 +1209,14 @@ export function StoryApp({
         datos: new TextEncoder().encode(JSON.stringify(meta, null, 2)),
       });
       const zip = crearZip(entradas);
-      download(zip, `${(name || "historia").replace(/[^\w\-]+/g, "-")}-completo.zip`);
-      setStatus(`Paquete descargado ✓ · ${entradas.length - 1} archivos${sinArchivo ? ` (faltaban ${sinArchivo})` : ""}`);
+      // No se descarga solo: se deja preparado y con un botón. Que aparezca un
+      // archivo en Descargas sin haberlo pedido molesta más de lo que ayuda.
+      setPaquete({
+        blob: zip,
+        nombre: `${(name || "historia").replace(/[^\w\-]+/g, "-")}-completo.zip`,
+        archivos: entradas.length - 1,
+      });
+      setStatus(`Paquete listo ✓ · ${entradas.length - 1} archivos${sinArchivo ? ` (faltaban ${sinArchivo})` : ""}`);
     } catch (e: any) { setStatus("No se pudo empaquetar: " + (e?.message ?? "")); }
     setBusy(null);
   }
@@ -1514,6 +1519,7 @@ export function StoryApp({
     const eng = engineRef.current!;
     setExporting(true);
     setProgress(0);
+    setEtapaRender(null);
     setStatus(null);
     const nombre = `tvphi-historia-${Date.now()}`;
     try {
@@ -1522,7 +1528,7 @@ export function StoryApp({
         const nativo = format === "mp4" ? Recorder.pickMp4() : webmMime;
         if (format === "mp4" && !nativo) {
           // El navegador no sabe grabar MP4: hay que recodificar.
-          setStatus("Convirtiendo a MP4 (puede tardar)…");
+          setEtapaRender("Convirtiendo a MP4… ya no hace falta esperar delante.");
           const b = await eng.export(webmMime, (p) => setProgress(p * 0.5));
           download(await convert(b, "mp4", (p) => setProgress(0.5 + p * 0.5)), `${nombre}.mp4`);
         } else {
@@ -1530,7 +1536,7 @@ export function StoryApp({
           // Lo que sale del grabador no lleva escrita su duración (el móvil marca
           // 0:00) y el MP4 sale fragmentado, que es lo que rechaza YouTube. Se
           // vuelve a empaquetar sin recodificar, que es rápido.
-          setStatus("Cerrando el archivo…");
+          setEtapaRender("Cerrando el archivo…");
           let final = bruto;
           try {
             final = await remux(bruto, format, (p) => setProgress(0.85 + p * 0.15));
@@ -1540,15 +1546,23 @@ export function StoryApp({
           download(final, `${nombre}.${format}`);
         }
       } else {
-        setStatus(`Convirtiendo a ${format.toUpperCase()} (puede tardar)…`);
+        setEtapaRender(`Convirtiendo a ${format.toUpperCase()}… ya no hace falta esperar delante.`);
         const b = await eng.export(webmMime, (p) => setProgress(p * 0.5));
         download(await convert(b, format, (p) => setProgress(0.5 + p * 0.5)), `${nombre}.${format}`);
       }
       setStatus((s) => (s?.startsWith("El video se descargó") ? s : "Descarga lista ✓"));
     } catch (err: any) {
-      setStatus("Error al exportar: " + (err?.message ?? ""));
+      setStatus(err?.message === "CANCELADO"
+        ? "Exportación cancelada · no se ha descargado nada."
+        : "Error al exportar: " + (err?.message ?? ""));
     }
+    setEtapaRender(null);
     setExporting(false);
+  }
+
+  function cancelarRender() {
+    engineRef.current?.cancelarExport();
+    setEtapaRender("Cancelando…");
   }
 
   if (vista === "inicio") {
@@ -1635,8 +1649,9 @@ export function StoryApp({
           seek(0);
           setStatus(`Borrador de la IA: ${data.scenes.length} escenas. Montando…`);
           // Sin esperar a que el usuario pida nada: se dibuja y se narra solo,
-          // y él lo va viendo aparecer. Al acabar, el ZIP se descarga solo.
-          zipTrasMontajeRef.current = true;
+          // y él lo va viendo aparecer. El ZIP ya NO se descarga al acabar:
+          // aparecía un archivo en Descargas sin haberlo pedido, y quien lo
+          // quiera lo tiene en «Todo (.zip)».
           setMontarAlEntrar(true);
         }}
       />
@@ -1645,6 +1660,17 @@ export function StoryApp({
 
   return (
     <div className="tool-ui grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+      {/* Mientras se graba, se tapa todo: cualquier cosa que se toque durante
+          esos minutos acabaría dentro del vídeo. */}
+      {exporting && (
+        <PantallaRender
+          canvas={engineRef.current?.canvas ?? null}
+          progreso={progress}
+          etapa={etapaRender}
+          segundos={durFinal}
+          onCancelar={cancelarRender}
+        />
+      )}
       <div className="space-y-4">
         {/* Dónde estás y cómo salir: sin esto, entrar al editor era un viaje sin
             vuelta y no se sabía de qué serie era el capítulo. */}
@@ -2629,6 +2655,24 @@ export function StoryApp({
               <input type="file" accept=".zip,application/zip" className="hidden" onChange={importPaquete} />
             </label>
           </div>
+          {/* El paquete se prepara y espera. Antes se disparaba la descarga
+              sola y aparecía un archivo sin haberlo pedido. */}
+          {paquete && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-accent/50 bg-accent/5 px-2 py-2">
+              <span className="min-w-0 flex-1 text-[11px]">
+                Paquete listo · {paquete.archivos} archivos · {(paquete.blob.size / 1e6).toFixed(1)} MB
+              </span>
+              <button
+                onClick={() => { download(paquete.blob, paquete.nombre); }}
+                className="btn-brand px-3 py-1 text-[11px]"
+              >
+                <Download className="h-3.5 w-3.5" /> Descargar
+              </button>
+              <button onClick={() => setPaquete(null)} className="text-muted hover:text-fg" aria-label="Descartar el paquete">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           <p className="mt-2 text-[11px] text-muted">
             El montaje <strong>y sus archivos</strong> —imágenes, músicas, sonidos y las voces ya
             generadas— en un solo archivo. Al importarlo se colocan solos: no hay que reponer nada
@@ -2735,7 +2779,14 @@ export function StoryApp({
               {project.outro ? ` + cierre ${fmt(project.outro.dur)}` : ""}.
             </p>
           )}
-          <p className="mt-2 flex items-center gap-1 text-[11px] text-muted"><Film className="h-3 w-3" /> El video se genera en tu navegador y se descarga.</p>
+          <p className="mt-2 flex items-start gap-1 text-[11px] text-muted">
+            <Film className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>
+              Se genera en tu navegador grabándolo mientras se reproduce, así que
+              tarda lo que dura el vídeo (<strong className="tabular-nums text-fg">{fmt(durFinal)}</strong>)
+              {format === "webm" ? "" : " más la conversión"}. Mientras dure hay que dejar la pestaña a la vista.
+            </span>
+          </p>
         </div>
 
         {status && <p className="text-sm text-accent">{status}</p>}
