@@ -1184,8 +1184,15 @@ export function StoryApp({
       for (const r of refs) {
         if (vistos.has(r.id)) continue;
         vistos.add(r.id);
-        // Las pistas de la biblioteca no se meten: ya viajan dentro de la app,
-        // así que copiarlas engordaría el paquete para nada.
+        // La música y los sonidos DE LA APP no se meten nunca en el ZIP.
+        //
+        // Hay dos razones y la segunda manda: (a) ya viajan dentro de la
+        // aplicación, así que copiarlos engorda el paquete para nada; y (b) su
+        // licencia permite usarlos DENTRO de un proyecto, no repartirlos como
+        // archivos sueltos. Un ZIP descargable con los mp3 dentro es
+        // exactamente repartirlos. Solo salen los archivos que ha subido el
+        // usuario, que son suyos; los de la app viajan como referencia
+        // ("lib:…", "son:…") y se resuelven al abrir el proyecto.
         if (esDeBiblioteca(r.id) || esDeBibliotecaSonido(r.id)) continue;
         const blob = await getAsset(r.id);
         if (!blob) { sinArchivo++; continue; }
