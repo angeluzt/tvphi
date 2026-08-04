@@ -96,6 +96,11 @@ LO QUE SE NARRA (esto es lo que más se rompe, léelo dos veces):
 - La primera frase del capítulo entra directamente en la historia, como si el video ya llevara un rato.
 - La última frase cierra la historia por dentro. No se despide de nadie.
 
+MÚSICA:
+- Elige UNA pista de la biblioteca que se te da y ponla en "audioLayers": {"id":"m1","kind":"music","audioId":"lib:<id>","name":"<título>","volume":0.3,"startSec":0,"loop":true}.
+- Una sola para todo el capítulo, salvo que la historia cambie de tono a la mitad; entonces, dos como mucho.
+- El volumen no pasa de 0.4: por encima se come la narración.
+
 Devuelve el JSON y nada más: sin explicaciones ni vallas de código.`;
 
 export async function POST(req: Request) {
