@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
-import { LogOut, User, Sparkles } from "lucide-react";
+import { LogOut, User, Sparkles, BarChart3 } from "lucide-react";
 
 interface HeaderUser {
   username: string;
   displayName: string;
   avatarUrl: string | null;
+  admin?: boolean;
 }
 
 export function SiteHeader({ user }: { user: HeaderUser | null }) {
@@ -25,6 +26,16 @@ export function SiteHeader({ user }: { user: HeaderUser | null }) {
                 <Sparkles className="h-4 w-4" />
                 <span className="hidden sm:inline">Historias</span>
               </Link>
+              {user.admin && (
+                <Link
+                  href="/admin"
+                  className="btn-ghost"
+                  title="Uso de la app (solo admin)"
+                >
+                  <BarChart3 className="h-4 w-4" />
+                  <span className="hidden sm:inline">Uso</span>
+                </Link>
+              )}
               <Link
                 href="/dashboard"
                 className="flex items-center gap-2 rounded-xl border border-border bg-surface-2 px-2 py-1.5 text-sm hover:bg-border/50"
