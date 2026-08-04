@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Play, Pause, X, Check, Sparkles } from "lucide-react";
+import { Play, Pause, X, Check, Sparkles, Repeat, AlertTriangle } from "lucide-react";
 import { SONIDOS, porFamilia, refSonido, urlSonido, type Sonido } from "@/lib/story/musica";
 
 // Sonidos puntuales que trae la app: un trueno, un portal, hielo formándose.
@@ -67,7 +67,7 @@ export function BibliotecaSonidos({
             <optgroup key={g.familia} label={g.label}>
               {g.sonidos.map((x) => (
                 <option key={x.id} value={x.id}>
-                  {x.titulo} · {x.segundos} s
+                  {x.titulo} · {x.segundos} s{x.bucle ? " · bucle" : ""}
                 </option>
               ))}
             </optgroup>
@@ -93,11 +93,22 @@ export function BibliotecaSonidos({
       </div>
 
       <p className="mt-1 text-[10px] leading-tight text-muted">
+        {s.bucle && (
+          <span className="mr-1 inline-flex items-center gap-0.5 text-accent">
+            <Repeat className="h-2.5 w-2.5" /> ambiente de escena:
+          </span>
+        )}
         {s.cuando}
         {/* Cada sonido tiene su efecto: decirlo aquí ahorra buscarlo. */}
         {s.conEfecto && (
           <span className="ml-1 inline-flex items-center gap-0.5 text-accent/80">
             <Sparkles className="h-2.5 w-2.5" /> va con «{s.conEfecto}»
+          </span>
+        )}
+        {/* Lo que se midió y no está fino. Mejor saberlo antes de ponerlo. */}
+        {s.pega && (
+          <span className="ml-1 inline-flex items-center gap-0.5 text-gold">
+            <AlertTriangle className="h-2.5 w-2.5" /> {s.pega}
           </span>
         )}
       </p>

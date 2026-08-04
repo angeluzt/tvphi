@@ -8,7 +8,7 @@ import {
 import { VfxScene, type VfxInput } from "./vfx";
 import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
-import { esDeBiblioteca } from "./musica";
+import { esDeBiblioteca, esDeBibliotecaSonido } from "./musica";
 import { Recorder } from "@/lib/studio/recorder";
 
 
@@ -527,7 +527,13 @@ export class StoryEngine {
     }
 
     for (const ev of events) {
-      const buf = this.estirar(ev.audioId, ev.alpha ?? 1);
+      // Si se repite, se usa la versión cosida: sin eso el bucle deja un
+      // agujero o da un salto cada vuelta. Solo las de la biblioteca, que son
+      // las que se midieron; un archivo del usuario se deja como está.
+      const deLaApp = esDeBiblioteca(ev.audioId) || esDeBibliotecaSonido(ev.audioId);
+      const buf = ev.loop && deLaApp
+        ? this.coser(ev.audioId)
+        : this.estirar(ev.audioId, ev.alpha ?? 1);
       if (!buf) continue;
       const rate = ev.rate ?? 1;
       // Con efecto de tono el audio suena más lento o más rápido, así que ocupa
@@ -576,6 +582,97 @@ export class StoryEngine {
         // manda lo que el usuario puso en cada toma.
         if (ev.musica && !ev.changes?.length && this.ventanasVoz.length) this.curvaMusica(g, ev.gain);
       } catch {}
+    }
+  }
+
+  // Coser el bucle: mezclar el final de la pista sobre su principio.
+  //
+  // Casi ninguna pista generada acaba donde empieza. De las 41 de la
+  // biblioteca, 21 bajan a silencio y 6 se quedan a medias: al repetirse se
+  // oye un agujero o un salto. En vez de pedir pistas nuevas, se arregla al
+  // cargarlas — el último trozo se desvanece encima del primero, que entra a
+  // volumen completo y tapa el hueco.
+  //
+  // Solo se usa cuando la pista SE REPITE. Si suena una vez —la música de la
+  // última escena, por ejemplo— se oye su final original, con su fundido.
+  private cosidos = new Map<string, AudioBuffer>();
+
+  /** Desnivel de la unión, en dB: último segundo contra el primero. Es lo que
+   *  se oye al dar la vuelta —un agujero o un porrazo— y es también el criterio
+   *  para decidir si hay que coser: si la unión ya está plana, no se toca. */
+  private desnivelDelBucle(buf: AudioBuffer): number {
+    const d = buf.getChannelData(0), sr = buf.sampleRate, n = d.length;
+    const nivel = (a: number, b: number) => {
+      let s = 0;
+      for (let i = a; i < b; i++) s += d[i] * d[i];
+      return Math.sqrt(s / Math.max(1, b - a));
+    };
+    const w = Math.min(Math.floor(sr), Math.floor(n / 4));
+    return 20 * Math.log10(Math.max(nivel(n - w, n), 1e-9) / Math.max(nivel(0, w), 1e-9));
+  }
+
+  /** Cuánto dura la caída del final: desde donde el nivel baja del 60% del
+   *  cuerpo hasta el final. Es lo que hay que cruzar para que no quede hueco. */
+  private largoDelFundido(buf: AudioBuffer): number {
+    const d = buf.getChannelData(0), sr = buf.sampleRate, n = d.length;
+    const trozo = Math.floor(sr * 0.25);
+    const nivel = (a: number, b: number) => {
+      let s = 0;
+      for (let i = a; i < b; i++) s += d[i] * d[i];
+      return Math.sqrt(s / Math.max(1, b - a));
+    };
+    const cuerpo = nivel(Math.floor(n * 0.2), Math.floor(n * 0.7));
+    if (cuerpo <= 0) return 0;
+    // Se retrocede en trozos de 250 ms mientras se siga oyendo flojo.
+    let caida = 0;
+    for (let fin = n; fin - trozo > n * 0.5; fin -= trozo) {
+      if (nivel(fin - trozo, fin) >= cuerpo * 0.6) break;
+      caida += trozo / sr;
+    }
+    // Si no hay fundido, NO se toca. Se probó cruzar igualmente 0.8 s "por si
+    // acaso" y estropeaba las pistas que ya enlazaban bien: dos que estaban en
+    // 1 dB de salto se iban a 7 y 8. Coser algo que no está roto lo rompe.
+    if (caida <= 0) return 0;
+    return Math.min(Math.max(caida, 0.5), buf.duration / 3);
+  }
+
+  private coser(audioId: string): AudioBuffer | undefined {
+    const buf = this.buffers.get(audioId);
+    if (!buf) return undefined;
+    const ya = this.cosidos.get(audioId);
+    if (ya) return ya;
+    if (buf.duration < 2) return buf;
+    this.ensureAudio();
+    // Coser algo que no está roto lo rompe: se probó cruzar todas y dos pistas
+    // que enlazaban con 1 dB de desnivel se iban a 7 y 8. Así que primero se
+    // mira si la unión está mal, con la misma vara con la que luego se juzga.
+    if (Math.abs(this.desnivelDelBucle(buf)) < 4) { this.cosidos.set(audioId, buf); return buf; }
+    // El cruce tiene que cubrir TODO el fundido final, no un trozo fijo: una
+    // pista que se apaga durante seis segundos con un cruce de tres sigue
+    // dejando medio agujero. Se mide dónde empieza a caer y se cruza desde
+    // ahí, con un tope de un tercio de la pista para no comerse la música.
+    const cruce = this.largoDelFundido(buf);
+    if (cruce < 0.2) return buf;
+    try {
+      const sr = buf.sampleRate;
+      const nCruce = Math.floor(cruce * sr);
+      const nSalida = buf.length - nCruce; // la copia dura menos: el cruce se solapa
+      const out = this.audioCtx!.createBuffer(buf.numberOfChannels, nSalida, sr);
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const src = buf.getChannelData(c);
+        const dst = out.getChannelData(c);
+        dst.set(src.subarray(0, nSalida));
+        // La cola, desvanecida, encima de la cabeza, que va subiendo.
+        for (let i = 0; i < nCruce; i++) {
+          const t = i / nCruce;
+          // Curva de igual potencia: con una rampa lineal el cruce se hunde.
+          dst[i] = dst[i] * Math.sin(t * Math.PI / 2) + src[nSalida + i] * Math.cos(t * Math.PI / 2);
+        }
+      }
+      this.cosidos.set(audioId, out);
+      return out;
+    } catch {
+      return buf;
     }
   }
 
