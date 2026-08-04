@@ -2,7 +2,7 @@
 
 import {
   Plus, Trash2, Wand2, Volume2, Sticker, Image as ImageIcon, ChevronUp, ChevronDown, Clock,
-  Loader2, Repeat, Play, Pause, Copy, RefreshCw, Sparkles,
+  Loader2, Repeat, Play, Pause, Copy, RefreshCw, Sparkles, AlertTriangle,
 } from "lucide-react";
 import { useState } from "react";
 import { nanoid } from "nanoid";
@@ -17,7 +17,7 @@ import { LockToggle } from "./lock-toggle";
 import { VfxEditor } from "./vfx-editor";
 import {
   newDialogue, newSfx, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
-  overlaySoundStart,
+  overlaySoundStart, duracionQueCabe,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop, type Frame,
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect, type VfxLayer,
 } from "@/lib/story/model";
@@ -104,6 +104,12 @@ export function ShotEditor({
   vocesIa?: boolean;
 }) {
   const [verSonidos, setVerSonidos] = useState(false);
+  // Con duración fija la toma no crece para que quepa la voz: si se queda
+  // corta, la narración sigue sonando cuando ya empezó la de la toma siguiente
+  // y las dos a la vez no se entienden. Se avisa aquí y se ofrece la cuenta
+  // hecha; los tiempos no se tocan solos, que son de quien los puso.
+  const cabe = shot.autoDuration ? 0 : duracionQueCabe(shot);
+  const seCorta = !shot.autoDuration && cabe > shotDur(shot) + 0.01;
   const dur = shotDur(shot);
   const movim = moveDur(shot); // lo que tarda el recorrido, sin la pausa
   const hold = Math.max(0, shot.holdSec || 0);
@@ -251,6 +257,34 @@ export function ShotEditor({
             disabledHint="Lo marcan los diálogos. Pon «Fija» para escribirlo."
           />
         </div>
+
+        {seCorta && (
+          <div className="mt-2 rounded-lg border border-gold/50 bg-gold/10 p-2 text-[11px]">
+            <p className="flex items-start gap-1.5 font-medium text-gold">
+              <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+              La toma dura {dur.toFixed(1)} s y su narración {cabe.toFixed(1)} s.
+            </p>
+            <p className="mt-1 text-muted">
+              Con duración fija la toma no se estira, así que esta voz seguiría sonando cuando ya
+              empezó la de la toma siguiente. Al reproducir se corta para que no se oigan las dos a
+              la vez: se pierde el final de la frase.
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              <button
+                onClick={() => onChange({ ...shot, durationSec: Math.max(0.3, cabe - hold) })}
+                className="btn-ghost px-2 py-1 text-[11px]"
+              >
+                Alargarla a {cabe.toFixed(1)} s
+              </button>
+              <button
+                onClick={() => onChange({ ...shot, autoDuration: true })}
+                className="btn-ghost px-2 py-1 text-[11px]"
+              >
+                Que la marquen los diálogos
+              </button>
+            </div>
+          </div>
+        )}
         <div className="mt-2 grid grid-cols-2 gap-2">
           {/* La pausa es tiempo AÑADIDO, no un trozo de la duración: acabado el
               recorrido la imagen se queda quieta y hasta que no pasa no empieza

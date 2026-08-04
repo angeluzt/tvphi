@@ -645,6 +645,78 @@ export function totalDuration(p: StoryProject) {
   return flatten(p).reduce((a, f) => a + f.dur, 0);
 }
 
+// --------------------------------------------------------------------------
+// Narraciones que se pisan
+// --------------------------------------------------------------------------
+// Una toma con duración FIJA no crece para que quepa su voz: si se le ponen
+// 1,2 s y la narración dura 4, la siguiente toma empieza a los 1,2 s y las dos
+// voces suenan a la vez casi tres segundos. No es una rareza teórica —es
+// justo lo que sale de la receta de «golpe de tensión»— y suena a ruido.
+//
+// Esto lo detecta sobre la línea de tiempo entera, que es donde se ve: un
+// diálogo puede pasarse del final de SU toma sin molestar a nadie (una voz en
+// off que cruza un corte está bien); lo que nunca puede es seguir sonando
+// cuando ya arrancó el siguiente.
+
+export interface Empalme {
+  sceneId: string;
+  shotId: string;
+  sceneIndex: number;
+  shotIndex: number;
+  /** Segundos que suenan las dos voces a la vez. */
+  segundos: number;
+  /** Lo que tendría que durar la toma para que no pase. */
+  necesita: number;
+}
+
+/** Instante global en que arranca cada diálogo, en orden de reproducción. */
+function marcasDeNarracion(flat: FlatShot[]) {
+  const out: { f: FlatShot; d: Dialogue; empieza: number; acaba: number }[] = [];
+  for (const f of flat) {
+    const st = dialogueStarts(f.shot);
+    f.shot.dialogues.forEach((d, i) => {
+      if (!d.audioId) return; // sin voz generada no suena nada
+      out.push({ f, d, empieza: f.start + st[i], acaba: f.start + st[i] + dialogueDur(d) });
+    });
+  }
+  return out;
+}
+
+/** Tomas cuya narración se pisa con la siguiente. Vacío = todo bien. */
+export function empalmes(p: StoryProject): Empalme[] {
+  const flat = flatten(p);
+  const marcas = marcasDeNarracion(flat);
+  const porToma = new Map<string, Empalme>();
+  for (let i = 1; i < marcas.length; i++) {
+    const a = marcas[i - 1], b = marcas[i];
+    const pisa = a.acaba - b.empieza;
+    if (pisa <= 0.01) continue;
+    // La toma de la voz que se pasa es la que hay que alargar.
+    const previo = porToma.get(a.f.shot.id);
+    const necesita = a.acaba - a.f.start;
+    if (!previo || pisa > previo.segundos) {
+      porToma.set(a.f.shot.id, {
+        sceneId: a.f.scene.id, shotId: a.f.shot.id,
+        sceneIndex: a.f.sceneIndex, shotIndex: a.f.shotIndex,
+        segundos: +pisa.toFixed(2),
+        necesita: Math.ceil(necesita * 10) / 10,
+      });
+    }
+  }
+  return [...porToma.values()];
+}
+
+/**
+ * Lo que tiene que durar el movimiento de una toma para que su voz quepa.
+ * Es lo que pone el botón de arreglar: nada de adivinar, la cuenta exacta.
+ */
+export function duracionQueCabe(s: Shot) {
+  const st = dialogueStarts(s);
+  let fin = 0;
+  s.dialogues.forEach((d, i) => { if (d.audioId) fin = Math.max(fin, st[i] + dialogueDur(d)); });
+  return Math.ceil(fin * 10) / 10;
+}
+
 // Tramo (inicio, fin) que ocupa una escena entera en la línea de tiempo.
 export function sceneRange(flat: FlatShot[], sceneId: string): { start: number; end: number } | null {
   const parts = flat.filter((f) => f.scene.id === sceneId);
