@@ -190,7 +190,16 @@ export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const parsed = saveSchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  if (!parsed.success) {
+    const detalle = parsed.error.issues
+      .slice(0, 6)
+      .map((i) => `${i.path.join(".") || "(raíz)"}: ${i.message}`)
+      .join(" · ");
+    return NextResponse.json(
+      { error: "Datos inválidos", detalle: detalle || undefined },
+      { status: 400 },
+    );
+  }
   const { id, name, data, seriesId } = parsed.data;
 
   if (id) {

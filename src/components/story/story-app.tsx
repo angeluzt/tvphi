@@ -938,14 +938,18 @@ export function StoryApp({
     setBusy("save");
     setStatus(null);
     try {
+      // Se normaliza otra vez: un ZIP de la IA puede traer sfx basura que tumba
+      // el schema del servidor. migrateProject lo limpia.
+      const data = migrateProject(projRef.current);
+      if (data !== projRef.current) setProject(data);
       const res = await fetch("/api/story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: projectId ?? undefined, name, data: project, seriesId }),
+        body: JSON.stringify({ id: projectId ?? undefined, name, data, seriesId }),
       });
       const j = await res.json();
       if (j.cupo) setCupo(j.cupo);
-      if (!res.ok) throw new Error(j.error || "Error");
+      if (!res.ok) throw new Error([j.error, j.detalle].filter(Boolean).join(" — ") || "Error");
       setProjectId(j.project.id);
       void cargarSeries();
       setProjects((prev) => [

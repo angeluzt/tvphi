@@ -945,14 +945,14 @@ export function projectAssets(p: StoryProject): string[] {
     ids.add(sc.imageId);
     for (const sh of sc.shots) {
       for (const d of sh.dialogues) if (d.audioId) ids.add(d.audioId);
-      for (const s of sh.sfx) ids.add(s.audioId);
+      for (const s of sh.sfx) if (s.audioId) ids.add(s.audioId);
       for (const o of sh.overlays) {
         ids.add(o.imageId);
         if (o.soundId) ids.add(o.soundId);
       }
     }
   }
-  for (const l of p.audioLayers) ids.add(l.audioId);
+  for (const l of p.audioLayers) if (l.audioId) ids.add(l.audioId);
   if (p.intro) ids.add(p.intro.assetId);
   if (p.outro) ids.add(p.outro.assetId);
   return [...ids].filter(Boolean);
@@ -1136,6 +1136,7 @@ function normalizeFraming(f: any, imgW: number, imgH: number): ShotFraming | nul
 function normalizeShot(s: any, imgW: number, imgH: number): Shot {
   const base = newShot(imgW, imgH);
   const hasFrames = s.from && s.to && typeof s.from.cx === "number";
+  const { sfx, audioOverrides } = normalizeSfxYOverrides(s);
   return {
     ...base,
     id: s.id ?? base.id,
@@ -1152,8 +1153,8 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     transition: s.transition ?? base.transition,
     transitionDur: s.transitionDur ?? base.transitionDur,
     dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", speed: Number(d.speed) || 1, pitch: Number(d.pitch) || 1, stale: !!d.stale, ...(typeof d.quien === "string" && d.quien.trim() ? { quien: d.quien.trim().slice(0, 60) } : {}), ...(typeof d.voz === "string" && d.voz.trim() ? { voz: d.voz.trim().slice(0, 40) } : {}) }))),
-    sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
-    audioOverrides: s.audioOverrides ?? [],
+    sfx,
+    audioOverrides,
     overlays: (s.overlays ?? []).map(normalizeOverlay),
     vfx: (s.vfx ?? []).map(normalizeVfx),
     usarVfxEscena: s.usarVfxEscena !== false,
@@ -1162,6 +1163,47 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
       : [],
     altFrames: normalizeAltFrames(s.altFrames, imgW, imgH),
   };
+}
+
+// La IA a veces mete dentro de sfx cosas que son audioOverrides
+// ({ stop:true, volume:null } sin audioId). Eso tumba el guardado (Datos
+// inválidos) y hace petar el motor al llamar esDeBiblioteca(undefined).
+function normalizeSfxYOverrides(s: any): { sfx: ShotSfx[]; audioOverrides: AudioOverride[] } {
+  const overrides: AudioOverride[] = [];
+  const vistos = new Set<string>();
+  const meterOverride = (sfxId: string, stop: boolean, volume: unknown) => {
+    if (!sfxId || vistos.has(sfxId)) return;
+    vistos.add(sfxId);
+    overrides.push({
+      sfxId,
+      stop: !!stop,
+      volume: volume == null || volume === "" ? null : Number(volume),
+    });
+  };
+  for (const o of Array.isArray(s.audioOverrides) ? s.audioOverrides : []) {
+    if (o && typeof o.sfxId === "string") meterOverride(o.sfxId, !!o.stop, o.volume);
+  }
+  const sfx: ShotSfx[] = [];
+  for (const x of Array.isArray(s.sfx) ? s.sfx : []) {
+    if (!x || typeof x !== "object") continue;
+    if (!x.audioId && x.stop) {
+      // Basura tipo { id:"stoprain1", stop:true }: si trae sfxId se rescata;
+      // si no, se tira (los overrides buenos ya vienen en audioOverrides).
+      if (typeof x.sfxId === "string") meterOverride(x.sfxId, true, x.volume);
+      continue;
+    }
+    if (typeof x.audioId !== "string" || !x.audioId.trim()) continue;
+    sfx.push({
+      id: typeof x.id === "string" && x.id ? x.id : nanoid(6),
+      audioId: x.audioId.trim(),
+      name: String(x.name || "Sonido").slice(0, 120),
+      volume: typeof x.volume === "number" && Number.isFinite(x.volume) ? x.volume : 0.8,
+      dur: Number(x.dur) || 0,
+      gapSec: Number(x.gapSec) || 0,
+      loop: !!x.loop,
+    });
+  }
+  return { sfx: startsToGaps(sfx), audioOverrides: overrides.slice(0, 30) };
 }
 
 function promoteSceneVfx(shots: Shot[], rawSceneVfx: any): { vfx: VfxLayer[]; shots: Shot[] } {
