@@ -8,7 +8,7 @@ import {
 import { VfxScene, type VfxInput } from "./vfx";
 import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
-import { esDeBiblioteca, esDeBibliotecaSonido } from "./musica";
+import { esDeBiblioteca, esDeBibliotecaSonido, esRitmico } from "./musica";
 import { Recorder } from "@/lib/studio/recorder";
 
 
@@ -671,6 +671,12 @@ export class StoryEngine {
     const ya = this.cosidos.get(audioId);
     if (ya) return ya;
     if (buf.duration < 2) return buf;
+    // Los que llevan compás van cuadrados a mano en el catálogo y NO se tocan:
+    // el cruce acorta el archivo y se lleva por delante el último golpe, y
+    // encima la vara de abajo los da por rotos siempre —un archivo que empieza
+    // en el hueco entre dos latidos marca un desnivel enorme aunque empalme
+    // perfecto—. Coserlos es justo lo que los descuadra.
+    if (esRitmico(audioId)) { this.cosidos.set(audioId, buf); return buf; }
     this.ensureAudio();
     // Coser algo que no está roto lo rompe: se probó cruzar todas y dos pistas
     // que enlazaban con 1 dB de desnivel se iban a 7 y 8. Así que primero se
