@@ -55,6 +55,17 @@ MEDIA_PROVIDER=mock        # cámbialo a "cloudflare" tras el Paso 4
 
 Railway define `PORT` automáticamente; el servidor ya lo respeta (no lo fijes tú).
 
+Para Historias con IA y el panel de uso (`/admin`), añade también:
+
+```
+OPENAI_API_KEY=<tu clave>
+STORY_DAILY_LIMIT=3
+STORY_QUOTA_EXEMPT_EMAILS=tu@email.com
+```
+
+`STORY_QUOTA_EXEMPT_EMAILS` (correos separados por coma): sin cupo IA, pueden elegir modelos
+y ven **Uso** en la cabecera → `/admin` (cuentas, historias, IA).
+
 Tras guardarlas, Railway redepliega. Cuando el deploy quede en verde, abre la URL temporal
 de Railway (algo como `https://tvphi-production.up.railway.app`) y comprueba `…/api/health`
 → debe responder `{"ok":true,...}`.

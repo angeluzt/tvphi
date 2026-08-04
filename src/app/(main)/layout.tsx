@@ -1,8 +1,10 @@
 import { SiteHeader } from "@/components/site-header";
 import { getCurrentUser } from "@/lib/auth";
+import { esAdminHistorias } from "@/lib/story/cupo";
 
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
+  const admin = user ? esAdminHistorias(user.email) : false;
   return (
     <>
       <SiteHeader
@@ -12,6 +14,7 @@ export default async function MainLayout({ children }: { children: React.ReactNo
                 username: user.username,
                 displayName: user.displayName,
                 avatarUrl: user.avatarUrl,
+                admin,
               }
             : null
         }
