@@ -481,3 +481,10 @@ model Payout {
 
   @@index([channelId, createdAt])
 }
+
+// Ajustes globales de la app (cupo IA, etc.). Una fila por clave.
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

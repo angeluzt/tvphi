@@ -6,6 +6,7 @@ import {
 import { getCurrentUser } from "@/lib/auth";
 import { esAdminHistorias } from "@/lib/story/cupo";
 import { cargarAdminStats, type AdminStats } from "@/lib/admin/stats";
+import { CupoIaForm } from "@/components/admin/cupo-ia-form";
 
 export const dynamic = "force-dynamic";
 
@@ -72,18 +73,25 @@ export default async function AdminPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-8">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <Link href="/story" className="mb-2 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
-            <ArrowLeft className="h-3.5 w-3.5" /> Historias
-          </Link>
-          <h1 className="text-xl font-bold">Uso de la app</h1>
-          <p className="mt-1 text-sm text-muted">
-            Solo visible para correos de <code className="text-xs">STORY_QUOTA_EXEMPT_EMAILS</code>.
-            Actualizado {fmtFecha(stats.generadoEn)}.
-          </p>
-        </div>
+      <div>
+        <Link href="/story" className="mb-2 inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
+          <ArrowLeft className="h-3.5 w-3.5" /> Historias
+        </Link>
+        <h1 className="text-xl font-bold">Uso de la app</h1>
+        <p className="mt-1 text-sm text-muted">
+          Números generales · actualizado {fmtFecha(stats.generadoEn)}.
+        </p>
       </div>
+
+      <Seccion titulo="Cupo IA (usuarios normales)">
+        <CupoIaForm inicial={stats.cupoIa.limite24h} />
+        <p className="text-[11px] text-muted">
+          Vigente: <strong className="tabular-nums text-fg">{stats.cupoIa.limite24h}</strong> / 24 h
+          {stats.cupoIa.origen === "env"
+            ? " (valor del entorno; al guardar aquí pasa a controlarse desde la app)."
+            : " (configurado desde este panel)."}
+        </p>
+      </Seccion>
 
       <Seccion titulo="Cuentas">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -110,66 +118,9 @@ export default async function AdminPage() {
       <Seccion titulo="IA">
         <div className="grid gap-3 sm:grid-cols-2">
           <Stat icon={Sparkles} label="Capítulos IA (24 h)" value={stats.ia.generaciones24h}
-            hint="Generaciones registradas en la ventana de cupo" />
-          <Stat icon={Bot} label="Cuentas con credencial IA" value={stats.ia.usuariosConCredencial}
-            hint="Han tocado modelos / cupo de IA al menos una vez" />
-        </div>
-      </Seccion>
-
-      <Seccion titulo="Cuentas con más historias">
-        <div className="card overflow-x-auto p-0">
-          <table className="w-full min-w-[32rem] text-left text-sm">
-            <thead className="border-b border-border text-[11px] uppercase tracking-wide text-muted">
-              <tr>
-                <th className="px-4 py-2.5 font-medium">Cuenta</th>
-                <th className="px-4 py-2.5 font-medium tabular-nums">Historias</th>
-                <th className="px-4 py-2.5 font-medium tabular-nums">Series</th>
-                <th className="px-4 py-2.5 font-medium">Alta</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.topCuentas.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-muted">Aún no hay cuentas.</td>
-                </tr>
-              )}
-              {stats.topCuentas.map((u) => (
-                <tr key={u.id} className="border-b border-border/60 last:border-0">
-                  <td className="px-4 py-2.5">
-                    <p className="font-medium">{u.displayName}</p>
-                    <p className="truncate text-[11px] text-muted">@{u.username} · {u.email}</p>
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums">{u.historias}</td>
-                  <td className="px-4 py-2.5 tabular-nums">{u.series}</td>
-                  <td className="px-4 py-2.5 text-[11px] text-muted">{fmtFecha(u.creada)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Seccion>
-
-      <Seccion titulo="Altas recientes">
-        <div className="card overflow-x-auto p-0">
-          <table className="w-full min-w-[28rem] text-left text-sm">
-            <thead className="border-b border-border text-[11px] uppercase tracking-wide text-muted">
-              <tr>
-                <th className="px-4 py-2.5 font-medium">Cuenta</th>
-                <th className="px-4 py-2.5 font-medium">Alta</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.altasRecientes.map((u) => (
-                <tr key={u.id} className="border-b border-border/60 last:border-0">
-                  <td className="px-4 py-2.5">
-                    <p className="font-medium">{u.displayName}</p>
-                    <p className="truncate text-[11px] text-muted">@{u.username} · {u.email}</p>
-                  </td>
-                  <td className="px-4 py-2.5 text-[11px] text-muted">{fmtFecha(u.creada)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            hint="Generaciones en la ventana de cupo" />
+          <Stat icon={Bot} label="Cuentas que usaron IA" value={stats.ia.usuariosConCredencial}
+            hint="Han tocado el cupo o modelos al menos una vez" />
         </div>
       </Seccion>
     </div>
