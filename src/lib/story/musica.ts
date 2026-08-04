@@ -194,47 +194,169 @@ export function catalogoMusicaIA() {
 
 
 // ---------------------------------------------------------------------------
-// Sonidos puntuales
+// Sonidos
 // ---------------------------------------------------------------------------
-// No son música: duran 2-5 s, empiezan fuerte y se apagan. Van dentro de una
-// TOMA, no de fondo, y lo que los hace útiles es que casi todos tienen un
-// efecto visual que les corresponde: el trueno con el rayo, el hielo con la
-// escarcha. Por eso cada uno dice a qué efecto acompaña — así la IA puede
-// ponerle sonido a lo que dibuja en vez de dejarlo mudo.
+// No son música, y hay dos clases que no se usan igual:
+//
+//   GOLPE  (1-6 s) empieza fuerte y acaba en silencio. Va en un instante
+//          concreto de la toma: la explosión, el portazo, el rugido.
+//   BUCLE  (20-30 s) nivel constante, sin principio ni final. Se pone en bucle
+//          debajo de una escena entera: la lluvia, la taberna, el latido.
+//
+// Los bucles se pidieron con la bandera «loop» de la API que los generó, que
+// garantiza el enlace en vez de confiarlo al texto del prompt. Se comprobó
+// decodificándolos: 12 de los 15 empiezan y acaban al mismo nivel y sin cola
+// muda. Los tres que no van marcados abajo.
+//
+// Casi la mitad tiene un efecto visual que le corresponde —el trueno con el
+// rayo, el hielo con la escarcha—, y eso es lo que permite que la IA sonorice
+// lo que dibuja en vez de dejarlo mudo.
+//
+// Las duraciones están MEDIDAS decodificando cada archivo, no copiadas de lo
+// que se pidió.
 
 // Familias, para que el desplegable siga siendo manejable cuando haya sesenta.
-export type FamiliaSonido = "clima" | "magia" | "criaturas" | "impactos" | "objetos" | "ambiente";
+export type FamiliaSonido =
+  | "impactos" | "clima" | "magia" | "criaturas" | "objetos" | "ambiente" | "tension";
 
 export const FAMILIA_LABEL: Record<FamiliaSonido, string> = {
+  impactos: "Golpes e impactos",
   clima: "Clima y naturaleza",
-  magia: "Magia y portales",
-  criaturas: "Criaturas",
-  impactos: "Golpes y explosiones",
-  objetos: "Objetos y puertas",
-  ambiente: "Ambiente",
+  magia: "Magia y energía",
+  criaturas: "Criaturas y animales",
+  objetos: "Objetos, puertas y pasos",
+  ambiente: "Ambientes de lugar",
+  tension: "Tensión y transiciones",
 };
 
 export interface Sonido {
   id: string;
   titulo: string;
+  /** Medido decodificando el archivo. */
   segundos: number;
   familia: FamiliaSonido;
+  /** true = ambiente que se repite bajo la escena; false = golpe puntual. */
+  bucle: boolean;
   cuando: string;
   /** Efecto visual con el que pega, si hay uno. */
   conEfecto?: string;
+  /** Defecto medido que conviene saber antes de usarlo. */
+  pega?: string;
 }
 
 export const SONIDOS: Sonido[] = [
-  { id: "close-thunder", titulo: "Trueno cerca", segundos: 3, familia: "clima",
+  // ── golpes e impactos ──────────────────────────────────────────────────
+  { id: "big-explosion", titulo: "Explosión grande", segundos: 4, familia: "impactos", bucle: false,
+    cuando: "Algo revienta: un barril, una carga, una casa. El golpe de la escena.", conEfecto: "explosion" },
+  { id: "deep-shockwave", titulo: "Onda expansiva", segundos: 4, familia: "impactos", bucle: false,
+    cuando: "Acompaña a un impacto para que se sienta la fuerza. Va pegado a la explosión.", conEfecto: "shockwave" },
+  { id: "glass-breaking", titulo: "Cristal que se rompe", segundos: 3, familia: "impactos", bucle: false,
+    cuando: "Una ventana, un espejo, un vaso. Para un susto o una entrada violenta." },
+  { id: "metal-clash", titulo: "Metal contra metal", segundos: 3, familia: "impactos", bucle: false,
+    cuando: "Espadas que chocan, un duelo, una herramienta contra un yunque.", conEfecto: "chispas" },
+  { id: "punch-impact", titulo: "Golpe de puñetazo", segundos: 3, familia: "impactos", bucle: false,
+    cuando: "Una pelea cuerpo a cuerpo, un golpe que conecta.", conEfecto: "speedlines" },
+  { id: "heavy-fall", titulo: "Algo pesado que cae", segundos: 3, familia: "impactos", bucle: false,
+    cuando: "Un cuerpo, un mueble, una piedra grande. Un final seco de acción." },
+  { id: "fast-whoosh", titulo: "Algo pasa rápido", segundos: 2, familia: "impactos", bucle: false,
+    cuando: "Un objeto que vuela junto a la cámara, un cambio brusco, un ataque veloz." },
+  { id: "impact-hit", titulo: "Golpe de revelación", segundos: 6, familia: "impactos", bucle: false,
+    cuando: "El momento en que se descubre algo. Va justo después del riser." },
+
+  // ── clima y naturaleza ─────────────────────────────────────────────────
+  { id: "steady-rain", titulo: "Lluvia constante", segundos: 30, familia: "clima", bucle: true,
+    cuando: "Tristeza, huida, noche fría. La cama de una escena bajo la lluvia.", conEfecto: "lluvia" },
+  { id: "open-wind", titulo: "Viento en campo abierto", segundos: 30, familia: "clima", bucle: true,
+    cuando: "Frío, soledad, un páramo, una cima. También bajo la nieve.", conEfecto: "nieve" },
+  { id: "distant-storm", titulo: "Tormenta lejana", segundos: 30, familia: "clima", bucle: true,
+    cuando: "Se acerca algo malo. Truenos al fondo, sin caer todavía encima.", conEfecto: "rayo" },
+  { id: "campfire", titulo: "Hoguera crepitando", segundos: 20, familia: "clima", bucle: true,
+    cuando: "Una fogata, una chimenea, antorchas. Da calor a una escena.", conEfecto: "fuego" },
+  { id: "ocean-waves", titulo: "Olas del mar", segundos: 30, familia: "clima", bucle: true,
+    cuando: "Una playa, un acantilado, un barco. Calma o inmensidad.",
+    pega: "se apaga hacia el final: al repetirse se nota el salto" },
+  { id: "close-thunder", titulo: "Trueno cerca", segundos: 3, familia: "clima", bucle: false,
     cuando: "Un trueno que revienta encima. Va con el fogonazo.", conEfecto: "rayo" },
-  { id: "ice-rapidly-freezing", titulo: "Hielo formándose", segundos: 3, familia: "clima",
+  { id: "water-splash", titulo: "Chapoteo en agua", segundos: 2, familia: "clima", bucle: false,
+    cuando: "Algo cae al agua, un pie en un charco, alguien que se sumerge.", conEfecto: "salpicadura" },
+  { id: "ice-rapidly-freezing", titulo: "Hielo formándose", segundos: 3, familia: "clima", bucle: false,
     cuando: "Algo se congela de golpe, cristales creciendo.", conEfecto: "escarcha" },
-  { id: "dark-portal-opening", titulo: "Portal que se abre", segundos: 5, familia: "magia",
+
+  // ── magia y energía ────────────────────────────────────────────────────
+  { id: "dark-portal-opening", titulo: "Portal que se abre", segundos: 5, familia: "magia", bucle: false,
     cuando: "Algo se abre y suena hondo. Al aparecer el portal.", conEfecto: "portal" },
-  { id: "arcane-magic-explosion", titulo: "Explosión arcana", segundos: 2, familia: "magia",
-    cuando: "Un hechizo que estalla.", conEfecto: "magiccircle" },
-  { id: "massive-stone-creature", titulo: "Criatura de piedra", segundos: 3, familia: "criaturas",
+  { id: "spell-cast", titulo: "Hechizo que se lanza", segundos: 2, familia: "magia", bucle: false,
+    cuando: "El instante en que alguien lanza algo. Va con el fogonazo.", conEfecto: "destello" },
+  { id: "arcane-charge", titulo: "Círculo mágico cargándose", segundos: 5, familia: "magia", bucle: false,
+    cuando: "El conjuro que se prepara, antes de soltarse. Debajo del personaje.", conEfecto: "magiccircle" },
+  { id: "arcane-magic-explosion", titulo: "Explosión arcana", segundos: 2, familia: "magia", bucle: false,
+    cuando: "Un hechizo que estalla. El remate del círculo mágico.", conEfecto: "magiccircle" },
+  { id: "electric-arc", titulo: "Chispazo eléctrico", segundos: 2, familia: "magia", bucle: false,
+    cuando: "Un cable pelado, una máquina rota, magia eléctrica.", conEfecto: "electricidad" },
+  { id: "magic-sparkle", titulo: "Brillo mágico", segundos: 3, familia: "magia", bucle: false,
+    cuando: "Magia delicada: hadas, polvo de estrellas, un encantamiento suave.", conEfecto: "polvo" },
+  { id: "energy-aura", titulo: "Aura de poder", segundos: 20, familia: "magia", bucle: true,
+    cuando: "Alguien cargando poder mientras habla. En bucle bajo la toma.", conEfecto: "aura" },
+
+  // ── criaturas y animales ───────────────────────────────────────────────
+  { id: "monster-roar", titulo: "Rugido de monstruo", segundos: 4, familia: "criaturas", bucle: false,
+    cuando: "Una criatura enorme que aparece o ataca. El momento de más miedo." },
+  { id: "massive-stone-creature", titulo: "Criatura de piedra", segundos: 3, familia: "criaturas", bucle: false,
     cuando: "Algo enorme de roca que se mueve o despierta.", conEfecto: "shockwave" },
+  { id: "wolf-howl", titulo: "Aullido de lobo", segundos: 4, familia: "criaturas", bucle: false,
+    cuando: "Noche, bosque, amenaza que no se ve. Cambia el ánimo de golpe." },
+  { id: "crow-call", titulo: "Cuervo graznando", segundos: 2, familia: "criaturas", bucle: false,
+    cuando: "Mal presagio, un cementerio, un campo de batalla." },
+  { id: "dog-barking", titulo: "Perro ladrando", segundos: 3, familia: "criaturas", bucle: false,
+    cuando: "Una casa, un pueblo, alguien que llega. También como amenaza." },
+  { id: "horse-whinny", titulo: "Caballo", segundos: 4, familia: "criaturas", bucle: false,
+    cuando: "Una llegada, una huida, cualquier historia de época.",
+    pega: "acaba sonando: si va seguido de otro sonido, se pisan" },
+  { id: "startled-flock", titulo: "Bandada que echa a volar", segundos: 3, familia: "criaturas", bucle: false,
+    cuando: "Algo asustó a los pájaros: se sabe que hay alguien antes de verlo." },
+
+  // ── objetos, puertas y pasos ───────────────────────────────────────────
+  { id: "wooden-door-opening", titulo: "Puerta de madera que se abre", segundos: 4, familia: "objetos", bucle: false,
+    cuando: "Entrar en algún sitio. El chirrido hace media tensión solo." },
+  { id: "door-slam", titulo: "Portazo", segundos: 2, familia: "objetos", bucle: false,
+    cuando: "Alguien se va enfadado, algo se cierra de golpe, un susto." },
+  { id: "key-lock", titulo: "Cerradura y llave", segundos: 3, familia: "objetos", bucle: false,
+    cuando: "Encerrar o liberar a alguien, un secreto que se abre." },
+  { id: "old-chest-opening", titulo: "Cofre viejo que se abre", segundos: 4, familia: "objetos", bucle: false,
+    cuando: "Un tesoro, un hallazgo, algo que llevaba mucho cerrado." },
+  { id: "sword-unsheath", titulo: "Espada que se desenvaina", segundos: 2, familia: "objetos", bucle: false,
+    cuando: "El momento antes de una pelea. Decide el tono de la escena." },
+  { id: "coins-falling", titulo: "Monedas cayendo", segundos: 3, familia: "objetos", bucle: false,
+    cuando: "Un pago, un soborno, un tesoro que se derrama." },
+  { id: "footsteps-wood", titulo: "Pasos sobre madera", segundos: 20, familia: "objetos", bucle: true,
+    cuando: "Alguien que camina por una casa o un pasillo mientras se narra." },
+  { id: "footsteps-gravel", titulo: "Pasos sobre grava", segundos: 20, familia: "objetos", bucle: true,
+    cuando: "Un camino, un patio, alguien acercándose por fuera." },
+
+  // ── ambientes de lugar ─────────────────────────────────────────────────
+  { id: "tavern-crowd", titulo: "Taberna con gente", segundos: 30, familia: "ambiente", bucle: true,
+    cuando: "Una posada, un bar, un sitio lleno. Descanso entre aventuras." },
+  { id: "city-street", titulo: "Calle de ciudad", segundos: 20, familia: "ambiente", bucle: true,
+    cuando: "Exterior urbano, moderno o de época con tráfico." },
+  { id: "night-forest", titulo: "Bosque de noche", segundos: 30, familia: "ambiente", bucle: true,
+    cuando: "Acecho, camino nocturno, calma antes de que pase algo." },
+  { id: "cave-drips", titulo: "Cueva con goteo", segundos: 20, familia: "ambiente", bucle: true,
+    cuando: "Una cueva, un sótano, unas catacumbas. Suena a estar bajo tierra." },
+  { id: "distant-siren", titulo: "Sirena lejana", segundos: 20, familia: "ambiente", bucle: true,
+    cuando: "Una escena de crimen, una detención, una huida.", conEfecto: "baliza" },
+
+  // ── tensión y transiciones ─────────────────────────────────────────────
+  { id: "tension-riser", titulo: "La tensión que sube", segundos: 5, familia: "tension", bucle: false,
+    cuando: "Justo antes de una revelación o un corte. Lleva al espectador al filo." },
+  { id: "heartbeat", titulo: "Latido de corazón", segundos: 20, familia: "tension", bucle: true,
+    cuando: "Miedo, tensión contenida, alguien a punto de romperse.",
+    pega: "arranca flojo: el primer latido casi no se oye" },
+  { id: "wall-clock", titulo: "Reloj de pared", segundos: 20, familia: "tension", bucle: true,
+    cuando: "Se acaba el tiempo, una espera larga, una habitación en silencio.",
+    pega: "deja un cuarto de segundo de silencio al final del bucle" },
+  { id: "digital-glitch", titulo: "Falla digital", segundos: 2, familia: "tension", bucle: false,
+    cuando: "Una pantalla que falla, un recuerdo que se corrompe, algo digital roto.", conEfecto: "glitch",
+    pega: "acaba sonando: si va seguido de otro sonido, se pisan" },
 ];
 
 // Agrupados por familia, en el orden de FAMILIA_LABEL y sin las vacías.
@@ -253,6 +375,7 @@ export const buscarSonido = (ref: string) =>
 
 export function catalogoSonidosIA() {
   return SONIDOS.map((s) =>
-    `${refSonido(s)} · ${FAMILIA_LABEL[s.familia]} · ${s.segundos}s · ${s.cuando}` +
+    `${refSonido(s)} · ${FAMILIA_LABEL[s.familia]} · ${s.segundos}s · ` +
+    `${s.bucle ? "BUCLE (ambiente de escena, loop:true)" : "golpe (loop:false)"} · ${s.cuando}` +
     `${s.conEfecto ? ` (efecto: ${s.conEfecto})` : ""}`);
 }

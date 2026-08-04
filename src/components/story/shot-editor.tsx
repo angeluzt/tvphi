@@ -512,7 +512,12 @@ export function ShotEditor({
             onCerrar={() => setVerSonidos(false)}
             onElegir={(s) => {
               // Referencia, no archivo: lo sirve la app (ver getAsset).
-              onChange({ ...shot, sfx: [...shot.sfx, newSfx(refSonido(s), s.titulo, s.segundos)] });
+              const nuevo = newSfx(refSonido(s), s.titulo, s.segundos);
+              // Un ambiente entra ya en bucle y más bajo: suena todo el rato
+              // debajo de la voz, así que al 80% la taparía. Un golpe puntual
+              // se queda como está, que para eso es un golpe.
+              if (s.bucle) { nuevo.loop = true; nuevo.volume = 0.35; }
+              onChange({ ...shot, sfx: [...shot.sfx, nuevo] });
               setVerSonidos(false);
             }}
           />
