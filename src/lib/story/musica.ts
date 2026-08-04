@@ -1,9 +1,14 @@
 // Biblioteca de música de la app.
 //
-// Las pistas viven en public/musica y se referencian con "lib:<id>". Eso las
+// Las pistas viven en assets/musica —FUERA de public/— y se sirven por
+// /api/story/audio, que exige sesión. Se referencian con "lib:<id>", lo que las
 // distingue de las que sube el usuario, que viven en el navegador (IndexedDB):
 // una pista de biblioteca NUNCA falta al abrir un proyecto en otro equipo,
 // porque viaja dentro de la aplicación.
+//
+// Están fuera de public a propósito. Con 80 nombres predecibles y URLs
+// públicas, la app parecía un repositorio de samples descargables, y la
+// licencia del audio permite usarlo dentro de un proyecto, no repartirlo.
 //
 // De dónde sale cada dato, para que se sepa de cuál fiarse:
 //
@@ -140,10 +145,6 @@ export const PISTAS: Pista[] = [
   // Estas tres, más «pacing-the-parlor» y «did-i-interrupt» de arriba, son las
   // cinco que NO salen en el documento de las 50: no hay «uso ideal» de
   // referencia, así que su descripción viene del título.
-  { id: "a-la-torre", titulo: "La torre", segundos: 29.6, ambiente: "fantasia",
-    cuando: "Una torre, un lugar alto y solitario. Misterio con peso.", final: "fade" },
-  { id: "b-el-duelo", titulo: "El duelo", segundos: 30.8, ambiente: "epico",
-    cuando: "Un enfrentamiento cara a cara. Tensión antes del golpe.", final: "media" },
   { id: "acero-y-valor", titulo: "Acero y valor", segundos: 30.8, ambiente: "epico",
     cuando: "Combate, coraje, avanzar espada en mano.", final: "enlaza" },
   { id: "the-heros-first-step", titulo: "The Hero's First Step", segundos: 30.8, ambiente: "epico",
@@ -165,7 +166,7 @@ export const PREFIJO = "lib:";
 export const esDeBiblioteca = (id: string) => id.startsWith(PREFIJO);
 export const idPista = (id: string) => id.slice(PREFIJO.length);
 export const refPista = (p: Pista) => `${PREFIJO}${p.id}`;
-export const urlPista = (id: string) => `/musica/${idPista(id)}.mp3`;
+export const urlPista = (id: string) => `/api/story/audio/musica/${idPista(id)}`;
 export const buscarPista = (ref: string) => PISTAS.find((p) => p.id === idPista(ref)) ?? null;
 
 // Agrupadas por ambiente, para enseñarlas ordenadas.
@@ -275,22 +276,14 @@ export const SONIDOS: Sonido[] = [
   { id: "ocean-waves", titulo: "Olas del mar", segundos: 30, familia: "clima", bucle: true,
     cuando: "Una playa, un acantilado, un barco. Calma o inmensidad.",
     pega: "se apaga hacia el final: al repetirse se nota el salto" },
-  { id: "close-thunder", titulo: "Trueno cerca", segundos: 3, familia: "clima", bucle: false,
-    cuando: "Un trueno que revienta encima. Va con el fogonazo.", conEfecto: "rayo" },
   { id: "water-splash", titulo: "Chapoteo en agua", segundos: 2, familia: "clima", bucle: false,
     cuando: "Algo cae al agua, un pie en un charco, alguien que se sumerge.", conEfecto: "salpicadura" },
-  { id: "ice-rapidly-freezing", titulo: "Hielo formándose", segundos: 3, familia: "clima", bucle: false,
-    cuando: "Algo se congela de golpe, cristales creciendo.", conEfecto: "escarcha" },
 
   // ── magia y energía ────────────────────────────────────────────────────
-  { id: "dark-portal-opening", titulo: "Portal que se abre", segundos: 5, familia: "magia", bucle: false,
-    cuando: "Algo se abre y suena hondo. Al aparecer el portal.", conEfecto: "portal" },
   { id: "spell-cast", titulo: "Hechizo que se lanza", segundos: 2, familia: "magia", bucle: false,
     cuando: "El instante en que alguien lanza algo. Va con el fogonazo.", conEfecto: "destello" },
   { id: "arcane-charge", titulo: "Círculo mágico cargándose", segundos: 5, familia: "magia", bucle: false,
     cuando: "El conjuro que se prepara, antes de soltarse. Debajo del personaje.", conEfecto: "magiccircle" },
-  { id: "arcane-magic-explosion", titulo: "Explosión arcana", segundos: 2, familia: "magia", bucle: false,
-    cuando: "Un hechizo que estalla. El remate del círculo mágico.", conEfecto: "magiccircle" },
   { id: "electric-arc", titulo: "Chispazo eléctrico", segundos: 2, familia: "magia", bucle: false,
     cuando: "Un cable pelado, una máquina rota, magia eléctrica.", conEfecto: "electricidad" },
   { id: "magic-sparkle", titulo: "Brillo mágico", segundos: 3, familia: "magia", bucle: false,
@@ -301,8 +294,6 @@ export const SONIDOS: Sonido[] = [
   // ── criaturas y animales ───────────────────────────────────────────────
   { id: "monster-roar", titulo: "Rugido de monstruo", segundos: 4, familia: "criaturas", bucle: false,
     cuando: "Una criatura enorme que aparece o ataca. El momento de más miedo." },
-  { id: "massive-stone-creature", titulo: "Criatura de piedra", segundos: 3, familia: "criaturas", bucle: false,
-    cuando: "Algo enorme de roca que se mueve o despierta.", conEfecto: "shockwave" },
   { id: "wolf-howl", titulo: "Aullido de lobo", segundos: 4, familia: "criaturas", bucle: false,
     cuando: "Noche, bosque, amenaza que no se ve. Cambia el ánimo de golpe." },
   { id: "crow-call", titulo: "Cuervo graznando", segundos: 2, familia: "criaturas", bucle: false,
@@ -369,7 +360,7 @@ export function porFamilia(): { familia: FamiliaSonido; label: string; sonidos: 
 export const PREFIJO_SON = "son:";
 export const esDeBibliotecaSonido = (id: string) => id.startsWith(PREFIJO_SON);
 export const refSonido = (s: Sonido) => `${PREFIJO_SON}${s.id}`;
-export const urlSonido = (id: string) => `/sonidos/${id.slice(PREFIJO_SON.length)}.mp3`;
+export const urlSonido = (id: string) => `/api/story/audio/sonidos/${id.slice(PREFIJO_SON.length)}`;
 export const buscarSonido = (ref: string) =>
   SONIDOS.find((s) => s.id === ref.slice(PREFIJO_SON.length)) ?? null;
 
