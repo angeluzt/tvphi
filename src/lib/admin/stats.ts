@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { esAdminHistorias } from "@/lib/story/cupo";
+import { esAdminHistorias, leerLimiteIa } from "@/lib/story/cupo";
 
 const DIA = 24 * 60 * 60 * 1000;
 const CLAVE_USOS = "usosIaCapitulo";
@@ -19,6 +19,10 @@ function usosIaEnVentana(models: unknown, desdeMs: number): number {
 
 export type AdminStats = {
   generadoEn: string;
+  cupoIa: {
+    limite24h: number;
+    origen: "admin" | "env";
+  };
   cuentas: {
     total: number;
     ultimos7d: number;
@@ -41,22 +45,6 @@ export type AdminStats = {
     generaciones24h: number;
     usuariosConCredencial: number;
   };
-  topCuentas: {
-    id: string;
-    email: string;
-    displayName: string;
-    username: string;
-    historias: number;
-    series: number;
-    creada: string;
-  }[];
-  altasRecientes: {
-    id: string;
-    email: string;
-    displayName: string;
-    username: string;
-    creada: string;
-  }[];
 };
 
 /** Agrega números globales de uso. Solo para admins (el caller debe comprobar). */
@@ -67,6 +55,7 @@ export async function cargarAdminStats(): Promise<AdminStats> {
   const d1 = ahora - DIA;
 
   const [
+    limite24h,
     cuentasTotal,
     cuentas7,
     cuentas30,
@@ -80,10 +69,10 @@ export async function cargarAdminStats(): Promise<AdminStats> {
     personajesTotal,
     conHistoria,
     credenciales,
-    topRaw,
-    altasRaw,
     todosEmails,
+    settingLimite,
   ] = await Promise.all([
+    leerLimiteIa(),
     prisma.user.count(),
     prisma.user.count({ where: { createdAt: { gte: d7 } } }),
     prisma.user.count({ where: { createdAt: { gte: d30 } } }),
@@ -97,30 +86,8 @@ export async function cargarAdminStats(): Promise<AdminStats> {
     prisma.storyCharacter.count(),
     prisma.user.count({ where: { storyProjects: { some: {} } } }),
     prisma.aiCredential.findMany({ select: { models: true } }),
-    prisma.user.findMany({
-      take: 10,
-      orderBy: { storyProjects: { _count: "desc" } },
-      select: {
-        id: true,
-        email: true,
-        displayName: true,
-        username: true,
-        createdAt: true,
-        _count: { select: { storyProjects: true, storySeries: true } },
-      },
-    }),
-    prisma.user.findMany({
-      take: 12,
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        email: true,
-        displayName: true,
-        username: true,
-        createdAt: true,
-      },
-    }),
     prisma.user.findMany({ select: { email: true } }),
+    prisma.appSetting.findUnique({ where: { key: "story_daily_limit" } }).catch(() => null),
   ]);
 
   const generaciones24h = credenciales.reduce(
@@ -131,6 +98,10 @@ export async function cargarAdminStats(): Promise<AdminStats> {
 
   return {
     generadoEn: new Date().toISOString(),
+    cupoIa: {
+      limite24h,
+      origen: settingLimite ? "admin" : "env",
+    },
     cuentas: {
       total: cuentasTotal,
       ultimos7d: cuentas7,
@@ -153,21 +124,5 @@ export async function cargarAdminStats(): Promise<AdminStats> {
       generaciones24h,
       usuariosConCredencial: credenciales.length,
     },
-    topCuentas: topRaw.map((u) => ({
-      id: u.id,
-      email: u.email,
-      displayName: u.displayName,
-      username: u.username,
-      historias: u._count.storyProjects,
-      series: u._count.storySeries,
-      creada: u.createdAt.toISOString(),
-    })),
-    altasRecientes: altasRaw.map((u) => ({
-      id: u.id,
-      email: u.email,
-      displayName: u.displayName,
-      username: u.username,
-      creada: u.createdAt.toISOString(),
-    })),
   };
 }

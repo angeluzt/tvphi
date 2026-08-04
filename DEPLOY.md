@@ -64,7 +64,8 @@ STORY_QUOTA_EXEMPT_EMAILS=tu@email.com
 ```
 
 `STORY_QUOTA_EXEMPT_EMAILS` (correos separados por coma): sin cupo IA, pueden elegir modelos
-y ven **Uso** en la cabecera → `/admin` (cuentas, historias, IA).
+y ven **Uso** en la cabecera → `/admin` (estadísticas + cupo IA editable).
+`STORY_DAILY_LIMIT` es el valor inicial del cupo; en `/admin` se puede cambiar sin redeploy.
 
 Tras guardarlas, Railway redepliega. Cuando el deploy quede en verde, abre la URL temporal
 de Railway (algo como `https://tvphi-production.up.railway.app`) y comprueba `…/api/health`
