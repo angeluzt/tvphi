@@ -16,7 +16,10 @@ import { revisar } from "@/lib/lab/escena";
 // En pruebas y solo para admin, como el resto del laboratorio.
 
 const cuerpo = z.object({
-  idea: z.string().min(4).max(1200),
+  // 4000, igual que el resto de rutas de IA que ya funcionaban. Con 1200 una
+  // descripción normal de escena —fondo, plano medio, escenario, objetos— se
+  // pasaba de largo y salía «Datos inválidos» sin decir por qué.
+  idea: z.string().min(4).max(4000),
   formato: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
   capas: z.number().int().min(3).max(6).default(4),
   modelo: z.string().max(80).optional(),
@@ -81,7 +84,14 @@ export async function POST(req: Request) {
   if (sinCupo) return NextResponse.json({ error: sinCupo, sinCupo: true }, { status: 429 });
 
   const parsed = cuerpo.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  if (!parsed.success) {
+    // QUÉ está mal, no solo que algo lo está. «Datos inválidos» a secas obliga
+    // a adivinar, y aquí lo que suele fallar es un texto demasiado largo.
+    const detalle = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "cuerpo"}: ${i.message}`)
+      .join(" · ");
+    return NextResponse.json({ error: `Datos inválidos — ${detalle}` }, { status: 400 });
+  }
 
   const key = claveOpenAi();
   if (!key) return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
@@ -105,6 +115,8 @@ export async function POST(req: Request) {
         ],
       }),
     });
+    // Se lee como texto primero: con un proxy por medio la respuesta puede no
+    // ser JSON, y entonces reventaría aquí con un error ilegible.
     const txt = await r.text();
     let j: any = null;
     try { j = JSON.parse(txt); } catch {}
@@ -113,6 +125,11 @@ export async function POST(req: Request) {
       const delModelo = /deprecat|does not exist|no longer|not found|unsupported|model/i.test(crudo);
       if (delModelo) await anotarFallo(user.id, modelo);
       return NextResponse.json({ error: crudo, modeloMal: delModelo, modelo }, { status: 502 });
+    }
+    if (!j) {
+      return NextResponse.json(
+        { error: "OpenAI respondió algo que no es JSON. ¿Hay un proxy o cortafuegos por medio?" },
+        { status: 502 });
     }
 
     const bruto = j?.choices?.[0]?.message?.content;

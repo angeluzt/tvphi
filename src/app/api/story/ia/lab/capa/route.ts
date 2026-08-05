@@ -23,12 +23,14 @@ import { CROMA } from "@/lib/lab/quitar-fondo";
 const cuerpo = z.object({
   /** El PNG del mapa de ESTA capa, en base64. */
   mapa: z.string().min(100).max(6_000_000),
+  // Estos textos los escribe la IA en el mapa, así que no se puede apretar el
+  // límite a ojo: se le da el mismo aire que a las rutas que ya funcionaban.
   /** Qué dibujar y qué no, de la propia capa. */
-  prompt: z.string().min(3).max(2000),
-  excluir: z.string().max(1000).optional(),
+  prompt: z.string().min(3).max(4000),
+  excluir: z.string().max(2000).optional(),
   /** Estilo común a todas las capas: es lo que las hace parecer la misma escena. */
-  estilo: z.string().max(600).optional(),
-  escena: z.string().max(1000).optional(),
+  estilo: z.string().max(2000).optional(),
+  escena: z.string().max(4000).optional(),
   esFondo: z.boolean().default(false),
   formato: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
   modelo: z.string().max(80).optional(),
@@ -90,7 +92,12 @@ export async function POST(req: Request) {
   if (sinCupo) return NextResponse.json({ error: sinCupo, sinCupo: true }, { status: 429 });
 
   const parsed = cuerpo.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  if (!parsed.success) {
+    const detalle = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "cuerpo"}: ${i.message}`)
+      .join(" · ");
+    return NextResponse.json({ error: `Datos inválidos — ${detalle}` }, { status: 400 });
+  }
 
   const key = claveOpenAi();
   if (!key) return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
@@ -110,25 +117,43 @@ export async function POST(req: Request) {
     }, { status: 400 });
   }
 
-  const form = new FormData();
-  form.set("model", modelo);
-  form.set("prompt", instruccion(parsed.data));
-  form.set("size", TAMANOS[parsed.data.formato]);
-  form.set("n", "1");
-  form.set("quality", "medium");
-  form.set("output_format", "png");
-  form.set("background", parsed.data.esFondo ? "opaque" : "transparent");
-  form.append("image[]", new Blob([new Uint8Array(mapa)], { type: "image/png" }), "mapa.png");
+  // El formulario se arma cada vez: un FormData ya enviado no se puede reusar.
+  const armar = (conFondo: boolean) => {
+    const form = new FormData();
+    form.set("model", modelo);
+    form.set("prompt", instruccion(parsed.data));
+    form.set("size", TAMANOS[parsed.data.formato]);
+    form.set("n", "1");
+    form.set("quality", "medium");
+    form.set("output_format", "png");
+    if (conFondo) form.set("background", parsed.data.esFondo ? "opaque" : "transparent");
+    form.append("image[]", new Blob([new Uint8Array(mapa)], { type: "image/png" }), "mapa.png");
+    return form;
+  };
+  const pedir = (conFondo: boolean) => fetch(OPENAI("/v1/images/edits"), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+    body: armar(conFondo),
+  });
 
   try {
-    const r = await fetch(OPENAI("/v1/images/edits"), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}` },
-      body: form,
-    });
+    let r = await pedir(true);
+    // Si el modelo no admite «background» al editar, se reintenta SIN él en vez
+    // de tirar la capa. El prompt ya le ha pedido que, si no puede dar
+    // transparencia, rellene con magenta plano, y el cliente se lo quita. Vale
+    // más una capa recortada a mano que ninguna capa.
+    if (!r.ok) {
+      const aviso = await r.clone().text();
+      if (/background/i.test(aviso)) r = await pedir(false);
+    }
     const txt = await r.text();
     let j: any = null;
     try { j = JSON.parse(txt); } catch {}
+    if (r.ok && !j) {
+      return NextResponse.json(
+        { error: "OpenAI respondió algo que no es JSON. ¿Hay un proxy o cortafuegos por medio?" },
+        { status: 502 });
+    }
     if (!r.ok) {
       const crudo = j?.error?.message || `OpenAI respondió ${r.status}`;
       const delModelo = /deprecat|does not exist|no longer|not found|must be verified/i.test(crudo)
