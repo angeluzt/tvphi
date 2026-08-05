@@ -24,6 +24,7 @@ import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story
 import { ShotEditor } from "./shot-editor";
 import { VfxEditor } from "./vfx-editor";
 import { VfxCanvas, VfxTools } from "./vfx-canvas";
+import { MarcaEfecto } from "./marca-efecto";
 import { MoverEfectos, desplazar } from "./mover-efectos";
 import type { PestanaToma } from "./pestanas-toma";
 import { MandoTramo } from "./mando-tramo";
@@ -496,6 +497,33 @@ export function StoryApp({
     const v = overlayWindow(o, sh.overlays, f.dur);
     engineRef.current?.seek(f.start + (v.start + v.end) / 2);
   }
+  // Llevar el reproductor a un momento en el que ESE efecto se vea.
+  //
+  // Un efecto puede durar solo un tramo de la toma. Si el cabezal está fuera,
+  // en la imagen no hay nada que mirar: se elige, se mueve con las flechas y
+  // parece que no pasa nada, porque lo que se mueve está apagado. Solo se salta
+  // si de verdad hace falta: si ya se está viendo, no se toca el cabezal, que
+  // moverlo sin motivo es lo que hacía perder el sitio.
+  function irAlEfecto(vfxId: string) {
+    const eng = engineRef.current;
+    if (!eng) return;
+    let duenyo: { f: (typeof flat)[number]; capa: VfxLayer } | null = null;
+    for (const f of flat) {
+      const capa = (f.shot.vfx ?? []).find((v) => v.id === vfxId)
+        ?? (f.scene.vfx ?? []).find((v) => v.id === vfxId);
+      if (capa) { duenyo = { f, capa }; break; }
+    }
+    if (!duenyo) return;
+    const { f, capa } = duenyo;
+    // Su ventana dentro de la toma, en segundos del vídeo entero.
+    const desde = capa.timing === "range" ? f.start + Math.max(0, capa.startSec) : f.start;
+    const hasta = capa.timing === "range"
+      ? f.start + Math.min(f.dur, Math.max(capa.startSec + 0.1, capa.endSec))
+      : f.start + f.dur;
+    if (playhead >= desde && playhead <= hasta) return; // ya se está viendo
+    eng.seek((desde + hasta) / 2);
+  }
+
   function toggleLoop() {
     const v = !loopSection;
     setLoopSection(v);
@@ -814,6 +842,15 @@ export function StoryApp({
     curFlat?.scene.vfx?.find((v) => v.id === selVfx)
     ?? curFlat?.shot.vfx?.find((v) => v.id === selVfx)
     ?? null;
+
+  // La capa marcada, buscada por id en TODO el proyecto: el mando de la ventana
+  // puede estar moviendo un efecto de una toma que no es la abierta en la lista,
+  // y entonces curVfx —que solo mira esa— se queda en nulo y no se marcaría nada
+  // encima de la imagen.
+  const marcado: VfxLayer | null = selVfx
+    ? (project.scenes.flatMap((sc) => [...(sc.vfx ?? []), ...sc.shots.flatMap((s) => s.vfx ?? [])])
+        .find((v) => v.id === selVfx) ?? null)
+    : null;
 
   // Los efectos que se ven en el tramo abierto en la ventana de reproducción.
   // Se sacan de la escena/toma que esa ventana está enseñando, no de la toma
@@ -1892,6 +1929,16 @@ export function StoryApp({
                 Sube imágenes para empezar tu historia.
               </div>
             )}
+            {/* Con «Colocando» ya salen las guías: dos marcas serían ruido. */}
+            {/* La marca va sobre «marcado», que se busca por id en todo el
+                proyecto. Las guías de «Colocar sitios» solo saben pintar la capa
+                de la toma abierta en la lista, y la ventana puede estar
+                enseñando otra: con un efecto DE LA TOMA no se pintaba nada y no
+                había forma de saber cuál se estaba moviendo. Si esas guías ya
+                están dibujando esta misma capa, aquí va solo el nombre. */}
+            {marcado && (
+              <MarcaEfecto layer={marcado} soloEtiqueta={colocando && curVfx?.id === marcado.id} />
+            )}
             {/* Antes había aquí un cartel de «se está viendo arriba»: ya no hace
                 falta, porque con un tramo abierto este cuadro no se dibuja y en
                 su sitio va una línea que lo dice y devuelve al vídeo entero. */}
@@ -1917,7 +1964,7 @@ export function StoryApp({
                 ...((curFlat.shot.vfx ?? []).map((capa) => ({ capa, deEscena: false }))),
               ]}
               onMover={moverVfx}
-              onResaltar={setSelVfx}
+              onResaltar={(id) => { setSelVfx(id); if (id) irAlEfecto(id); }}
             />
           )}
 
@@ -3011,6 +3058,15 @@ export function StoryApp({
                 onSettled={() => engineRef.current?.resetVfx()}
               />
             )}
+            {/* La marca va sobre «marcado», que se busca por id en todo el
+                proyecto. Las guías de «Colocar sitios» solo saben pintar la capa
+                de la toma abierta en la lista, y la ventana puede estar
+                enseñando otra: con un efecto DE LA TOMA no se pintaba nada y no
+                había forma de saber cuál se estaba moviendo. Si esas guías ya
+                están dibujando esta misma capa, aquí va solo el nombre. */}
+            {marcado && (
+              <MarcaEfecto layer={marcado} soloEtiqueta={colocando && curVfx?.id === marcado.id} />
+            )}
           </div>
           <div className="mt-2 flex items-center gap-2 px-1">
             <button onClick={togglePlay} className="btn-brand py-1">
@@ -3067,7 +3123,7 @@ export function StoryApp({
             <MoverEfectos
               capas={capasDelTramo}
               onMover={moverVfx}
-              onResaltar={setSelVfx}
+              onResaltar={(id) => { setSelVfx(id); if (id) irAlEfecto(id); }}
               compacto
               etiqueta="Mover efectos de este tramo"
               onAbierto={setMandoAbierto}

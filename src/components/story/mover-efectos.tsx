@@ -84,6 +84,13 @@ export function MoverEfectos({
     onResaltar?.(usables[i].capa.id);
   };
 
+  // Al abrirlo, avisar de cuál queda cogido. Sin esto el panel decía «Moviendo
+  // Fuego» pero encima de la imagen no se marcaba nada hasta tocar una ficha:
+  // justo la duda de «¿cuál estoy moviendo?».
+  useEffect(() => {
+    if (abierto && ids.length === 1) onResaltar?.(ids[0]);
+  }, [abierto]);
+
   // Las flechas del teclado, mientras el mando está abierto.
   useEffect(() => {
     if (!abierto) return;
@@ -120,6 +127,10 @@ export function MoverEfectos({
   }, [abierto, ids.join(","), c.x, c.y, usables.length, indice]);
 
   const nombre = (v: VfxLayer) => vfxSpec(v.kind)?.label ?? v.kind;
+  // Cuándo se ve, que es la otra mitad de «cuál estoy moviendo»: un efecto que
+  // solo dura de 2 a 4 segundos no está en pantalla el resto de la toma.
+  const cuando = (v: VfxLayer) =>
+    v.timing === "range" ? `de ${v.startSec.toFixed(1)}s a ${v.endSec.toFixed(1)}s` : "toda la toma";
 
   if (!capas.length) return null;
 
@@ -194,6 +205,7 @@ export function MoverEfectos({
                 <p className="min-w-0 flex-1 truncate text-[10px] text-muted">
                   {activas.length === 1
                     ? <>Moviendo <span className="text-fg">{nombre(activas[0].capa)}</span>
+                        {" · "}{cuando(activas[0].capa)}
                         {activas[0].deEscena && " · de la escena, cambia en todas sus tomas"}</>
                     : <>Moviendo <span className="text-fg">{activas.length} efectos</span> juntos, sin cambiar la distancia entre ellos</>}
                 </p>
