@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Upload, Play, Pause, Crosshair, Download, Trash2, ChevronUp, ChevronDown, Eye, EyeOff,
-  Package, FolderOpen, Loader2,
+  Package, FolderOpen, Loader2, ListPlus, ListOrdered,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
-import { ANIM_OPCIONES, camaraAnim, type AnimParalaje } from "@/lib/lab/anim-paralaje";
+import {
+  ANIM_OPCIONES, vistaAnim, type AnimParalaje, type PasoSecuencia, type VistaCamara,
+} from "@/lib/lab/anim-paralaje";
 
 // Paso 2: apilar las capas ya generadas y moverlas con profundidad.
 //
@@ -23,10 +25,8 @@ interface CapaImg {
   img: HTMLImageElement;
   depth: number;
   visible: boolean;
-  /** Cuánto se agranda, para que al desplazarse no asome el borde. */
   escala: number;
   opacidad: number;
-  /** Cómo se consiguió el fondo transparente, si vino de la IA. */
   via?: "transparente" | "croma" | "opaca";
   vacio?: number;
 }
@@ -39,12 +39,18 @@ export interface Semilla {
 }
 
 let contador = 0;
+let pasoSeq = 0;
 
 export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const [capas, setCapas] = useState<CapaImg[]>([]);
   const [moviendo, setMoviendo] = useState(true);
   const [fuerza, setFuerza] = useState(55);
   const [anim, setAnim] = useState<AnimParalaje>("suave");
+  const [durPaso, setDurPaso] = useState(4);
+  const [cola, setCola] = useState<PasoSecuencia[]>([]);
+  const [enSecuencia, setEnSecuencia] = useState(false);
+  const [pasoActivo, setPasoActivo] = useState(0);
+  const [repetirCola, setRepetirCola] = useState(false);
   const [aviso, setAviso] = useState("Carga primero el fondo y luego las capas PNG con transparencia.");
   const [busyZip, setBusyZip] = useState<"bajar" | "subir" | null>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -55,9 +61,19 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const animRef = useRef(anim);
   const fuerzaRef = useRef(fuerza);
   const moviendoRef = useRef(moviendo);
+  const colaRef = useRef(cola);
+  const enSecuenciaRef = useRef(enSecuencia);
+  const pasoActivoRef = useRef(pasoActivo);
+  const repetirRef = useRef(repetirCola);
+  const pasoMsRef = useRef(0); // ms acumulados del paso actual
+  const ultimoFrameRef = useRef<number | null>(null);
   animRef.current = anim;
   fuerzaRef.current = fuerza;
   moviendoRef.current = moviendo;
+  colaRef.current = cola;
+  enSecuenciaRef.current = enSecuencia;
+  pasoActivoRef.current = pasoActivo;
+  repetirRef.current = repetirCola;
 
   async function meter(archivos: FileList | null) {
     if (!archivos?.length) return;
@@ -66,7 +82,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       const url = URL.createObjectURL(f);
       try {
         const img = await cargar(url);
-        nuevas.push(hacerCapa(f.name.replace(/\.[a-z0-9]+$/i, ""), img, capas.length + nuevas.length));
+        nuevas.push(hacerCapa(f.name.replace(/\.[a-z0-9]+$/i, ""), img));
       } catch { setAviso(`No se pudo leer «${f.name}».`); }
     }
     if (!nuevas.length) return;
@@ -86,13 +102,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         width: tam.current.w,
         height: tam.current.h,
         capas: capas.map((c) => ({
-          nombre: c.nombre,
-          depth: c.depth,
-          escala: c.escala,
-          opacidad: c.opacidad,
-          via: c.via,
-          vacio: c.vacio,
-          img: c.img,
+          nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
+          via: c.via, vacio: c.vacio, img: c.img,
         })),
       });
       setAviso(`ZIP con ${capas.length} capas y montaje.json listo.`);
@@ -112,16 +123,11 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       for (const c of pack.capas) {
         const img = await cargar(c.url);
         nuevas.push({
-          ...hacerCapa(c.nombre, img, nuevas.length),
-          depth: c.depth,
-          escala: c.escala,
-          opacidad: c.opacidad,
-          via: c.via,
-          vacio: c.vacio,
+          ...hacerCapa(c.nombre, img),
+          depth: c.depth, escala: c.escala, opacidad: c.opacidad, via: c.via, vacio: c.vacio,
         });
       }
       if (!nuevas.length) throw new Error("El ZIP no trae capas.");
-      // Tamaño del pack; si faltaba, el de la primera imagen.
       tam.current = {
         w: pack.width || nuevas[0].img.naturalWidth,
         h: pack.height || nuevas[0].img.naturalHeight,
@@ -138,8 +144,6 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     }
   }
 
-  // Cargar las capas del mapa directamente, sin pasar por el disco: sirve para
-  // ver cómo se moverá la escena antes de gastar nada en generar imágenes.
   useEffect(() => {
     if (!semilla?.length) return;
     let vivo = true;
@@ -147,7 +151,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       const nuevas: CapaImg[] = [];
       for (const s of semilla) {
         try {
-          nuevas.push({ ...hacerCapa(s.nombre, await cargar(s.url), nuevas.length), via: s.via, vacio: s.vacio });
+          nuevas.push({ ...hacerCapa(s.nombre, await cargar(s.url)), via: s.via, vacio: s.vacio });
         } catch {}
       }
       if (!vivo || !nuevas.length) return;
@@ -160,17 +164,19 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
 
   useEffect(() => {
     let vivo = true;
-    const t0 = performance.now();
-    const paso = (t: number) => {
+    const paso = (ahora: number) => {
       if (!vivo) return;
-      pintar(t - t0);
+      const prev = ultimoFrameRef.current;
+      ultimoFrameRef.current = ahora;
+      const dt = prev == null ? 0 : Math.min(64, ahora - prev);
+      pintar(dt);
       requestAnimationFrame(paso);
     };
     const id = requestAnimationFrame(paso);
-    return () => { vivo = false; cancelAnimationFrame(id); };
+    return () => { vivo = false; cancelAnimationFrame(id); ultimoFrameRef.current = null; };
   });
 
-  function pintar(ms: number) {
+  function pintar(dt: number) {
     const cv = canvas.current;
     if (!cv) return;
     const ancho = Math.max(320, Math.min(1200, caja.current?.clientWidth ?? 900));
@@ -185,27 +191,58 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     c.fillRect(0, 0, w, h);
 
     const k = (fuerzaRef.current / 100) * 0.08;
-    let ox = 0, oy = 0, zoom = 1;
-    if (moviendoRef.current) {
+    let vista: VistaCamara = {
+      ox: 0, oy: 0, zoom: 1,
+      zoomCapa: () => 1, alphaCapa: () => 1, t: 0, fin: false,
+    };
+
+    if (enSecuenciaRef.current && colaRef.current.length) {
+      pasoMsRef.current += dt;
+      const paso = colaRef.current[pasoActivoRef.current];
+      if (paso) {
+        vista = vistaAnim(paso.kind, pasoMsRef.current, k, { durMs: paso.durMs, modo: "tramo" });
+        if (vista.fin) {
+          const next = pasoActivoRef.current + 1;
+          if (next < colaRef.current.length) {
+            pasoActivoRef.current = next;
+            setPasoActivo(next);
+            pasoMsRef.current = 0;
+          } else if (repetirRef.current) {
+            pasoActivoRef.current = 0;
+            setPasoActivo(0);
+            pasoMsRef.current = 0;
+          } else {
+            enSecuenciaRef.current = false;
+            setEnSecuencia(false);
+            pasoMsRef.current = 0;
+            setAviso("Secuencia terminada.");
+          }
+        }
+      }
+    } else if (moviendoRef.current) {
       if (encima.current) {
-        ox = raton.current.x * k;
-        oy = raton.current.y * k * 0.5;
-        zoom = 1;
+        vista = {
+          ox: raton.current.x * k,
+          oy: raton.current.y * k * 0.5,
+          zoom: 1, zoomCapa: () => 1, alphaCapa: () => 1, t: 0, fin: false,
+        };
       } else {
-        ({ ox, oy, zoom } = camaraAnim(animRef.current, ms, k));
+        // Idle: ciclo continuo del preset elegido.
+        pasoMsRef.current += dt;
+        vista = vistaAnim(animRef.current, pasoMsRef.current, k, { durMs: 4500, modo: "ciclo" });
       }
     }
 
     for (const capa of capas) {
       if (!capa.visible) continue;
-      const e = capa.escala * zoom;
+      const e = capa.escala * vista.zoom * vista.zoomCapa(capa.depth);
       const dw = w * e, dh = h * e;
       c.save();
-      c.globalAlpha = capa.opacidad;
+      c.globalAlpha = capa.opacidad * vista.alphaCapa(capa.depth);
       c.drawImage(
         capa.img,
-        -(dw - w) / 2 + ox * capa.depth * w,
-        -(dh - h) / 2 + oy * capa.depth * h,
+        -(dw - w) / 2 + vista.ox * capa.depth * w,
+        -(dh - h) / 2 + vista.oy * capa.depth * h,
         dw, dh,
       );
       c.restore();
@@ -213,8 +250,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   }
 
   async function exportarPng() {
-    const cv = canvas.current;
-    if (!cv || !capas.length) return;
+    if (!capas.length) return;
     const out = document.createElement("canvas");
     out.width = tam.current.w; out.height = tam.current.h;
     const c = out.getContext("2d");
@@ -228,6 +264,34 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     }
     const b = await new Promise<Blob | null>((r) => out.toBlob(r, "image/png"));
     if (b) bajar(b, "montaje.png");
+  }
+
+  function anadirACola() {
+    const p: PasoSecuencia = {
+      id: `p${++pasoSeq}`,
+      kind: anim,
+      durMs: Math.round(Math.max(0.8, durPaso) * 1000),
+    };
+    setCola((c) => [...c, p]);
+    const label = ANIM_OPCIONES.find((o) => o.id === anim)?.label ?? anim;
+    setAviso(`Añadido a la cola: ${label} (${durPaso}s).`);
+  }
+
+  function iniciarSecuencia() {
+    if (!cola.length) return;
+    encima.current = false;
+    pasoMsRef.current = 0;
+    pasoActivoRef.current = 0;
+    setPasoActivo(0);
+    setEnSecuencia(true);
+    setMoviendo(true);
+    setAviso(`Reproduciendo secuencia (${cola.length} pasos)…`);
+  }
+
+  function pararSecuencia() {
+    setEnSecuencia(false);
+    pasoMsRef.current = 0;
+    setAviso("Secuencia en pausa.");
   }
 
   const upd = (id: string, p: Partial<CapaImg>) =>
@@ -253,9 +317,17 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
             onChange={(e) => { void meter(e.target.files); e.target.value = ""; }}
           />
         </label>
-        <button onClick={() => setMoviendo((v) => !v)} className="btn-ghost text-xs">
-          {moviendo ? <Pause className="h-3.5 w-3.5 text-accent" /> : <Play className="h-3.5 w-3.5 text-accent" />}
-          {moviendo ? "Parar el movimiento" : "Mover"}
+        <button
+          onClick={() => {
+            if (enSecuencia) pararSecuencia();
+            else setMoviendo((v) => !v);
+          }}
+          className="btn-ghost text-xs"
+        >
+          {moviendo || enSecuencia
+            ? <Pause className="h-3.5 w-3.5 text-accent" />
+            : <Play className="h-3.5 w-3.5 text-accent" />}
+          {enSecuencia ? "Parar secuencia" : moviendo ? "Parar el movimiento" : "Mover"}
         </button>
         <button onClick={() => { encima.current = false; raton.current = { x: 0, y: 0 }; }} className="btn-ghost text-xs">
           <Crosshair className="h-3.5 w-3.5 text-accent" /> Centrar
@@ -289,7 +361,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           {!capas.length && (
             <p className="text-[11px] text-muted">
               La primera imagen fija el tamaño y hace de fondo. Las siguientes tienen que ser PNG
-              con transparencia, o taparán a las de atrás. También puedes importar un ZIP de un montaje previo.
+              con transparencia. Prueba «Atravesar» con una puerta delante y una plaza detrás.
             </p>
           )}
           {capas.map((c, i) => (
@@ -319,12 +391,6 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                 onCambio={(v) => upd(c.id, { opacidad: v })} formato={(v) => `${Math.round(v * 100)}%`} />
             </div>
           ))}
-          {!!capas.length && (
-            <p className="text-[10px] text-muted">
-              El zoom agranda la capa por encima del cuadro para que al desplazarse no asome el borde.
-              Cuanta más profundidad, más zoom hace falta.
-            </p>
-          )}
         </div>
 
         <div className="card space-y-2 p-3">
@@ -333,9 +399,13 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
               Animación
               <select
                 value={anim}
-                onChange={(e) => setAnim(e.target.value as AnimParalaje)}
+                onChange={(e) => {
+                  setAnim(e.target.value as AnimParalaje);
+                  if (!enSecuencia) pasoMsRef.current = 0;
+                }}
                 className="input min-w-0 flex-1 py-1 text-[11px]"
                 aria-label="Tipo de movimiento de cámara"
+                disabled={enSecuencia}
               >
                 {ANIM_OPCIONES.map((o) => (
                   <option key={o.id} value={o.id}>{o.label}</option>
@@ -343,7 +413,72 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
               </select>
             </label>
           </div>
-          {pistaAnim && <p className="text-[10px] text-muted">{pistaAnim}. Con el ratón encima mandas tú.</p>}
+          {pistaAnim && !enSecuencia && (
+            <p className="text-[10px] text-muted">{pistaAnim}. Con el ratón encima mandas tú.</p>
+          )}
+
+          <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border/70 bg-surface-2/40 p-2">
+            <label className="text-[11px] text-muted">
+              Segundos
+              <input
+                type="number" min={0.8} max={30} step={0.5} value={durPaso}
+                onChange={(e) => setDurPaso(Number(e.target.value) || 4)}
+                className="input mt-0.5 w-20 py-1 text-[11px] tabular-nums"
+                disabled={enSecuencia}
+              />
+            </label>
+            <button type="button" onClick={anadirACola} disabled={enSecuencia} className="btn-ghost text-xs">
+              <ListPlus className="h-3.5 w-3.5 text-accent" /> Añadir a la cola
+            </button>
+            <button
+              type="button"
+              onClick={() => (enSecuencia ? pararSecuencia() : iniciarSecuencia())}
+              disabled={!cola.length}
+              className="btn-brand text-xs"
+            >
+              <ListOrdered className="h-3.5 w-3.5" />
+              {enSecuencia ? "Parar cola" : "Reproducir cola"}
+            </button>
+            <label className="flex items-center gap-1.5 text-[11px] text-muted">
+              <input type="checkbox" checked={repetirCola} onChange={(e) => setRepetirCola(e.target.checked)} />
+              Repetir
+            </label>
+            {!!cola.length && (
+              <button type="button" onClick={() => { setCola([]); pararSecuencia(); }} className="btn-ghost text-xs text-danger">
+                Vaciar cola
+              </button>
+            )}
+          </div>
+
+          {!!cola.length && (
+            <ol className="space-y-1 text-[11px]">
+              {cola.map((p, i) => {
+                const label = ANIM_OPCIONES.find((o) => o.id === p.kind)?.label ?? p.kind;
+                const on = enSecuencia && i === pasoActivo;
+                return (
+                  <li
+                    key={p.id}
+                    className={`flex items-center gap-2 rounded-md px-2 py-1 ${on ? "bg-brand/15 text-brand" : "bg-surface-2/50 text-muted"}`}
+                  >
+                    <span className="tabular-nums opacity-70">{i + 1}.</span>
+                    <span className="min-w-0 flex-1 truncate">{label}</span>
+                    <span className="tabular-nums">{(p.durMs / 1000).toFixed(1)}s</span>
+                    {!enSecuencia && (
+                      <button
+                        type="button"
+                        className="text-muted hover:text-danger"
+                        onClick={() => setCola((cs) => cs.filter((x) => x.id !== p.id))}
+                        aria-label="Quitar paso"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+
           <label className="flex items-center gap-2 text-[11px] text-muted">
             Fuerza
             <input type="range" min={0} max={100} value={fuerza} onChange={(e) => setFuerza(Number(e.target.value))} className="min-w-0 flex-1" />
@@ -353,6 +488,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
             ref={caja}
             className="overflow-hidden rounded-xl border border-border bg-black"
             onPointerMove={(e) => {
+              if (enSecuencia) return;
               const r = e.currentTarget.getBoundingClientRect();
               raton.current = {
                 x: ((e.clientX - r.left) / r.width - 0.5) * 2,
@@ -400,16 +536,13 @@ const cargar = (url: string) =>
     i.src = url;
   });
 
-function hacerCapa(nombre: string, img: HTMLImageElement, i: number): CapaImg {
+function hacerCapa(nombre: string, img: HTMLImageElement): CapaImg {
   return {
     id: `c${++contador}`, nombre, img,
     depth: 0, visible: true, escala: 1, opacidad: 1,
   };
 }
 
-// Profundidades repartidas de atrás hacia delante, con su zoom. Es un punto de
-// partida razonable: quien monta la escena ya sabe el orden en que la cargó, y
-// tener que poner cinco números a mano antes de ver nada desanima.
 function repartirProfundidad(cs: CapaImg[]): CapaImg[] {
   return cs.map((c, i) => {
     const d = cs.length === 1 ? 0 : (i / (cs.length - 1)) ** 1.4;
