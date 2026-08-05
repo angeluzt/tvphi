@@ -8,7 +8,10 @@ import {
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import {
-  ANIM_OPCIONES, vistaAnim, type AnimParalaje, type PasoSecuencia, type VistaCamara,
+  ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
+  origenPaso, destinoPaso, interpolarTramo,
+  type AnimParalaje, type MovCola, type PasoSecuencia, type VistaCamara, type EstadoCamara,
+  type DesdePaso, type FadeAccion, type FadeCapa,
 } from "@/lib/lab/anim-paralaje";
 
 // Paso 2: apilar las capas ya generadas y moverlas con profundidad.
@@ -46,7 +49,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const [moviendo, setMoviendo] = useState(true);
   const [fuerza, setFuerza] = useState(55);
   const [anim, setAnim] = useState<AnimParalaje>("suave");
-  const [durPaso, setDurPaso] = useState(4);
+  // Borrador del paso a añadir a la cola
+  const [borrador, setBorrador] = useState(() => pasoPorDefecto({ id: "borrador", mov: "der", durMs: 4000, distancia: 55 }));
   const [cola, setCola] = useState<PasoSecuencia[]>([]);
   const [enSecuencia, setEnSecuencia] = useState(false);
   const [pasoActivo, setPasoActivo] = useState(0);
@@ -62,18 +66,40 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const fuerzaRef = useRef(fuerza);
   const moviendoRef = useRef(moviendo);
   const colaRef = useRef(cola);
+  const capasRef = useRef(capas);
   const enSecuenciaRef = useRef(enSecuencia);
   const pasoActivoRef = useRef(pasoActivo);
   const repetirRef = useRef(repetirCola);
-  const pasoMsRef = useRef(0); // ms acumulados del paso actual
+  const pasoMsRef = useRef(0);
   const ultimoFrameRef = useRef<number | null>(null);
+  /** Pose acumulada (entre pasos y al terminar la cola). */
+  const estadoRef = useRef<EstadoCamara>(estadoNeutro());
+  const origenRef = useRef<EstadoCamara>(estadoNeutro());
+  const destinoRef = useRef<EstadoCamara>(estadoNeutro());
+  /** Tras una secuencia: dibujar la pose final en vez del idle. */
+  const retenerPoseRef = useRef(false);
+
   animRef.current = anim;
   fuerzaRef.current = fuerza;
   moviendoRef.current = moviendo;
   colaRef.current = cola;
+  capasRef.current = capas;
   enSecuenciaRef.current = enSecuencia;
   pasoActivoRef.current = pasoActivo;
   repetirRef.current = repetirCola;
+
+  function metaCapas() {
+    return capasRef.current.map((c) => ({ id: c.id, depth: c.depth }));
+  }
+
+  function prepararPaso(idx: number, estadoActual: EstadoCamara) {
+    const paso = colaRef.current[idx];
+    if (!paso) return;
+    const origen = origenPaso(estadoActual, paso);
+    origenRef.current = origen;
+    destinoRef.current = destinoPaso(origen, paso, fuerzaRef.current, metaCapas());
+    pasoMsRef.current = 0;
+  }
 
   async function meter(archivos: FileList | null) {
     if (!archivos?.length) return;
@@ -176,6 +202,15 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     return () => { vivo = false; cancelAnimationFrame(id); ultimoFrameRef.current = null; };
   });
 
+  function vistaDesdeEstado(e: EstadoCamara): VistaCamara {
+    return {
+      ox: e.ox, oy: e.oy, zoom: e.zoom,
+      zoomCapa: (depth) => 1 + e.zoomExtra * depth * depth,
+      alphaCapa: (_d, id) => (id && typeof e.alpha[id] === "number" ? e.alpha[id] : 1),
+      t: 1, fin: true,
+    };
+  }
+
   function pintar(dt: number) {
     const cv = canvas.current;
     if (!cv) return;
@@ -198,27 +233,37 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
 
     if (enSecuenciaRef.current && colaRef.current.length) {
       pasoMsRef.current += dt;
-      const paso = colaRef.current[pasoActivoRef.current];
-      if (paso) {
-        vista = vistaAnim(paso.kind, pasoMsRef.current, k, { durMs: paso.durMs, modo: "tramo" });
-        if (vista.fin) {
-          const next = pasoActivoRef.current + 1;
-          if (next < colaRef.current.length) {
-            pasoActivoRef.current = next;
-            setPasoActivo(next);
-            pasoMsRef.current = 0;
-          } else if (repetirRef.current) {
-            pasoActivoRef.current = 0;
-            setPasoActivo(0);
-            pasoMsRef.current = 0;
-          } else {
-            enSecuenciaRef.current = false;
-            setEnSecuencia(false);
-            pasoMsRef.current = 0;
-            setAviso("Secuencia terminada.");
-          }
+      const { vista: v, estado } = interpolarTramo(
+        origenRef.current,
+        destinoRef.current,
+        pasoMsRef.current,
+        colaRef.current[pasoActivoRef.current]?.durMs ?? 4000,
+        metaCapas(),
+      );
+      vista = v;
+      if (v.fin) {
+        estadoRef.current = clonarEstado(destinoRef.current);
+        const next = pasoActivoRef.current + 1;
+        if (next < colaRef.current.length) {
+          pasoActivoRef.current = next;
+          setPasoActivo(next);
+          prepararPaso(next, estadoRef.current);
+        } else if (repetirRef.current) {
+          estadoRef.current = estadoNeutro();
+          pasoActivoRef.current = 0;
+          setPasoActivo(0);
+          prepararPaso(0, estadoRef.current);
+        } else {
+          enSecuenciaRef.current = false;
+          setEnSecuencia(false);
+          retenerPoseRef.current = true;
+          setAviso("Secuencia terminada — la pose se conserva. «Centrar» la reinicia.");
         }
+      } else {
+        estadoRef.current = estado;
       }
+    } else if (retenerPoseRef.current) {
+      vista = vistaDesdeEstado(estadoRef.current);
     } else if (moviendoRef.current) {
       if (encima.current) {
         vista = {
@@ -227,7 +272,6 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           zoom: 1, zoomCapa: () => 1, alphaCapa: () => 1, t: 0, fin: false,
         };
       } else {
-        // Idle: ciclo continuo del preset elegido.
         pasoMsRef.current += dt;
         vista = vistaAnim(animRef.current, pasoMsRef.current, k, { durMs: 4500, modo: "ciclo" });
       }
@@ -238,7 +282,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       const e = capa.escala * vista.zoom * vista.zoomCapa(capa.depth);
       const dw = w * e, dh = h * e;
       c.save();
-      c.globalAlpha = capa.opacidad * vista.alphaCapa(capa.depth);
+      c.globalAlpha = capa.opacidad * vista.alphaCapa(capa.depth, capa.id);
       c.drawImage(
         capa.img,
         -(dw - w) / 2 + vista.ox * capa.depth * w,
@@ -267,31 +311,42 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   }
 
   function anadirACola() {
-    const p: PasoSecuencia = {
-      id: `p${++pasoSeq}`,
-      kind: anim,
-      durMs: Math.round(Math.max(0.8, durPaso) * 1000),
-    };
+    const p = pasoPorDefecto({ ...borrador, id: `p${++pasoSeq}` });
     setCola((c) => [...c, p]);
-    const label = ANIM_OPCIONES.find((o) => o.id === anim)?.label ?? anim;
-    setAviso(`Añadido a la cola: ${label} (${durPaso}s).`);
+    const label = MOV_COLA.find((o) => o.id === p.mov)?.label ?? p.mov;
+    setAviso(`Añadido: ${label} · dist ${p.distancia}% · ${(p.durMs / 1000).toFixed(1)}s`);
+  }
+
+  function updPaso(id: string, patch: Partial<PasoSecuencia>) {
+    setCola((cs) => cs.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }
 
   function iniciarSecuencia() {
     if (!cola.length) return;
     encima.current = false;
-    pasoMsRef.current = 0;
+    retenerPoseRef.current = false;
+    estadoRef.current = estadoNeutro();
     pasoActivoRef.current = 0;
     setPasoActivo(0);
+    prepararPaso(0, estadoRef.current);
     setEnSecuencia(true);
     setMoviendo(true);
-    setAviso(`Reproduciendo secuencia (${cola.length} pasos)…`);
+    setAviso(`Reproduciendo secuencia (${cola.length} pasos, estado encadenado)…`);
   }
 
   function pararSecuencia() {
     setEnSecuencia(false);
+    retenerPoseRef.current = true;
+    setAviso("Secuencia en pausa — se conserva la pose actual.");
+  }
+
+  function centrarTodo() {
+    encima.current = false;
+    raton.current = { x: 0, y: 0 };
+    estadoRef.current = estadoNeutro();
+    retenerPoseRef.current = false;
     pasoMsRef.current = 0;
-    setAviso("Secuencia en pausa.");
+    setAviso("Cámara al centro, fades reiniciados.");
   }
 
   const upd = (id: string, p: Partial<CapaImg>) =>
@@ -305,7 +360,9 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       return n;
     });
 
-  const pistaAnim = ANIM_OPCIONES.find((o) => o.id === anim)?.pista;
+  const pistaIdle = ANIM_OPCIONES.find((o) => o.id === anim)?.pista;
+  const pistaMov = MOV_COLA.find((o) => o.id === borrador.mov)?.pista;
+  const segsBorrador = borrador.durMs / 1000;
 
   return (
     <div className="space-y-3">
@@ -320,7 +377,10 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         <button
           onClick={() => {
             if (enSecuencia) pararSecuencia();
-            else setMoviendo((v) => !v);
+            else {
+              retenerPoseRef.current = false;
+              setMoviendo((v) => !v);
+            }
           }}
           className="btn-ghost text-xs"
         >
@@ -329,7 +389,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
             : <Play className="h-3.5 w-3.5 text-accent" />}
           {enSecuencia ? "Parar secuencia" : moviendo ? "Parar el movimiento" : "Mover"}
         </button>
-        <button onClick={() => { encima.current = false; raton.current = { x: 0, y: 0 }; }} className="btn-ghost text-xs">
+        <button onClick={centrarTodo} className="btn-ghost text-xs">
           <Crosshair className="h-3.5 w-3.5 text-accent" /> Centrar
         </button>
         <button onClick={() => void exportarPng()} disabled={!capas.length} className="btn-ghost text-xs">
@@ -361,7 +421,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           {!capas.length && (
             <p className="text-[11px] text-muted">
               La primera imagen fija el tamaño y hace de fondo. Las siguientes tienen que ser PNG
-              con transparencia. Prueba «Atravesar» con una puerta delante y una plaza detrás.
+              con transparencia. Encadena acercar → pan → fade para controlar la toma a mano.
             </p>
           )}
           {capas.map((c, i) => (
@@ -396,15 +456,16 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         <div className="card space-y-2 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted">
-              Animación
+              Idle (fuera de cola)
               <select
                 value={anim}
                 onChange={(e) => {
                   setAnim(e.target.value as AnimParalaje);
                   if (!enSecuencia) pasoMsRef.current = 0;
+                  retenerPoseRef.current = false;
                 }}
                 className="input min-w-0 flex-1 py-1 text-[11px]"
-                aria-label="Tipo de movimiento de cámara"
+                aria-label="Animación idle"
                 disabled={enSecuencia}
               >
                 {ANIM_OPCIONES.map((o) => (
@@ -413,65 +474,246 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
               </select>
             </label>
           </div>
-          {pistaAnim && !enSecuencia && (
-            <p className="text-[10px] text-muted">{pistaAnim}. Con el ratón encima mandas tú.</p>
+          {pistaIdle && !enSecuencia && (
+            <p className="text-[10px] text-muted">{pistaIdle}. Con el ratón encima mandas tú.</p>
           )}
 
-          <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border/70 bg-surface-2/40 p-2">
-            <label className="text-[11px] text-muted">
-              Segundos
-              <input
-                type="number" min={0.8} max={30} step={0.5} value={durPaso}
-                onChange={(e) => setDurPaso(Number(e.target.value) || 4)}
-                className="input mt-0.5 w-20 py-1 text-[11px] tabular-nums"
-                disabled={enSecuencia}
-              />
-            </label>
-            <button type="button" onClick={anadirACola} disabled={enSecuencia} className="btn-ghost text-xs">
-              <ListPlus className="h-3.5 w-3.5 text-accent" /> Añadir a la cola
-            </button>
-            <button
-              type="button"
-              onClick={() => (enSecuencia ? pararSecuencia() : iniciarSecuencia())}
-              disabled={!cola.length}
-              className="btn-brand text-xs"
-            >
-              <ListOrdered className="h-3.5 w-3.5" />
-              {enSecuencia ? "Parar cola" : "Reproducir cola"}
-            </button>
-            <label className="flex items-center gap-1.5 text-[11px] text-muted">
-              <input type="checkbox" checked={repetirCola} onChange={(e) => setRepetirCola(e.target.checked)} />
-              Repetir
-            </label>
-            {!!cola.length && (
-              <button type="button" onClick={() => { setCola([]); pararSecuencia(); }} className="btn-ghost text-xs text-danger">
-                Vaciar cola
-              </button>
+          <div className="space-y-2 rounded-lg border border-border/70 bg-surface-2/40 p-2">
+            <p className="text-[11px] font-medium text-fg">Cola encadenada</p>
+            <p className="text-[10px] text-muted">
+              Cada paso parte de donde dejó el anterior (pan, zoom y capas ocultas se conservan).
+            </p>
+
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="min-w-[9rem] flex-1 text-[11px] text-muted">
+                Movimiento
+                <select
+                  value={borrador.mov}
+                  onChange={(e) => setBorrador((b) => ({
+                    ...b,
+                    mov: e.target.value as MovCola,
+                    fade: e.target.value === "atravesar" && b.fade === "nada" ? "desaparecer" : b.fade,
+                    fadeCapa: e.target.value === "atravesar" && b.fadeCapa === "ninguna" ? "frente" : b.fadeCapa,
+                  }))}
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  disabled={enSecuencia}
+                >
+                  {MOV_COLA.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[11px] text-muted">
+                Segundos
+                <input
+                  type="number" min={0.8} max={30} step={0.5} value={segsBorrador}
+                  onChange={(e) => setBorrador((b) => ({
+                    ...b,
+                    durMs: Math.round(Math.max(0.8, Number(e.target.value) || 4) * 1000),
+                  }))}
+                  className="input mt-0.5 w-20 py-1 text-[11px] tabular-nums"
+                  disabled={enSecuencia}
+                />
+              </label>
+              <label className="text-[11px] text-muted">
+                Distancia
+                <input
+                  type="number" min={5} max={100} step={5} value={borrador.distancia}
+                  onChange={(e) => setBorrador((b) => ({
+                    ...b,
+                    distancia: Math.max(5, Math.min(100, Number(e.target.value) || 55)),
+                  }))}
+                  className="input mt-0.5 w-20 py-1 text-[11px] tabular-nums"
+                  disabled={enSecuencia}
+                />
+              </label>
+            </div>
+            {pistaMov && <p className="text-[10px] text-muted">{pistaMov}</p>}
+
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="min-w-[8rem] flex-1 text-[11px] text-muted">
+                Partir desde
+                <select
+                  value={borrador.desde}
+                  onChange={(e) => setBorrador((b) => ({ ...b, desde: e.target.value as DesdePaso }))}
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  disabled={enSecuencia}
+                >
+                  <option value="continuar">Donde quedó (encadenar)</option>
+                  <option value="centro">Centro (reinicia pan/zoom)</option>
+                  <option value="posicion">Posición inicial…</option>
+                </select>
+              </label>
+              <label className="min-w-[7rem] flex-1 text-[11px] text-muted">
+                Capa fade
+                <select
+                  value={borrador.fadeCapa}
+                  onChange={(e) => setBorrador((b) => ({ ...b, fadeCapa: e.target.value as FadeCapa }))}
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  disabled={enSecuencia}
+                >
+                  <option value="ninguna">Ninguna</option>
+                  <option value="frente">Frontal (más depth)</option>
+                  {capas.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nombre}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="min-w-[7rem] text-[11px] text-muted">
+                Fade
+                <select
+                  value={borrador.fade}
+                  onChange={(e) => setBorrador((b) => ({ ...b, fade: e.target.value as FadeAccion }))}
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  disabled={enSecuencia || borrador.fadeCapa === "ninguna"}
+                >
+                  <option value="nada">Nada</option>
+                  <option value="desaparecer">Desaparecer</option>
+                  <option value="aparecer">Aparecer</option>
+                </select>
+              </label>
+            </div>
+
+            {borrador.desde === "posicion" && (
+              <div className="flex flex-wrap gap-2">
+                <Num etiqueta="Inicio X" valor={borrador.inicioOx} min={-1} max={1} paso={0.05}
+                  onCambio={(v) => setBorrador((b) => ({ ...b, inicioOx: v }))} disabled={enSecuencia} />
+                <Num etiqueta="Inicio Y" valor={borrador.inicioOy} min={-1} max={1} paso={0.05}
+                  onCambio={(v) => setBorrador((b) => ({ ...b, inicioOy: v }))} disabled={enSecuencia} />
+                <Num etiqueta="Inicio zoom" valor={borrador.inicioZoom} min={0.6} max={2.5} paso={0.05}
+                  onCambio={(v) => setBorrador((b) => ({ ...b, inicioZoom: v }))} disabled={enSecuencia} />
+              </div>
             )}
+
+            {borrador.mov === "ir-a" && (
+              <div className="flex flex-wrap gap-2">
+                <Num etiqueta="Destino X" valor={borrador.destOx} min={-1} max={1} paso={0.05}
+                  onCambio={(v) => setBorrador((b) => ({ ...b, destOx: v }))} disabled={enSecuencia} />
+                <Num etiqueta="Destino Y" valor={borrador.destOy} min={-1} max={1} paso={0.05}
+                  onCambio={(v) => setBorrador((b) => ({ ...b, destOy: v }))} disabled={enSecuencia} />
+                <Num etiqueta="Destino zoom" valor={borrador.destZoom} min={0.6} max={2.5} paso={0.05}
+                  onCambio={(v) => setBorrador((b) => ({ ...b, destZoom: v }))} disabled={enSecuencia} />
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={anadirACola} disabled={enSecuencia} className="btn-ghost text-xs">
+                <ListPlus className="h-3.5 w-3.5 text-accent" /> Añadir a la cola
+              </button>
+              <button
+                type="button"
+                onClick={() => (enSecuencia ? pararSecuencia() : iniciarSecuencia())}
+                disabled={!cola.length}
+                className="btn-brand text-xs"
+              >
+                <ListOrdered className="h-3.5 w-3.5" />
+                {enSecuencia ? "Parar cola" : "Reproducir cola"}
+              </button>
+              <label className="flex items-center gap-1.5 text-[11px] text-muted">
+                <input type="checkbox" checked={repetirCola} onChange={(e) => setRepetirCola(e.target.checked)} />
+                Repetir
+              </label>
+              {!!cola.length && (
+                <button
+                  type="button"
+                  onClick={() => { setCola([]); pararSecuencia(); retenerPoseRef.current = false; estadoRef.current = estadoNeutro(); }}
+                  className="btn-ghost text-xs text-danger"
+                >
+                  Vaciar cola
+                </button>
+              )}
+            </div>
           </div>
 
           {!!cola.length && (
-            <ol className="space-y-1 text-[11px]">
+            <ol className="space-y-1.5 text-[11px]">
               {cola.map((p, i) => {
-                const label = ANIM_OPCIONES.find((o) => o.id === p.kind)?.label ?? p.kind;
+                const label = MOV_COLA.find((o) => o.id === p.mov)?.label ?? p.mov;
                 const on = enSecuencia && i === pasoActivo;
+                const fadeTxt = p.fade !== "nada" && p.fadeCapa !== "ninguna"
+                  ? ` · ${p.fade === "aparecer" ? "aparece" : "desaparece"} ${p.fadeCapa === "frente" ? "frente" : (capas.find((c) => c.id === p.fadeCapa)?.nombre ?? "capa")}`
+                  : p.mov === "atravesar" ? " · fade frente" : "";
+                const desdeTxt = p.desde === "continuar" ? "" : p.desde === "centro" ? " · desde centro" : " · desde pos.";
                 return (
                   <li
                     key={p.id}
-                    className={`flex items-center gap-2 rounded-md px-2 py-1 ${on ? "bg-brand/15 text-brand" : "bg-surface-2/50 text-muted"}`}
+                    className={`rounded-md px-2 py-1.5 ${on ? "bg-brand/15 text-brand" : "bg-surface-2/50 text-muted"}`}
                   >
-                    <span className="tabular-nums opacity-70">{i + 1}.</span>
-                    <span className="min-w-0 flex-1 truncate">{label}</span>
-                    <span className="tabular-nums">{(p.durMs / 1000).toFixed(1)}s</span>
+                    <div className="flex items-center gap-2">
+                      <span className="tabular-nums opacity-70">{i + 1}.</span>
+                      <span className="min-w-0 flex-1 truncate font-medium text-fg">{label}</span>
+                      <span className="tabular-nums">{p.distancia}%</span>
+                      <span className="tabular-nums">{(p.durMs / 1000).toFixed(1)}s</span>
+                      {!enSecuencia && (
+                        <button
+                          type="button"
+                          className="text-muted hover:text-danger"
+                          onClick={() => setCola((cs) => cs.filter((x) => x.id !== p.id))}
+                          aria-label="Quitar paso"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-[10px] opacity-80">{desdeTxt}{fadeTxt || " · encadena"}</p>
                     {!enSecuencia && (
-                      <button
-                        type="button"
-                        className="text-muted hover:text-danger"
-                        onClick={() => setCola((cs) => cs.filter((x) => x.id !== p.id))}
-                        aria-label="Quitar paso"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <select
+                          value={p.mov}
+                          onChange={(e) => updPaso(p.id, { mov: e.target.value as MovCola })}
+                          className="input py-0.5 text-[10px]"
+                        >
+                          {MOV_COLA.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                        </select>
+                        <label className="flex items-center gap-1 text-[10px]">
+                          Dist
+                          <input
+                            type="number" min={5} max={100} step={5} value={p.distancia}
+                            onChange={(e) => updPaso(p.id, {
+                              distancia: Math.max(5, Math.min(100, Number(e.target.value) || 55)),
+                            })}
+                            className="input w-14 py-0.5 text-[10px] tabular-nums"
+                          />
+                        </label>
+                        <label className="flex items-center gap-1 text-[10px]">
+                          s
+                          <input
+                            type="number" min={0.8} max={30} step={0.5} value={p.durMs / 1000}
+                            onChange={(e) => updPaso(p.id, {
+                              durMs: Math.round(Math.max(0.8, Number(e.target.value) || 4) * 1000),
+                            })}
+                            className="input w-14 py-0.5 text-[10px] tabular-nums"
+                          />
+                        </label>
+                        <select
+                          value={p.desde}
+                          onChange={(e) => updPaso(p.id, { desde: e.target.value as DesdePaso })}
+                          className="input py-0.5 text-[10px]"
+                        >
+                          <option value="continuar">Encadenar</option>
+                          <option value="centro">Desde centro</option>
+                          <option value="posicion">Desde posición</option>
+                        </select>
+                        <select
+                          value={p.fadeCapa}
+                          onChange={(e) => updPaso(p.id, { fadeCapa: e.target.value as FadeCapa })}
+                          className="input py-0.5 text-[10px]"
+                        >
+                          <option value="ninguna">Sin fade</option>
+                          <option value="frente">Frente</option>
+                          {capas.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                        </select>
+                        <select
+                          value={p.fade}
+                          onChange={(e) => updPaso(p.id, { fade: e.target.value as FadeAccion })}
+                          className="input py-0.5 text-[10px]"
+                          disabled={p.fadeCapa === "ninguna"}
+                        >
+                          <option value="nada">—</option>
+                          <option value="desaparecer">Desaparecer</option>
+                          <option value="aparecer">Aparecer</option>
+                        </select>
+                      </div>
                     )}
                   </li>
                 );
@@ -488,7 +730,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
             ref={caja}
             className="overflow-hidden rounded-xl border border-border bg-black"
             onPointerMove={(e) => {
-              if (enSecuencia) return;
+              if (enSecuencia || retenerPoseRef.current) return;
               const r = e.currentTarget.getBoundingClientRect();
               raton.current = {
                 x: ((e.clientX - r.left) / r.width - 0.5) * 2,
@@ -511,6 +753,22 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function Num({ etiqueta, valor, min, max, paso, onCambio, disabled }: {
+  etiqueta: string; valor: number; min: number; max: number; paso: number;
+  onCambio: (v: number) => void; disabled?: boolean;
+}) {
+  return (
+    <label className="text-[11px] text-muted">
+      {etiqueta}
+      <input
+        type="number" min={min} max={max} step={paso} value={valor} disabled={disabled}
+        onChange={(e) => onCambio(Number(e.target.value))}
+        className="input mt-0.5 w-24 py-1 text-[11px] tabular-nums"
+      />
+    </label>
   );
 }
 
