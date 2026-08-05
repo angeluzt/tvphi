@@ -205,9 +205,16 @@ export function catalogoMusicaIA() {
 //          debajo de una escena entera: la lluvia, la taberna, el latido.
 //
 // Los bucles se pidieron con la bandera «loop» de la API que los generó, que
-// garantiza el enlace en vez de confiarlo al texto del prompt. Se comprobó
-// decodificándolos: 12 de los 15 empiezan y acaban al mismo nivel y sin cola
-// muda. Los tres que no van marcados abajo.
+// garantiza el enlace en vez de confiarlo al texto del prompt. Los 15 empiezan
+// y acaban al mismo nivel.
+//
+// Cuidado al medir uno rítmico —el latido, el reloj—: lo que importa no es que
+// el archivo acabe sonando, sino que el silencio del final más el del principio
+// sumen UN compás. El reloj deja medio segundo mudo al final y está perfecto
+// (tics cada 1,000 s, y el empalme da 1,000 s). El latido daba 2,00 s donde el
+// compás son 1,50, así que tropezaba una vez por vuelta: se le recortaron 0,50 s
+// del final y cuadró. Medir «cola muda» a secas marca el reloj como roto y deja
+// pasar el latido, que era justo al revés.
 //
 // Casi la mitad tiene un efecto visual que le corresponde —el trueno con el
 // rayo, el hielo con la escarcha—, y eso es lo que permite que la IA sonorice
@@ -238,6 +245,17 @@ export interface Sonido {
   familia: FamiliaSonido;
   /** true = ambiente que se repite bajo la escena; false = golpe puntual. */
   bucle: boolean;
+  /**
+   * El bucle lleva un compás: latidos, tics. NO se puede coser.
+   *
+   * El cosido cruza la cola sobre la cabeza y acorta el archivo, y eso en algo
+   * rítmico se come el último golpe y descuadra el compás. Además la vara que
+   * decide si hay que coser —el nivel del último segundo contra el del
+   * primero— aquí miente: si el archivo empieza en un hueco entre golpes, da
+   * un desnivel enorme aunque el empalme sea perfecto. Estos van cuadrados a
+   * mano, con el silencio del final y el del principio sumando un compás.
+   */
+  ritmico?: boolean;
   cuando: string;
   /** Efecto visual con el que pega, si hay uno. */
   conEfecto?: string;
@@ -263,6 +281,8 @@ export const SONIDOS: Sonido[] = [
     cuando: "Un objeto que vuela junto a la cámara, un cambio brusco, un ataque veloz." },
   { id: "impact-hit", titulo: "Golpe de revelación", segundos: 6, familia: "impactos", bucle: false,
     cuando: "El momento en que se descubre algo. Va justo después del riser." },
+  { id: "massive-stone-creature", titulo: "Criatura de piedra", segundos: 3, familia: "impactos", bucle: false,
+    cuando: "Roca que se mueve: un golem, una estatua que despierta, un muro que anda." },
 
   // ── clima y naturaleza ─────────────────────────────────────────────────
   { id: "steady-rain", titulo: "Lluvia constante", segundos: 30, familia: "clima", bucle: true,
@@ -273,11 +293,14 @@ export const SONIDOS: Sonido[] = [
     cuando: "Se acerca algo malo. Truenos al fondo, sin caer todavía encima.", conEfecto: "rayo" },
   { id: "campfire", titulo: "Hoguera crepitando", segundos: 20, familia: "clima", bucle: true,
     cuando: "Una fogata, una chimenea, antorchas. Da calor a una escena.", conEfecto: "fuego" },
-  { id: "ocean-waves", titulo: "Olas del mar", segundos: 30, familia: "clima", bucle: true,
-    cuando: "Una playa, un acantilado, un barco. Calma o inmensidad.",
-    pega: "se apaga hacia el final: al repetirse se nota el salto" },
+  { id: "ocean-waves", titulo: "Olas del mar", segundos: 20, familia: "clima", bucle: true,
+    cuando: "Una playa, un acantilado, un barco. Calma o inmensidad." },
   { id: "water-splash", titulo: "Chapoteo en agua", segundos: 2, familia: "clima", bucle: false,
     cuando: "Algo cae al agua, un pie en un charco, alguien que se sumerge.", conEfecto: "salpicadura" },
+  { id: "close-thunder", titulo: "Trueno encima", segundos: 3, familia: "clima", bucle: false,
+    cuando: "El rayo que cae cerca, no el que retumba lejos. Un susto seco.", conEfecto: "rayo" },
+  { id: "ice-rapidly-freezing", titulo: "Escarcha que avanza", segundos: 3, familia: "clima", bucle: false,
+    cuando: "El hielo ganando terreno: un lago, un cristal, un hechizo de frío.", conEfecto: "escarcha" },
 
   // ── magia y energía ────────────────────────────────────────────────────
   { id: "spell-cast", titulo: "Hechizo que se lanza", segundos: 2, familia: "magia", bucle: false,
@@ -290,6 +313,10 @@ export const SONIDOS: Sonido[] = [
     cuando: "Magia delicada: hadas, polvo de estrellas, un encantamiento suave.", conEfecto: "polvo" },
   { id: "energy-aura", titulo: "Aura de poder", segundos: 20, familia: "magia", bucle: true,
     cuando: "Alguien cargando poder mientras habla. En bucle bajo la toma.", conEfecto: "aura" },
+  { id: "arcane-magic-explosion", titulo: "Explosión arcana", segundos: 2, familia: "magia", bucle: false,
+    cuando: "El remate del círculo mágico: lo que suelta lo que arcane-charge cargó.", conEfecto: "magiccircle" },
+  { id: "dark-portal-opening", titulo: "Portal oscuro que se abre", segundos: 5, familia: "magia", bucle: false,
+    cuando: "Se abre un paso a otro sitio. Largo, para dejarlo respirar.", conEfecto: "portal" },
 
   // ── criaturas y animales ───────────────────────────────────────────────
   { id: "monster-roar", titulo: "Rugido de monstruo", segundos: 4, familia: "criaturas", bucle: false,
@@ -300,9 +327,8 @@ export const SONIDOS: Sonido[] = [
     cuando: "Mal presagio, un cementerio, un campo de batalla." },
   { id: "dog-barking", titulo: "Perro ladrando", segundos: 3, familia: "criaturas", bucle: false,
     cuando: "Una casa, un pueblo, alguien que llega. También como amenaza." },
-  { id: "horse-whinny", titulo: "Caballo", segundos: 4, familia: "criaturas", bucle: false,
-    cuando: "Una llegada, una huida, cualquier historia de época.",
-    pega: "acaba sonando: si va seguido de otro sonido, se pisan" },
+  { id: "horse-whinny", titulo: "Caballo", segundos: 6, familia: "criaturas", bucle: false,
+    cuando: "Una llegada, una huida, cualquier historia de época." },
   { id: "startled-flock", titulo: "Bandada que echa a volar", segundos: 3, familia: "criaturas", bucle: false,
     cuando: "Algo asustó a los pájaros: se sabe que hay alguien antes de verlo." },
 
@@ -339,12 +365,10 @@ export const SONIDOS: Sonido[] = [
   // ── tensión y transiciones ─────────────────────────────────────────────
   { id: "tension-riser", titulo: "La tensión que sube", segundos: 5, familia: "tension", bucle: false,
     cuando: "Justo antes de una revelación o un corte. Lleva al espectador al filo." },
-  { id: "heartbeat", titulo: "Latido de corazón", segundos: 20, familia: "tension", bucle: true,
-    cuando: "Miedo, tensión contenida, alguien a punto de romperse.",
-    pega: "arranca flojo: el primer latido casi no se oye" },
+  { id: "heartbeat", titulo: "Latido de corazón", segundos: 19.5, familia: "tension", bucle: true,
+    ritmico: true, cuando: "Miedo, tensión contenida, alguien a punto de romperse." },
   { id: "wall-clock", titulo: "Reloj de pared", segundos: 20, familia: "tension", bucle: true,
-    cuando: "Se acaba el tiempo, una espera larga, una habitación en silencio.",
-    pega: "deja un cuarto de segundo de silencio al final del bucle" },
+    ritmico: true, cuando: "Se acaba el tiempo, una espera larga, una habitación en silencio." },
   { id: "digital-glitch", titulo: "Falla digital", segundos: 2, familia: "tension", bucle: false,
     cuando: "Una pantalla que falla, un recuerdo que se corrompe, algo digital roto.", conEfecto: "glitch",
     pega: "acaba sonando: si va seguido de otro sonido, se pisan" },
@@ -363,6 +387,9 @@ export const refSonido = (s: Sonido) => `${PREFIJO_SON}${s.id}`;
 export const urlSonido = (id: string) => `/api/story/audio/sonidos/${id.slice(PREFIJO_SON.length)}`;
 export const buscarSonido = (ref: string) =>
   SONIDOS.find((s) => s.id === ref.slice(PREFIJO_SON.length)) ?? null;
+
+/** Si lleva compás, el motor NO debe coserlo: le comería el último golpe. */
+export const esRitmico = (ref: string) => !!buscarSonido(ref)?.ritmico;
 
 export function catalogoSonidosIA() {
   return SONIDOS.map((s) =>

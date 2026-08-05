@@ -25,6 +25,8 @@ import { ShotEditor } from "./shot-editor";
 import { VfxEditor } from "./vfx-editor";
 import { VfxCanvas, VfxTools } from "./vfx-canvas";
 import { MoverEfectos, desplazar } from "./mover-efectos";
+import type { PestanaToma } from "./pestanas-toma";
+import { MandoTramo } from "./mando-tramo";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
 import { NumberInput } from "./number-input";
@@ -211,6 +213,13 @@ export function StoryApp({
   const [playing, setPlaying] = useState(false);
   const [openScene, setOpenScene] = useState<string | null>(null);
   const [selShot, setSelShot] = useState<string | null>(null);
+  // La sección de la toma que se está viendo. Vive aquí, y no dentro de cada
+  // toma, para que se mantenga al saltar de una a otra: quien está colocando
+  // efectos sigue en efectos toma tras toma, sin volver a buscar la pestaña.
+  const [pestanaToma, setPestanaToma] = useState<PestanaToma>("camara");
+  // Con el mando desplegado la ventana crece: en un portátil se comía el 84% de
+  // la pantalla y tapaba justo lo que se está editando. Se le encoge la imagen.
+  const [mandoAbierto, setMandoAbierto] = useState(false);
   const [selOverlay, setSelOverlay] = useState<string | null>(null);
   const [selVfx, setSelVfx] = useState<string | null>(null);
   // Colocar sitios se enciende y se apaga: apagado, la previsualización se ve
@@ -500,6 +509,38 @@ export function StoryApp({
     const f = flat.find((x) => x.shot.id === shotId);
     if (f) void playSection(f.start, f.start + f.dur, `Escena ${si + 1} · toma ${hi + 1}`, { shotId });
   }
+  // Saltar de toma desde la ventana de reproducción: cambia el tramo que se ve,
+  // abre esa toma en la lista y la trae a la vista. Es lo que evita bajar a
+  // buscarla cada vez que se pasa a la siguiente.
+  function saltarToma(dir: -1 | 1) {
+    const i = flat.findIndex((x) => x.shot.id === (section?.shotId ?? selShot));
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= flat.length) return;
+    const destino = flat[j];
+    const sc = project.scenes.find((s) => s.shots.some((h) => h.id === destino.shot.id));
+    if (!sc) return;
+    const si = project.scenes.indexOf(sc);
+    const hi = sc.shots.findIndex((h) => h.id === destino.shot.id);
+    const eng = engineRef.current;
+    // Su escena tiene que quedar abierta: si está plegada, la toma ni siquiera
+    // se dibuja, y saltar a ella parecía no hacer nada.
+    setOpenScene(sc.id);
+    setSelShot(destino.shot.id);
+    setSelOverlay(null);
+    if (eng) {
+      const fin = destino.start + destino.dur;
+      eng.pause();
+      setSection({ start: destino.start, end: fin, label: `Escena ${si + 1} · toma ${hi + 1}`,
+        shotId: destino.shot.id, sceneId: sc.id });
+      eng.setRange(destino.start, fin, loopSection);
+      eng.seek(destino.start);
+    }
+    // Sin esperar a que React pinte, la caja aún no existe en el DOM.
+    requestAnimationFrame(() =>
+      document.getElementById(`toma-${destino.shot.id}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" }));
+  }
+
   function closeSection() {
     const eng = engineRef.current!;
     eng.pause();
@@ -773,6 +814,31 @@ export function StoryApp({
     curFlat?.scene.vfx?.find((v) => v.id === selVfx)
     ?? curFlat?.shot.vfx?.find((v) => v.id === selVfx)
     ?? null;
+
+  // Los efectos que se ven en el tramo abierto en la ventana de reproducción.
+  // Se sacan de la escena/toma que esa ventana está enseñando, no de la toma
+  // marcada en la lista de abajo: son cosas distintas —se puede estar viendo
+  // una escena entera mientras la lista tiene abierta otra toma— y el mando
+  // tiene que mover lo que se está viendo.
+  const capasDelTramo: { capa: VfxLayer; deEscena: boolean }[] = (() => {
+    if (!section) return [];
+    // El tramo puede venir identificado por la escena o solo por la toma:
+    // se busca por las dos, que si no el mando se quedaba sin capas y no salía.
+    const sc = project.scenes.find((x) => x.id === section.sceneId)
+      ?? project.scenes.find((x) => x.shots.some((s) => s.id === section.shotId));
+    if (!sc) return [];
+    const tomas = section.shotId
+      ? sc.shots.filter((s) => s.id === section.shotId)
+      : sc.shots;
+    // Los de la escena solo si alguna de esas tomas los enseña: si están
+    // quitados en la toma que se ve, moverlos aquí no se notaría.
+    const escena = (sc.vfx ?? []).filter((v) =>
+      tomas.some((s) => s.usarVfxEscena !== false && !(s.omitirVfxEscena ?? []).includes(v.id)));
+    return [
+      ...escena.map((capa) => ({ capa, deEscena: true })),
+      ...tomas.flatMap((s) => (s.vfx ?? []).map((capa) => ({ capa, deEscena: false }))),
+    ];
+  })();
   function updVfxNodes(id: string, nodes: VfxNode[]) {
     if (!curFlat) return;
     if ((curFlat.scene.vfx ?? []).some((v) => v.id === id)) {
@@ -791,21 +857,21 @@ export function StoryApp({
   // en UNA sola actualización: hacerlo capa a capa dispararía un render por
   // efecto y las flechas del teclado irían a tirones.
   function moverVfx(ids: string[], dx: number, dy: number) {
-    if (!curFlat || !ids.length) return;
+    if (!ids.length) return;
     const juego = new Set(ids);
     const mueve = (v: VfxLayer): VfxLayer =>
       juego.has(v.id) ? { ...v, nodes: desplazar(v.nodes ?? [], dx, dy), auto: false } : v;
+    // Se busca por id en todo el proyecto en vez de mirar solo la toma abierta.
+    // El mando también vive dentro de la ventana de reproducción, y ahí se está
+    // viendo un tramo que no tiene por qué ser la toma seleccionada en la lista;
+    // atándolo a la toma abierta, las flechas no movían nada.
     mut((p) => ({
       ...p,
-      scenes: p.scenes.map((sc) => {
-        if (sc.id !== curFlat.scene.id) return sc;
-        return {
-          ...sc,
-          vfx: (sc.vfx ?? []).map(mueve),
-          shots: sc.shots.map((sh) =>
-            sh.id !== curFlat.shot.id ? sh : { ...sh, vfx: (sh.vfx ?? []).map(mueve) }),
-        };
-      }),
+      scenes: p.scenes.map((sc) => ({
+        ...sc,
+        vfx: (sc.vfx ?? []).map(mueve),
+        shots: sc.shots.map((sh) => ({ ...sh, vfx: (sh.vfx ?? []).map(mueve) })),
+      })),
     }));
     engineRef.current?.resetVfx();
   }
@@ -1765,7 +1831,23 @@ export function StoryApp({
             desplaza con ella: es grande, y clavada arriba estorbaba más de lo que
             ayudaba, porque se comía media pantalla mientras editabas la toma.
             Para editar de cerca está la ventana de la escena o la toma, que sí se
-            queda arriba pero es pequeña y lleva sus propias herramientas. */}
+            queda arriba pero es pequeña y lleva sus propias herramientas.
+
+            Con un tramo abierto se encoge a una línea: el lienzo está prestado a
+            la ventana de arriba, así que este cuadro no enseñaba nada y aun así
+            se comía media pantalla de las que hay que recorrer para llegar a la
+            toma. Encogido, la lista empieza casi arriba del todo. */}
+        {section ? (
+          <div className="card flex flex-wrap items-center gap-2 p-2.5">
+            <span className="chip shrink-0 bg-brand/15 text-brand">{section.label}</span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted">
+              Se está viendo en la ventana de arriba, que se queda fija mientras editas.
+            </span>
+            <button onClick={closeSection} className="btn-ghost shrink-0 text-xs">
+              <X className="h-3.5 w-3.5" /> Volver al video completo
+            </button>
+          </div>
+        ) : (
         <div className="card p-3">
           {/* Los botones van FUERA del cuadro: encima de la imagen tapaban justo
               la parte donde hace falta poner sitios. */}
@@ -1810,18 +1892,9 @@ export function StoryApp({
                 Sube imágenes para empezar tu historia.
               </div>
             )}
-            {/* El lienzo está prestado a la miniatura flotante: se explica en vez
-                de dejar un recuadro negro. */}
-            {section && (
-              <div className="absolute inset-0 grid place-items-center gap-2 p-4 text-center">
-                <div>
-                  <p className="text-sm text-fg/80">Viendo <strong>{section.label}</strong> en la ventana de arriba</p>
-                  <button onClick={closeSection} className="btn-ghost mx-auto mt-2 text-xs">
-                    <X className="h-3.5 w-3.5" /> Volver al video completo
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* Antes había aquí un cartel de «se está viendo arriba»: ya no hace
+                falta, porque con un tramo abierto este cuadro no se dibuja y en
+                su sitio va una línea que lo dice y devuelve al vídeo entero. */}
           </div>
 
           <div className="mt-3 flex items-center gap-3">
@@ -1848,9 +1921,15 @@ export function StoryApp({
             />
           )}
 
-          {/* Línea de tiempo: escenas agrupadas, tomas dentro */}
+        </div>
+        )}
+
+        {/* Línea de tiempo: escenas agrupadas, tomas dentro.
+            Va FUERA del reproductor grande para que siga estando cuando ese se
+            encoge: es la forma más corta de saltar a cualquier toma, y perderla
+            al abrir un tramo obligaba justo a lo que se quiere evitar. */}
           {flat.length > 0 && (
-            <div className="relative mt-2 w-full overflow-hidden rounded-lg bg-surface-2 p-1">
+            <div className="card relative w-full overflow-hidden p-1">
               <div className="flex h-12 w-full gap-1">
                 {project.scenes.map((sc, si) => {
                   const scDur = sc.shots.reduce((a, s) => a + shotDur(s), 0);
@@ -1875,7 +1954,6 @@ export function StoryApp({
                 style={{ left: `${dur ? (playhead / dur) * 100 : 0}%` }} />
             </div>
           )}
-        </div>
 
         {/* Lo que falta, en cuanto falta: va justo debajo del reproductor porque
             es lo primero que hay que resolver al abrir un proyecto de otro sitio. */}
@@ -2433,6 +2511,8 @@ export function StoryApp({
                           if (id) irAlSticker(sh, id);
                         }}
                         vocesIa={vozOpenAi}
+                        pestana={pestanaToma}
+                        onPestana={setPestanaToma}
                       />
                     ))}
                     <button onClick={() => addShot(sc)} className="btn-ghost w-full text-sm">
@@ -2885,7 +2965,7 @@ export function StoryApp({
           a donde estás editando en vez de tener que subir al reproductor de arriba.
           Se mueve aquí el mismo lienzo del motor. */}
       {section && (
-        <div className="fixed inset-x-0 top-2 z-50 mx-auto w-[min(92vw,460px)] rounded-2xl border border-brand/60 bg-bg/95 p-2 shadow-2xl backdrop-blur">
+        <div className="fixed inset-x-0 top-2 z-50 mx-auto max-h-[calc(100vh-1rem)] w-[min(92vw,460px)] overflow-y-auto rounded-2xl border border-brand/60 bg-bg/95 p-2 shadow-2xl backdrop-blur">
           {/* En móvil el ancho es justo: la etiqueta se recorta y el botón de
               cerrar nunca se queda fuera del panel. */}
           <div className="flex items-center gap-2 px-1 pb-1">
@@ -2913,7 +2993,16 @@ export function StoryApp({
           <div
             ref={floatRef}
             className="relative mx-auto w-full overflow-hidden rounded-xl bg-black"
-            style={{ aspectRatio: `${forma.w} / ${forma.h}`, maxWidth: `calc(46vh * ${forma.ratio})` }}
+            style={{
+              aspectRatio: `${forma.w} / ${forma.h}`,
+              // Con el mando desplegado la imagen se encoge para que el panel
+              // entero quepa en pantalla: si no, en un portátil tapaba la toma
+              // que se está editando y había que cerrarlo para ver lo que hacía.
+              // Se limita por ALTO —convertido a ancho con la proporción—, que
+              // es lo que aprieta: por ancho ya topaba antes con el del panel y
+              // bajar los vh no cambiaba nada.
+              maxWidth: `calc(${mandoAbierto ? 20 : 46}vh * ${forma.ratio})`,
+            }}
           >
             {curVfx && colocando && (
               <VfxCanvas
@@ -2948,6 +3037,42 @@ export function StoryApp({
               aria-label="Avanzar dentro de este tramo"
             />
           </div>
+
+          {/* Saltar de toma y abrir sus secciones sin bajar a la lista. */}
+          <MandoTramo
+            puesto={section.shotId ? flat.findIndex((x) => x.shot.id === section.shotId) + 1 : 0}
+            total={flat.length}
+            pestana={pestanaToma}
+            onSaltar={saltarToma}
+            onPestana={(p) => {
+              setPestanaToma(p);
+              if (!section.shotId) return;
+              // Abrir la sección desde aquí tiene que abrir también la toma y su
+              // escena; si no, se marcaba el botón y abajo no cambiaba nada.
+              const suya = project.scenes.find((s) => s.shots.some((h) => h.id === section.shotId));
+              if (suya) setOpenScene(suya.id);
+              setSelShot(section.shotId);
+              requestAnimationFrame(() =>
+                document.getElementById(`toma-${section.shotId}`)
+                  ?.scrollIntoView({ block: "center", behavior: "smooth" }));
+            }}
+          />
+
+          {/* El mando, aquí dentro. Es donde hace falta: esta ventana se queda
+              fija mientras editas, así que colocar un efecto ya no obliga a
+              subir al reproductor de arriba ni a bajar luego a donde estabas.
+              Lleva los efectos del tramo que se está viendo —los de la escena y
+              los de la toma—, no los de la toma marcada en la lista. */}
+          {!!capasDelTramo.length && (
+            <MoverEfectos
+              capas={capasDelTramo}
+              onMover={moverVfx}
+              onResaltar={setSelVfx}
+              compacto
+              etiqueta="Mover efectos de este tramo"
+              onAbierto={setMandoAbierto}
+            />
+          )}
         </div>
       )}
     </div>

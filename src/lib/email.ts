@@ -10,6 +10,18 @@ function resend() {
 }
 
 /**
+ * ¿Se puede enviar correo en este despliegue?
+ *
+ * Se pregunta ANTES de buscar la cuenta a propósito. La respuesta no depende
+ * de quién pide el enlace, así que se puede contar sin filtrar si esa cuenta
+ * existe; y es el fallo más habitual con diferencia —desplegar sin la clave—,
+ * que antes se tragaba en silencio.
+ */
+export function correoConfigurado() {
+  return !!env.resendApiKey || !isProd;
+}
+
+/**
  * Envía el enlace de restablecer contraseña.
  * Sin RESEND_API_KEY en desarrollo: escribe el enlace en la consola del servidor.
  */

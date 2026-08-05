@@ -37,8 +37,12 @@ export async function POST(req: Request) {
   }
 
   const passwordHash = await hashPassword(parsed.data.nueva);
+  // La fecha es lo que echa a las sesiones que ya estuvieran abiertas. Sin
+  // ella, restablecer la contraseña no servía de nada contra una cookie
+  // robada: seguía entrando hasta que caducara, treinta días después.
+  const passwordChangedAt = new Date();
   await prisma.$transaction([
-    prisma.user.update({ where: { id: row.userId }, data: { passwordHash } }),
+    prisma.user.update({ where: { id: row.userId }, data: { passwordHash, passwordChangedAt } }),
     prisma.passwordResetToken.updateMany({
       where: { userId: row.userId, usedAt: null },
       data: { usedAt: new Date() },

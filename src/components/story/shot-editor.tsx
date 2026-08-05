@@ -16,6 +16,7 @@ import { GapInput } from "./gap-input";
 import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
 import { VfxEditor } from "./vfx-editor";
+import { PestanasToma, type PestanaToma } from "./pestanas-toma";
 import {
   newDialogue, newSfx, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
   overlaySoundStart, duracionQueCabe,
@@ -63,6 +64,8 @@ export function ShotEditor({
   onOmitirEfectoEscena,
   onSoloEnEstaToma,
   vocesIa,
+  pestana,
+  onPestana,
 }: {
   shot: Shot;
   index: number;
@@ -103,6 +106,11 @@ export function ShotEditor({
   onSoloEnEstaToma: (vfxId: string) => void;
   /** Si hay OpenAI: se muestra el desplegable de voces TTS (alloy, nova…). */
   vocesIa?: boolean;
+  /** Qué sección se está viendo. Vive fuera para que se mantenga al cambiar
+   *  de toma: quien está colocando efectos sigue en efectos, sin volver a
+   *  buscarlos toma por toma. */
+  pestana: PestanaToma;
+  onPestana: (p: PestanaToma) => void;
 }) {
   const [verSonidos, setVerSonidos] = useState(false);
   // Con duración fija la toma no crece para que quepa la voz: si se queda
@@ -159,7 +167,9 @@ export function ShotEditor({
   }
 
   return (
-    <div className={`rounded-xl border bg-surface-2/40 p-3 ${expanded ? "border-brand/60" : "border-border"}`}>
+    // El id deja que el puesto de mando traiga esta toma a la vista al saltar
+    // de una a otra, en vez de tener que buscarla rodando la rueda.
+    <div id={`toma-${shot.id}`} className={`scroll-mt-24 rounded-xl border bg-surface-2/40 p-3 ${expanded ? "border-brand/60" : "border-border"}`}>
       <div className="flex items-center gap-2">
         <button onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-2 text-left">
           <span className="chip shrink-0 bg-brand/15 text-brand">Toma {index + 1}</span>
@@ -223,12 +233,31 @@ export function ShotEditor({
       {/* Con el candado puesto se apagan los controles (fieldset) y también los
           arrastres, que no son controles de formulario. */}
       <div className={locked ? "pointer-events-none select-none opacity-60" : ""}>
+      {/* Fuera del fieldset: con la toma bloqueada se sigue pudiendo mirar qué
+          lleva dentro, que es justo lo que se quiere de un candado. */}
+      <PestanasToma
+        activa={pestana}
+        onCambiar={onPestana}
+        cuentas={{
+          camara: 0,
+          voz: shot.dialogues.length,
+          sonido: shot.sfx.length,
+          imagenes: shot.overlays.length,
+          efectos: (shot.vfx?.length ?? 0)
+            + (shot.usarVfxEscena !== false
+              ? sceneVfx.filter((v) => !(shot.omitirVfxEscena ?? []).includes(v.id)).length
+              : 0),
+        }}
+      />
       <fieldset disabled={locked} className="contents">
       {/* Movimiento */}
+      {pestana === "camara" && (
       <div className="mt-3">
         <MotionEditor shot={shot} imageId={imageId} imgW={imgW} imgH={imgH} prevTo={prevTo} onChange={onChange} />
       </div>
+      )}
 
+      {pestana === "camara" && (<>
       {/* Tiempo de la toma: movimiento de cámara + pausa quieta al final */}
       <div className="mt-3 rounded-xl border border-border p-2.5">
         <span className="label">Tiempo de la toma</span>
@@ -331,7 +360,10 @@ export function ShotEditor({
         />
       </div>
 
+      </>)}
+
       {/* Diálogos */}
+      {pestana === "voz" && (
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Diálogos (voz IA)</span>
@@ -493,7 +525,10 @@ export function ShotEditor({
         </div>
       </div>
 
+      )}
+
       {/* Sonidos de la toma */}
+      {pestana === "sonido" && (
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Sonidos de esta toma</span>
@@ -643,7 +678,10 @@ export function ShotEditor({
         ))}
       </div>
 
+      )}
+
       {/* Stickers: PNG quietos o GIF animados */}
+      {pestana === "imagenes" && (
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Imágenes encima (PNG / GIF)</span>
@@ -899,6 +937,9 @@ export function ShotEditor({
         </div>
       </div>
 
+      )}
+
+      {pestana === "efectos" && (<>
       <div className="mt-3 space-y-2">
         <label className="flex items-center gap-2 text-xs">
           <input
@@ -976,6 +1017,7 @@ export function ShotEditor({
         onChange={(v) => onChange({ ...shot, vfx: v })}
         onSelect={onSelectVfx}
       />
+      </>)}
       </fieldset>
       </div>
       </>
