@@ -81,7 +81,11 @@ export function CapasEscena({
         });
         const jc = await rc.json();
         if (!rc.ok) { fallos.push(`${capa.name}: ${jc.error ?? "no se pudo"}`); continue; }
-        const rec = await prepararCapa(`data:image/png;base64,${jc.imagen}`, i === 0);
+        const rec = await prepararCapa(
+          `data:image/png;base64,${jc.imagen}`,
+          i === 0,
+          jc.porCroma ? (jc.croma ?? undefined) : undefined,
+        );
         const id = await onGuardarImagen(rec.url, capa.name);
         // La profundidad viene del mapa, que es quien sabe qué está lejos.
         nuevas.push({
