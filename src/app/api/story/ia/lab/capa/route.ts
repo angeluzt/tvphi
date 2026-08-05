@@ -13,11 +13,16 @@ import { CROMA } from "@/lib/lab/quitar-fondo";
 // de imaginárselo. Sin eso, pedir cinco capas da cinco escenas distintas que no
 // encajan entre sí.
 //
-// EL FONDO SE PIDE OPACO y las demás capas TRANSPARENTES. gpt-image sabe
-// devolver PNG con alfa (background: "transparent"), y cuando lo hace el
-// resultado es limpio de verdad. Pero a veces lo ignora, así que en el prompt
-// se le pide además que, si no puede, use un fondo plano de un color concreto:
-// el cliente lo detecta y lo quita. Nunca se da por hecho que salió bien.
+// EL FONDO SE PIDE OPACO y las demás capas SOBRE CROMA (magenta plano), que el
+// cliente quita al recibirlas.
+//
+// Lo suyo sería pedir alfa de verdad (background: "transparent"), pero
+// gpt-image-2 contesta «Transparent background is not supported for this model»
+// al editar. Pedirlo igualmente y reintentar era pagar DOS viajes por capa para
+// acabar siempre en el croma, así que se va directo a lo que funciona. El
+// intento con alfa sigue ahí, apagado, detrás de la opción «alfa».
+//
+// Aun así el cliente nunca da por hecho lo que vino: mira la imagen y decide.
 
 
 const cuerpo = z.object({
@@ -34,6 +39,16 @@ const cuerpo = z.object({
   esFondo: z.boolean().default(false),
   formato: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
   modelo: z.string().max(80).optional(),
+  /**
+   * Intentar primero la transparencia de verdad (alfa) y caer al croma si el
+   * modelo la rechaza. Apagado por defecto A PROPÓSITO.
+   *
+   * gpt-image-2 contesta «Transparent background is not supported for this
+   * model» al editar, así que con él ese primer intento no sirve para nada:
+   * son dos viajes por capa —el doble de espera— para acabar siempre en el
+   * croma. Se deja la puerta abierta por si un modelo futuro sí lo admite.
+   */
+  alfa: z.boolean().default(false),
 });
 
 const TAMANOS: Record<string, string> = {
@@ -156,14 +171,13 @@ export async function POST(req: Request) {
   });
 
   try {
-    let r = await pedir(false);
-    let porCroma = false;
-    // «Transparent background is not supported for this model»: hay modelos que
-    // saben editar pero no devolver alfa. Antes eso tumbaba la capa —y con ella
-    // el resto del lote—. Ahora se reintenta pidiendo el fondo por PROMPT, en
-    // magenta plano, y el cliente lo recorta. Sale peor en los bordes finos que
-    // el alfa de verdad, pero sale.
-    if (!r.ok && !parsed.data.esFondo) {
+    // Una llamada, la que va a servir. El fondo se pide opaco —eso el modelo sí
+    // lo admite— y las capas de delante van directas al croma.
+    let porCroma = !parsed.data.esFondo && !parsed.data.alfa;
+    let r = await pedir(porCroma);
+    // Solo si se pidió intentar el alfa: si el modelo lo rechaza, se reintenta
+    // con croma en vez de perder la capa.
+    if (!r.ok && !parsed.data.esFondo && parsed.data.alfa) {
       const aviso = await r.clone().text();
       if (/background|transparen/i.test(aviso)) {
         r = await pedir(true);

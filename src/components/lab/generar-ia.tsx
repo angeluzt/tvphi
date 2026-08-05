@@ -156,8 +156,9 @@ export function GenerarIa({
 
       <p className="text-[10px] text-muted">
         El mapa es una llamada de texto, barata: mírala y corrígela antes de dibujar. Dibujar
-        cuesta <b className="text-fg">una imagen por capa</b>. El fondo se pide opaco y el resto
-        transparente; si el modelo devuelve la capa opaca, se le quita el color de fondo aquí mismo.
+        cuesta <b className="text-fg">una imagen por capa</b>, ni una más. El fondo se pide opaco;
+        las de delante, sobre un magenta plano que se les quita aquí mismo, porque este modelo no
+        sabe devolver transparencia.
       </p>
 
       {paso && !error && (

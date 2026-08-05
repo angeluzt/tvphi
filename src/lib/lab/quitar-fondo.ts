@@ -1,13 +1,13 @@
 // Dejar una capa sin fondo, para poder apilarla.
 //
-// EL PLAN A es pedirle al modelo la imagen ya con transparencia
-// (background: "transparent" en la API de imágenes). Cuando funciona, sale
-// perfecta: bordes limpios, pelo, humo, todo.
+// LO NORMAL, hoy, es que venga con CROMA: al modelo se le pide un fondo PLANO
+// de un color raro y aquí se le quita. No es tan bueno como la transparencia de
+// verdad —los bordes finos sufren— pero es lo que gpt-image-2 sabe hacer, y es
+// mucho mejor que tirar la imagen.
 //
-// EL PLAN B es para cuando el modelo lo ignora y devuelve la imagen opaca, que
-// pasa. Entonces se le ha pedido en el prompt que use un fondo PLANO de un
-// color raro, y aquí se le quita. No es tan bueno como la transparencia de
-// verdad —los bordes finos sufren— pero es mucho mejor que tirar la imagen.
+// SI VIENE CON ALFA de verdad, mejor: se deja tal cual. Pasa con los modelos que
+// admiten background: "transparent", y entonces sale perfecta —bordes limpios,
+// pelo, humo, todo—. Este archivo no pregunta cuál fue: lo mira.
 //
 // Se decide MIRANDO la imagen, no confiando en lo que dijo la API: se cuenta
 // cuánto hay transparente de verdad.
