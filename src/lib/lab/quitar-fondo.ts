@@ -105,9 +105,14 @@ export function colorDelFondo(d: Uint8ClampedArray, w: number, h: number) {
   //    dibujo rara vez ocupa las cuatro. En una imagen a sangre —un degradado de
   //    cielo a tierra— las esquinas son distintas entre sí, y ahí NO hay nada
   //    que quitar: hacerlo destrozaría la imagen.
+  //
+  //    Si el borde está CLARAMENTE dominado por el color (≥55%), bastan 2
+  //    esquinas: la capa delantera casi siempre pisa una o dos (pies, cabeza)
+  //    y con exigir 3 se quedaba rosa y opaca.
   const esquinas = [px(1, 1), px(w - 2, 1), px(1, h - 2), px(w - 2, h - 2)];
   const iguales = esquinas.filter((c) => c && dist(c, base) < 42).length;
-  if (iguales < 3) return null;
+  const bordeFuerte = cerca / muestras.length >= 0.55;
+  if (iguales < (bordeFuerte ? 2 : 3)) return null;
 
   return base;
 }
@@ -117,6 +122,36 @@ const dist = (a: [number, number, number], b: [number, number, number]) =>
 
 const hex = (c: [number, number, number]) =>
   "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+
+/** "#FF00FF" → [255,0,255]. Null si no es un hex de 6 dígitos. */
+export function parseHex(s: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(s.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * Qué fracción de la imagen se parece a ese color.
+ * Sirve para decidir si el magenta pedido al modelo SÍ está, aunque el dibujo
+ * tape las esquinas y el detector de borde diga que no hay croma.
+ */
+export function fraccionCroma(
+  d: Uint8ClampedArray, w: number, h: number,
+  base: [number, number, number], radio = 48,
+) {
+  const paso = Math.max(1, Math.floor(Math.min(w, h) / 64));
+  let ok = 0, total = 0;
+  for (let y = 0; y < h; y += paso) {
+    for (let x = 0; x < w; x += paso) {
+      const i = (y * w + x) * 4;
+      if (d[i + 3] < 128) continue;
+      total++;
+      if (dist([d[i], d[i + 1], d[i + 2]], base) < radio) ok++;
+    }
+  }
+  return total ? ok / total : 0;
+}
 
 const tope255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
 
@@ -197,8 +232,16 @@ function porDistancia(d: Uint8ClampedArray, base: [number, number, number], dent
  *
  * `esFondo` cambia todo: la capa del fondo DEBE quedarse opaca —es la que
  * tapa el negro— así que ahí no se quita nada aunque venga con croma.
+ *
+ * `cromaPedido` es el color que la API le pidió al modelo (magenta). Si el
+ * detector de borde falla —muy típico en la ÚLTIMA capa, la delantera, que
+ * pisa esquinas—, se usa ese color si hay bastante en la imagen.
  */
-export async function prepararCapa(dataUrl: string, esFondo: boolean): Promise<Recorte> {
+export async function prepararCapa(
+  dataUrl: string,
+  esFondo: boolean,
+  cromaPedido?: string | null,
+): Promise<Recorte> {
   const img = await cargarImagen(dataUrl);
   const cv = lienzoDe(img);
   const c = cv.getContext("2d")!;
@@ -211,7 +254,18 @@ export async function prepararCapa(dataUrl: string, esFondo: boolean): Promise<R
   // para no confundir cuatro píxeles sueltos con un fondo recortado.
   if (vacio > 0.02) return { url: cv.toDataURL("image/png"), via: "transparente", vacio };
 
-  const base = colorDelFondo(d, cv.width, cv.height);
+  let base = colorDelFondo(d, cv.width, cv.height);
+
+  // El borde no convenció (dibujo en las esquinas), pero el modelo SÍ pintó el
+  // magenta que se le pidió: se quita igual. Sin esto la capa delantera se
+  // quedaba rosa y tapaba al resto.
+  if (!base) {
+    const pedido = parseHex(cromaPedido ?? "") ?? parseHex(CROMA);
+    if (pedido && fraccionCroma(d, cv.width, cv.height, pedido) >= 0.03) {
+      base = pedido;
+    }
+  }
+
   if (!base) return { url: cv.toDataURL("image/png"), via: "opaca", vacio };
 
   const r = quitarColor(cv, base);

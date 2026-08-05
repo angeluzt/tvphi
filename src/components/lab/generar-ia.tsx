@@ -102,7 +102,13 @@ export function GenerarIa({
 
         // Aquí se decide si hubo que quitar el fondo, MIRANDO la imagen: no se
         // confía en que la API haya hecho lo que se le pidió.
-        const rec = await prepararCapa(`data:image/png;base64,${j.imagen}`, i === 0);
+        const rec = await prepararCapa(
+          `data:image/png;base64,${j.imagen}`,
+          i === 0,
+          // El servidor ya dice qué croma pidió; sin esto, si el dibujo tapa
+          // esquinas (capa delantera), el cliente cree que no hay fondo que quitar.
+          j.porCroma ? (j.croma ?? undefined) : undefined,
+        );
         out.push({ id: capa.id, nombre: capa.name, url: rec.url, via: rec.via, vacio: rec.vacio, color: rec.color });
         setHechas([...out]);
       }
