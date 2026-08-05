@@ -9,9 +9,9 @@ import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
-  origenPaso, destinoPaso, interpolarTramo,
+  planificarCola, interpolarTramo, escalaPerspectiva,
   type AnimParalaje, type MovCola, type PasoSecuencia, type VistaCamara, type EstadoCamara,
-  type DesdePaso, type FadeAccion, type FadeCapa,
+  type DesdePaso, type FadeAccion, type FadeCapa, type Tramo,
 } from "@/lib/lab/anim-paralaje";
 
 // Paso 2: apilar las capas ya generadas y moverlas con profundidad.
@@ -55,6 +55,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const [enSecuencia, setEnSecuencia] = useState(false);
   const [pasoActivo, setPasoActivo] = useState(0);
   const [repetirCola, setRepetirCola] = useState(false);
+  /** Qué paso de la cola tiene abiertos sus ajustes. Solo uno a la vez. */
+  const [abierto, setAbierto] = useState<string | null>(null);
   const [aviso, setAviso] = useState("Carga primero el fondo y luego las capas PNG con transparencia.");
   const [busyZip, setBusyZip] = useState<"bajar" | "subir" | null>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -74,8 +76,11 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const ultimoFrameRef = useRef<number | null>(null);
   /** Pose acumulada (entre pasos y al terminar la cola). */
   const estadoRef = useRef<EstadoCamara>(estadoNeutro());
-  const origenRef = useRef<EstadoCamara>(estadoNeutro());
-  const destinoRef = useRef<EstadoCamara>(estadoNeutro());
+  /**
+   * La cola entera planificada de antemano. Hace falta completa: para no
+   * frenar en cada juntura, un tramo necesita saber a dónde va el siguiente.
+   */
+  const planRef = useRef<Tramo[]>([]);
   /** Tras una secuencia: dibujar la pose final en vez del idle. */
   const retenerPoseRef = useRef(false);
 
@@ -92,12 +97,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     return capasRef.current.map((c) => ({ id: c.id, depth: c.depth }));
   }
 
-  function prepararPaso(idx: number, estadoActual: EstadoCamara) {
-    const paso = colaRef.current[idx];
-    if (!paso) return;
-    const origen = origenPaso(estadoActual, paso);
-    origenRef.current = origen;
-    destinoRef.current = destinoPaso(origen, paso, fuerzaRef.current, metaCapas());
+  function planificar() {
+    planRef.current = planificarCola(colaRef.current, fuerzaRef.current, metaCapas());
     pasoMsRef.current = 0;
   }
 
@@ -188,24 +189,37 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     return () => { vivo = false; };
   }, [semilla]);
 
+  // UNA sola vez, y con [] a propósito.
+  //
+  // Antes este efecto no llevaba lista de dependencias, así que se rearmaba en
+  // CADA render: cancelaba el bucle y ponía el reloj a cero. Y como al cambiar
+  // de paso se hace setPasoActivo, cada juntura provocaba un render, y ese
+  // render dejaba dt = 0 en el fotograma siguiente: la misma imagen pintada dos
+  // veces. Ese era el tirón que se veía al encadenar efectos, y no venía de la
+  // animación sino de aquí. Todo lo que usa el bucle vive en refs, así que
+  // montarlo una vez es además lo correcto.
+  const pintarRef = useRef(pintar);
+  pintarRef.current = pintar;
   useEffect(() => {
     let vivo = true;
+    let id = 0;
     const paso = (ahora: number) => {
       if (!vivo) return;
       const prev = ultimoFrameRef.current;
       ultimoFrameRef.current = ahora;
       const dt = prev == null ? 0 : Math.min(64, ahora - prev);
-      pintar(dt);
-      requestAnimationFrame(paso);
+      pintarRef.current(dt);
+      id = requestAnimationFrame(paso);
     };
-    const id = requestAnimationFrame(paso);
+    id = requestAnimationFrame(paso);
     return () => { vivo = false; cancelAnimationFrame(id); ultimoFrameRef.current = null; };
-  });
+  }, []);
 
   function vistaDesdeEstado(e: EstadoCamara): VistaCamara {
     return {
       ox: e.ox, oy: e.oy, zoom: e.zoom,
-      zoomCapa: (depth) => 1 + e.zoomExtra * depth * depth,
+      zoomCapa: (depth) => escalaPerspectiva(e.avance, depth),
+      panCapa: (depth) => depth * escalaPerspectiva(e.avance, depth),
       alphaCapa: (_d, id) => (id && typeof e.alpha[id] === "number" ? e.alpha[id] : 1),
       t: 1, fin: true,
     };
@@ -228,38 +242,41 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     const k = (fuerzaRef.current / 100) * 0.08;
     let vista: VistaCamara = {
       ox: 0, oy: 0, zoom: 1,
-      zoomCapa: () => 1, alphaCapa: () => 1, t: 0, fin: false,
+      zoomCapa: () => 1, panCapa: (d) => d, alphaCapa: () => 1, t: 0, fin: false,
     };
 
-    if (enSecuenciaRef.current && colaRef.current.length) {
+    if (enSecuenciaRef.current && planRef.current.length) {
+      // El reloj corre y DESPUÉS se mira en qué tramo cae, consumiendo los que
+      // ya se hayan pasado. Antes se pintaba el final clavado de un tramo y
+      // luego el principio del siguiente: dos fotogramas en el mismo sitio, o
+      // sea un tropiezo de 16 ms en cada juntura, justo lo que se veía como
+      // «se pausa». Ahora el sobrante cruza la juntura y no se pinta dos veces.
       pasoMsRef.current += dt;
-      const { vista: v, estado } = interpolarTramo(
-        origenRef.current,
-        destinoRef.current,
-        pasoMsRef.current,
-        colaRef.current[pasoActivoRef.current]?.durMs ?? 4000,
-        metaCapas(),
-      );
-      vista = v;
-      if (v.fin) {
-        estadoRef.current = clonarEstado(destinoRef.current);
-        const next = pasoActivoRef.current + 1;
-        if (next < colaRef.current.length) {
-          pasoActivoRef.current = next;
-          setPasoActivo(next);
-          prepararPaso(next, estadoRef.current);
-        } else if (repetirRef.current) {
-          estadoRef.current = estadoNeutro();
-          pasoActivoRef.current = 0;
-          setPasoActivo(0);
-          prepararPaso(0, estadoRef.current);
-        } else {
-          enSecuenciaRef.current = false;
-          setEnSecuencia(false);
-          retenerPoseRef.current = true;
-          setAviso("Secuencia terminada — la pose se conserva. «Centrar» la reinicia.");
+      let idx = pasoActivoRef.current;
+      let acabo = false;
+      while (idx < planRef.current.length && pasoMsRef.current >= planRef.current[idx].durMs) {
+        pasoMsRef.current -= planRef.current[idx].durMs;
+        estadoRef.current = clonarEstado(planRef.current[idx].destino);
+        idx++;
+        if (idx >= planRef.current.length) {
+          if (repetirRef.current) {
+            idx = 0;
+            estadoRef.current = estadoNeutro();
+          } else { acabo = true; }
+          break;
         }
+      }
+      if (acabo) {
+        enSecuenciaRef.current = false;
+        setEnSecuencia(false);
+        retenerPoseRef.current = true;
+        pasoMsRef.current = 0;
+        setAviso("Secuencia terminada — la pose se conserva. «Centrar» la reinicia.");
+        vista = vistaDesdeEstado(estadoRef.current);
       } else {
+        if (idx !== pasoActivoRef.current) { pasoActivoRef.current = idx; setPasoActivo(idx); }
+        const { vista: v, estado } = interpolarTramo(planRef.current[idx], pasoMsRef.current, metaCapas());
+        vista = v;
         estadoRef.current = estado;
       }
     } else if (retenerPoseRef.current) {
@@ -269,7 +286,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         vista = {
           ox: raton.current.x * k,
           oy: raton.current.y * k * 0.5,
-          zoom: 1, zoomCapa: () => 1, alphaCapa: () => 1, t: 0, fin: false,
+          zoom: 1, zoomCapa: () => 1, panCapa: (d) => d,
+          alphaCapa: () => 1, t: 0, fin: false,
         };
       } else {
         pasoMsRef.current += dt;
@@ -277,16 +295,24 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       }
     }
 
+    // El fondo es el único opaco: si se queda por debajo del cuadro, asoma el
+    // negro por los bordes. Se le pone suelo en 1 y así «alejar» no rompe nada.
+    const idFondo = capas.find((x) => x.visible)?.id;
     for (const capa of capas) {
       if (!capa.visible) continue;
-      const e = capa.escala * vista.zoom * vista.zoomCapa(capa.depth);
+      let e = capa.escala * vista.zoom * vista.zoomCapa(capa.depth);
+      if (capa.id === idFondo) e = Math.max(1, e);
       const dw = w * e, dh = h * e;
+      // El paneo también va con la perspectiva: de cerca, el mismo movimiento
+      // de cámara barre mucho más cuadro. Sin esto, al acercarse el paralaje se
+      // queda corto y la escena vuelve a parecer plana.
+      const pan = vista.panCapa(capa.depth);
       c.save();
       c.globalAlpha = capa.opacidad * vista.alphaCapa(capa.depth, capa.id);
       c.drawImage(
         capa.img,
-        -(dw - w) / 2 + vista.ox * capa.depth * w,
-        -(dh - h) / 2 + vista.oy * capa.depth * h,
+        -(dw - w) / 2 + vista.ox * pan * w,
+        -(dh - h) / 2 + vista.oy * pan * h,
         dw, dh,
       );
       c.restore();
@@ -328,7 +354,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     estadoRef.current = estadoNeutro();
     pasoActivoRef.current = 0;
     setPasoActivo(0);
-    prepararPaso(0, estadoRef.current);
+    planificar();
     setEnSecuencia(true);
     setMoviendo(true);
     setAviso(`Reproduciendo secuencia (${cola.length} pasos, estado encadenado)…`);
@@ -453,7 +479,57 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           ))}
         </div>
 
-        <div className="card space-y-2 p-3">
+        <div className="space-y-2">
+          {/* La vista previa, arriba y pegada. Antes vivía debajo de toda la
+              cola: para tocar un paso había que bajar, y se editaba a ciegas.
+              Ahora se queda a la vista mientras se ajusta lo de abajo. */}
+          <div className="sticky top-2 z-10 space-y-2 rounded-xl border border-border bg-surface p-2 shadow-lg shadow-black/40">
+            <div
+              ref={caja}
+              className="overflow-hidden rounded-lg border border-border bg-black"
+              onPointerMove={(e) => {
+                if (enSecuencia || retenerPoseRef.current) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                raton.current = {
+                  x: ((e.clientX - r.left) / r.width - 0.5) * 2,
+                  y: ((e.clientY - r.top) / r.height - 0.5) * 2,
+                };
+                encima.current = true;
+              }}
+              onPointerLeave={() => { encima.current = false; }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const z = Array.from(e.dataTransfer.files).find((f) => /\.zip$/i.test(f.name));
+                if (z) void importarZip(z);
+                else void meter(e.dataTransfer.files);
+              }}
+              onDragOver={(e) => e.preventDefault()}
+            >
+              <canvas ref={canvas} className="block h-auto w-full" />
+            </div>
+            {!!cola.length && (
+              <div className="flex items-center gap-1">
+                {cola.map((q, i) => (
+                  <span
+                    key={q.id}
+                    title={`${i + 1}. ${MOV_COLA.find((o) => o.id === q.mov)?.label ?? q.mov}`}
+                    style={{ flexGrow: q.durMs }}
+                    className={`h-1 rounded-full ${enSecuencia && i === pasoActivo ? "bg-brand" : i < pasoActivo ? "bg-accent/50" : "bg-border"}`}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted">
+                Fuerza
+                <input type="range" min={0} max={100} value={fuerza} onChange={(e) => setFuerza(Number(e.target.value))} className="min-w-0 flex-1" />
+                <span className="w-8 tabular-nums">{fuerza}%</span>
+              </label>
+            </div>
+            <p className="text-[11px] text-muted">{aviso}</p>
+          </div>
+
+          <div className="card space-y-2 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted">
               Idle (fuera de cola)
@@ -656,7 +732,19 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                       )}
                     </div>
                     <p className="mt-0.5 text-[10px] opacity-80">{desdeTxt}{fadeTxt || " · encadena"}</p>
-                    {!enSecuencia && (
+                    {/* Los seis controles de cada paso solo salen al abrirlo:
+                        con cinco pasos abiertos a la vez, la página era un
+                        tobogán y se tocaban cosas sin querer al bajar. */}
+                    {!enSecuencia && abierto !== p.id && (
+                      <button
+                        type="button"
+                        onClick={() => setAbierto(p.id)}
+                        className="mt-1 text-[10px] text-accent hover:underline"
+                      >
+                        Ajustar…
+                      </button>
+                    )}
+                    {!enSecuencia && abierto === p.id && (
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <select
                           value={p.mov}
@@ -713,6 +801,13 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                           <option value="desaparecer">Desaparecer</option>
                           <option value="aparecer">Aparecer</option>
                         </select>
+                        <button
+                          type="button"
+                          onClick={() => setAbierto(null)}
+                          className="text-[10px] text-muted hover:text-fg"
+                        >
+                          Cerrar
+                        </button>
                       </div>
                     )}
                   </li>
@@ -721,35 +816,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
             </ol>
           )}
 
-          <label className="flex items-center gap-2 text-[11px] text-muted">
-            Fuerza
-            <input type="range" min={0} max={100} value={fuerza} onChange={(e) => setFuerza(Number(e.target.value))} className="min-w-0 flex-1" />
-            <span className="w-8 tabular-nums">{fuerza}%</span>
-          </label>
-          <div
-            ref={caja}
-            className="overflow-hidden rounded-xl border border-border bg-black"
-            onPointerMove={(e) => {
-              if (enSecuencia || retenerPoseRef.current) return;
-              const r = e.currentTarget.getBoundingClientRect();
-              raton.current = {
-                x: ((e.clientX - r.left) / r.width - 0.5) * 2,
-                y: ((e.clientY - r.top) / r.height - 0.5) * 2,
-              };
-              encima.current = true;
-            }}
-            onPointerLeave={() => { encima.current = false; }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const z = Array.from(e.dataTransfer.files).find((f) => /\.zip$/i.test(f.name));
-              if (z) void importarZip(z);
-              else void meter(e.dataTransfer.files);
-            }}
-            onDragOver={(e) => e.preventDefault()}
-          >
-            <canvas ref={canvas} className="block h-auto w-full" />
           </div>
-          <p className="text-[11px] text-muted">{aviso}</p>
         </div>
       </div>
     </div>
