@@ -23,11 +23,21 @@ interface CapaImg {
   /** Cuánto se agranda, para que al desplazarse no asome el borde. */
   escala: number;
   opacidad: number;
+  /** Cómo se consiguió el fondo transparente, si vino de la IA. */
+  via?: "transparente" | "croma" | "opaca";
+  vacio?: number;
+}
+
+export interface Semilla {
+  nombre: string;
+  url: string;
+  via?: CapaImg["via"];
+  vacio?: number;
 }
 
 let contador = 0;
 
-export function Compositor({ semilla }: { semilla?: { nombre: string; url: string }[] }) {
+export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const [capas, setCapas] = useState<CapaImg[]>([]);
   const [moviendo, setMoviendo] = useState(true);
   const [fuerza, setFuerza] = useState(55);
@@ -65,7 +75,9 @@ export function Compositor({ semilla }: { semilla?: { nombre: string; url: strin
     (async () => {
       const nuevas: CapaImg[] = [];
       for (const s of semilla) {
-        try { nuevas.push(hacerCapa(s.nombre, await cargar(s.url), nuevas.length)); } catch {}
+        try {
+          nuevas.push({ ...hacerCapa(s.nombre, await cargar(s.url), nuevas.length), via: s.via, vacio: s.vacio });
+        } catch {}
       }
       if (!vivo || !nuevas.length) return;
       tam.current = { w: nuevas[0].img.naturalWidth, h: nuevas[0].img.naturalHeight };
@@ -201,6 +213,18 @@ export function Compositor({ semilla }: { semilla?: { nombre: string; url: strin
                 </button>
                 <button onClick={() => setCapas((cs) => cs.filter((x) => x.id !== c.id))} className="text-muted hover:text-danger"><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
+              {/* De dónde salió su transparencia. Se dice AQUÍ, donde vive la
+                  capa: si una llega opaca sin poder quitarle nada, tapará a las
+                  de atrás y hay que saberlo mirando esta lista, no un mensaje
+                  que ya se fue de la pantalla. */}
+              {c.via && (
+                <p className={`text-[10px] ${c.via === "opaca" && i > 0 ? "text-gold" : "text-muted"}`}>
+                  {c.via === "transparente" && "vino con transparencia"}
+                  {c.via === "croma" && "se le quitó el color de fondo"}
+                  {c.via === "opaca" && (i === 0 ? "fondo opaco, como debe ser" : "opaca y sin fondo plano que quitar: tapará a las de atrás")}
+                  {typeof c.vacio === "number" ? ` · ${Math.round(c.vacio * 100)}% vacío` : ""}
+                </p>
+              )}
               <Barra etiqueta="Profundidad" valor={c.depth} max={1} paso={0.01}
                 onCambio={(v) => upd(c.id, { depth: v })} formato={(v) => v.toFixed(2)} />
               <Barra etiqueta="Zoom" valor={c.escala} min={1} max={1.4} paso={0.01}

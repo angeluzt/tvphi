@@ -3,13 +3,18 @@
 import { useState } from "react";
 import { Map, Layers3, FlaskConical } from "lucide-react";
 import { MapaEditor } from "./mapa-editor";
-import { Compositor } from "./compositor";
+import { Compositor, type Semilla } from "./compositor";
+import { GenerarIa } from "./generar-ia";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import type { Escena } from "@/lib/lab/escena";
 
-export function LabApp() {
+export function LabApp({ hayIa }: { hayIa: boolean }) {
   const [pestana, setPestana] = useState<"mapa" | "compositor">("mapa");
-  const [semilla, setSemilla] = useState<{ nombre: string; url: string }[] | undefined>();
+  const [semilla, setSemilla] = useState<Semilla[] | undefined>();
+  // El mapa que hay ahora mismo, para que el panel de IA pueda dibujarlo.
+  const [escena, setEscena] = useState<Escena | null>(null);
+  // Lo que se le pasa al editor cuando la IA escribe un mapa nuevo.
+  const [impuesta, setImpuesta] = useState<Escena | null>(null);
 
   // Pasar el mapa al compositor sin salir de la página: cada capa se pinta en
   // su propio PNG transparente y se le da al compositor como si fueran las
@@ -63,8 +68,22 @@ export function LabApp() {
         ))}
       </div>
 
+      {hayIa && pestana === "mapa" && (
+        <GenerarIa
+          escena={escena}
+          onEscena={(e) => { setImpuesta(e); setEscena(e); }}
+          onCapas={(cs) => {
+            // Las imágenes generadas van directas al montaje: es el final del
+            // recorrido, y hacer que el usuario las baje y las vuelva a subir
+            // no aporta nada.
+            setSemilla(cs.map((c) => ({ nombre: c.nombre, url: c.url, via: c.via, vacio: c.vacio })));
+            setPestana("compositor");
+          }}
+        />
+      )}
+
       {pestana === "mapa"
-        ? <MapaEditor onEnviarAlCompositor={probar} />
+        ? <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} />
         : <Compositor semilla={semilla} />}
     </div>
   );

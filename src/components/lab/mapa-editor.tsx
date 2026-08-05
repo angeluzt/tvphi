@@ -15,7 +15,17 @@ import { EJEMPLOS } from "@/lib/lab/ejemplos";
 // JSON de la escena, se ve al momento, y se exportan las capas como PNG con
 // fondo transparente más el texto que hay que darle al modelo de imagen.
 
-export function MapaEditor({ onEnviarAlCompositor }: { onEnviarAlCompositor?: (esc: Escena) => void }) {
+export function MapaEditor({
+  onEnviarAlCompositor,
+  onEscena,
+  escenaExterna,
+}: {
+  onEnviarAlCompositor?: (esc: Escena) => void;
+  /** Para que quien nos aloja sepa qué mapa hay cargado. */
+  onEscena?: (esc: Escena) => void;
+  /** Un mapa que llega de fuera (lo escribió la IA): sustituye al de aquí. */
+  escenaExterna?: Escena | null;
+}) {
   const [texto, setTexto] = useState(() => JSON.stringify(EJEMPLOS[0].escena, null, 2));
   const [esc, setEsc] = useState<Escena | null>(() => {
     const r = revisar(EJEMPLOS[0].escena);
@@ -37,6 +47,18 @@ export function MapaEditor({ onEnviarAlCompositor }: { onEnviarAlCompositor?: (e
 
   // Al cargar una escena nueva se marcan todas: lo normal es querer todas.
   useEffect(() => { setMarcadas(esc ? esc.layers.map((c) => c.id) : []); }, [esc]);
+  // Y se avisa fuera, que es quien la manda a dibujar.
+  useEffect(() => { if (esc) onEscena?.(esc); }, [esc]);
+
+  // Un mapa escrito por la IA entra aquí como si lo hubiera pegado el usuario:
+  // se ve, se puede corregir a mano y se dibuja desde el mismo sitio.
+  useEffect(() => {
+    if (!escenaExterna) return;
+    setTexto(JSON.stringify(escenaExterna, null, 2));
+    setEsc(escenaExterna);
+    setError(null);
+    setAviso(`Mapa de la IA: ${escenaExterna.layers.length} capas. Puedes retocarlo antes de dibujar.`);
+  }, [escenaExterna]);
 
   function aplicar(fuente?: string) {
     try {

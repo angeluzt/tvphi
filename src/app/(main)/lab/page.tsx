@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { esAdminHistorias } from "@/lib/story/cupo";
+import { hayOpenAi } from "@/lib/story/credenciales";
 import { LabApp } from "@/components/lab/lab-app";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export default async function LabPage() {
       <Link href="/" className="btn-ghost w-fit text-xs">
         <ArrowLeft className="h-3.5 w-3.5" /> Volver
       </Link>
-      <LabApp />
+      <LabApp hayIa={hayOpenAi()} />
     </div>
   );
 }
