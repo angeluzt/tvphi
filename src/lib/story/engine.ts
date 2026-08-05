@@ -192,6 +192,8 @@ export class StoryEngine {
     const audioIds = new Set<string>();
     for (const sc of p.scenes) {
       imgIds.add(sc.imageId);
+      // Las láminas del paralaje también son imágenes que hay que traer.
+      for (const capa of sc.capas ?? []) imgIds.add(capa.imageId);
       for (const sh of sc.shots) {
         for (const d of sh.dialogues) if (d.audioId) audioIds.add(d.audioId);
         for (const s of sh.sfx) audioIds.add(s.audioId);
@@ -916,8 +918,28 @@ export class StoryEngine {
     ctx.save();
     ctx.globalAlpha = alpha;
     if (offsetX) ctx.translate(offsetX, 0);
-    if (img && img.complete && img.naturalWidth) {
-      const fr = lerpFrame(frames.from, frames.to, p);
+    const fr = lerpFrame(frames.from, frames.to, p);
+    const capas = f.scene.capas ?? [];
+    if (capas.length) {
+      // PARALAJE. Cada lámina se recorta con SU propio encuadre: el de la
+      // cámara mezclado con el de partida según su profundidad. Con depth 1 la
+      // lámina sigue a la cámara igual que una foto normal; con depth 0 se
+      // queda clavada en el encuadre inicial y no se entera de que la cámara se
+      // ha movido. Lo de en medio es lo que da la sensación de fondo.
+      for (const capa of capas) {
+        const im = this.images.get(capa.imageId);
+        if (!im || !im.complete || !im.naturalWidth) continue;
+        const frC = lerpFrame(frames.from, fr, Math.max(0, Math.min(1, capa.depth)));
+        // El zoom de la lámina se aplica estrechando el recorte: así se agranda
+        // sobre el cuadro y al desplazarse no asoma el borde.
+        const e = Math.max(1, capa.escala || 1);
+        const { sx, sy, sw, sh } = framePx({ ...frC, w: frC.w / e }, im.naturalWidth, im.naturalHeight);
+        ctx.save();
+        ctx.globalAlpha = alpha * Math.max(0, Math.min(1, capa.opacidad ?? 1));
+        ctx.drawImage(im, sx, sy, sw, sh, 0, 0, this.w, this.h);
+        ctx.restore();
+      }
+    } else if (img && img.complete && img.naturalWidth) {
       const { sx, sy, sw, sh } = framePx(fr, iw, ih);
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, this.w, this.h);
     }

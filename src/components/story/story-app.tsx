@@ -27,6 +27,7 @@ import { VfxCanvas, VfxTools } from "./vfx-canvas";
 import { MarcaEfecto } from "./marca-efecto";
 import { MoverEfectos, desplazar } from "./mover-efectos";
 import type { PestanaToma } from "./pestanas-toma";
+import { CapasEscena } from "@/components/lab/capas-escena";
 import { MandoTramo } from "./mando-tramo";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
@@ -125,6 +126,7 @@ export function StoryApp({
   initialCupo,
   initialOpenId = null,
   initialSerie = null,
+  lab = false,
 }: {
   initialProjects: ProjMeta[];
   initialCupo: CupoHistorias;
@@ -132,6 +134,12 @@ export function StoryApp({
   initialOpenId?: string | null;
   /** Carpeta de serie a mostrar en el inicio (?serie=). */
   initialSerie?: string | null;
+  /**
+   * Editor del laboratorio: enseña lo que está en pruebas —de momento, las
+   * capas con paralaje— y solo se monta desde una página cerrada a admin.
+   * En el editor normal esto no existe, así que nadie más puede tropezárselo.
+   */
+  lab?: boolean;
 }) {
   const [project, setProject] = useState<StoryProject>(emptyProject());
   const [projects, setProjects] = useState<ProjMeta[]>(initialProjects);
@@ -1528,6 +1536,7 @@ export function StoryApp({
       const ids = new Set<string>();
       for (const sc of data.scenes) {
         ids.add(sc.imageId);
+        for (const capa of sc.capas ?? []) ids.add(capa.imageId);
         for (const sh of sc.shots) sh.overlays.forEach((o) => ids.add(o.imageId));
       }
       await Promise.all([...ids].map((i) => assetUrl(i)));
@@ -2383,6 +2392,26 @@ export function StoryApp({
                           />
                         </label>
                       </div>
+                      {/* En pruebas y solo en el editor del laboratorio: partir
+                          la escena en láminas con profundidad. */}
+                      {lab && (
+                        <CapasEscena
+                          capas={sc.capas ?? []}
+                          prompt={sc.prompt ?? ""}
+                          formato={project.aspect === "9:16" ? "9:16" : project.aspect === "1:1" ? "1:1" : "16:9"}
+                          onCambio={(capas) => mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => (s.id === sc.id ? { ...s, capas: capas.length ? capas : undefined } : s)),
+                          }))}
+                          onGuardarImagen={async (dataUrl, nombre) => {
+                            const blob = await (await fetch(dataUrl)).blob();
+                            const id = `capa-${nanoid(8)}`;
+                            await putAsset(id, blob);
+                            await assetUrl(id);
+                            return id;
+                          }}
+                        />
+                      )}
                       {dibujo?.ancla === sc.id && (
                         <div className="mt-2 rounded-lg border border-accent/40 bg-surface p-2.5">
                           <div className="flex items-center gap-2">

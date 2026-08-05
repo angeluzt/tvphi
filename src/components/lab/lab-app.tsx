@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Map, Layers3, FlaskConical } from "lucide-react";
+import { Map, Layers3, FlaskConical, Clapperboard } from "lucide-react";
 import { MapaEditor } from "./mapa-editor";
 import { Compositor, type Semilla } from "./compositor";
 import { GenerarIa } from "./generar-ia";
@@ -48,6 +48,13 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
           </div>
         </div>
       </div>
+
+      <a
+        href="/lab/historias"
+        className="btn-brand w-fit text-xs"
+      >
+        <Clapperboard className="h-3.5 w-3.5" /> Usarlo en una historia de verdad
+      </a>
 
       <div className="flex gap-1.5" role="tablist">
         {([
