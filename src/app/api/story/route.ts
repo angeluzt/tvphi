@@ -120,6 +120,16 @@ const sceneSchema = z.object({
   vfx: z.array(vfxSchema).max(20).optional(),
   // Descripción de la imagen, para poder dibujarla después.
   prompt: z.string().max(2000).optional(),
+  // Láminas con profundidad (paralaje). En pruebas: las escenas normales no
+  // lo llevan y siguen validando igual.
+  capas: z.array(z.object({
+    id: z.string(),
+    imageId: z.string(),
+    nombre: z.string().max(120),
+    depth: z.number(),
+    escala: z.number(),
+    opacidad: z.number(),
+  })).max(8).optional(),
 });
 const audioLayerSchema = z.object({
   id: z.string(),

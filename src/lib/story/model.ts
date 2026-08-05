@@ -306,6 +306,27 @@ export interface ShotFraming {
   to: Frame;
 }
 
+/**
+ * Una lámina de la escena, para el paralaje.
+ *
+ * En vez de UNA foto, la escena puede llevar varias apiladas, cada una con su
+ * profundidad. Al mover la cámara no se desplazan igual: el fondo casi nada y
+ * el primer plano mucho, y eso da hondura a una imagen que es plana.
+ *
+ * Es opcional. Sin capas, todo funciona exactamente como siempre: una escena
+ * de antes ni sabe que esto existe.
+ */
+export interface EscenaCapa {
+  id: string;
+  imageId: string;
+  nombre: string;
+  /** 0 = quieta aunque la cámara se mueva · 1 = se mueve con ella. */
+  depth: number;
+  /** Se agranda un poco para que al desplazarse no asome el borde. */
+  escala: number;
+  opacidad: number;
+}
+
 export interface StoryScene {
   id: string;
   imageId: string; // clave en el store de imágenes (IndexedDB)
@@ -319,6 +340,11 @@ export interface StoryScene {
   // y sirve para dibujarla luego; también vale escrito a mano. Es opcional: los
   // proyectos de antes no lo tienen y siguen funcionando igual.
   prompt?: string;
+  /**
+   * Láminas con profundidad. Si hay, se dibujan EN VEZ de imageId; imageId
+   * sigue guardándose porque es la miniatura y el respaldo si se quitan.
+   */
+  capas?: EscenaCapa[];
 }
 
 export interface AudioLayer {
@@ -1238,6 +1264,9 @@ function normalizeAltFrames(raw: any, imgW: number, imgH: number): Shot["altFram
   return Object.keys(out).length ? out : undefined;
 }
 
+const num01 = (v: unknown, sino: number) =>
+  typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : sino;
+
 export function migrateProject(raw: any): StoryProject {
   if (!raw || typeof raw !== "object") return emptyProject();
 
@@ -1256,6 +1285,19 @@ export function migrateProject(raw: any): StoryProject {
           shots,
           vfx,
           ...(typeof sc.prompt === "string" && sc.prompt.trim() ? { prompt: sc.prompt.trim().slice(0, 2000) } : {}),
+          // Las láminas del paralaje. Aquí la escena se reconstruye campo a
+          // campo, así que lo que no se copie se pierde al abrir el capítulo:
+          // se guardaba bien y desaparecía al recargar.
+          ...(Array.isArray(sc.capas) && sc.capas.length
+            ? { capas: sc.capas.map((c: any) => ({
+                id: String(c.id ?? nanoid(6)),
+                imageId: String(c.imageId ?? ""),
+                nombre: String(c.nombre ?? "Capa"),
+                depth: num01(c.depth, 0),
+                escala: Math.max(1, Math.min(2, Number(c.escala) || 1)),
+                opacidad: num01(c.opacidad, 1),
+              })).filter((c: EscenaCapa) => c.imageId) }
+            : {}),
         };
       }),
       audioLayers: raw.audioLayers ?? [],
