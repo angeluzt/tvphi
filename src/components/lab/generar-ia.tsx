@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Wand2, Loader2, AlertTriangle, Check, Sparkles } from "lucide-react";
 import type { Escena } from "@/lib/lab/escena";
-import { revisar } from "@/lib/lab/escena";
+import { revisar, esGuia } from "@/lib/lab/escena";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { prepararCapa, type Recorte } from "@/lib/lab/quitar-fondo";
 
@@ -31,7 +31,8 @@ export function GenerarIa({
   /** El mapa que hay ahora, para poder dibujar capa a capa. */
   escena: Escena | null;
   onEscena: (e: Escena) => void;
-  onCapas: (c: CapaGenerada[]) => void;
+  /** El resumen viaja con las capas: esta tarjeta se cierra al montarlas. */
+  onCapas: (c: CapaGenerada[], resumen: string) => void;
 }) {
   const [idea, setIdea] = useState("");
   const [formato, setFormato] = useState<"16:9" | "9:16" | "1:1">("16:9");
@@ -65,7 +66,10 @@ export function GenerarIa({
   async function dibujar() {
     if (!escena) return;
     setError(null); setHechas([]);
-    const visibles = escena.layers.filter((c) => c.visible !== false);
+    // Las capas de reserva NO se mandan: son una guía de dónde va el personaje
+    // y los efectos, y el modelo devolvería un PNG vacío que se paga igual.
+    const visibles = escena.layers.filter((c) => c.visible !== false && !esGuia(c));
+    const guias = escena.layers.filter((c) => c.visible !== false && esGuia(c)).length;
     const out: CapaGenerada[] = [];
     // Una capa que falle NO tumba el lote. Antes se cortaba en la primera y las
     // siguientes ni se intentaban: pagabas media escena y te quedabas sin nada
@@ -102,14 +106,18 @@ export function GenerarIa({
         out.push({ id: capa.id, nombre: capa.name, url: rec.url, via: rec.via, vacio: rec.vacio, color: rec.color });
         setHechas([...out]);
       }
-      if (out.length) onCapas(out);
       const cromadas = out.filter((c) => c.via === "croma").length;
       const opacas = out.filter((c, i) => i > 0 && c.via === "opaca").length;
-      setPaso(
+      const resumen =
         `${out.length} de ${visibles.length} capas.`
+        + (guias ? ` ${guias} de reserva no se mandó a dibujar —es una guía— así que no se ha pagado.` : "")
         + (cromadas ? ` A ${cromadas} hubo que quitarles el fondo de color: este modelo no devuelve transparencia.` : "")
-        + (opacas ? ` OJO: ${opacas} salieron opacas y sin fondo plano que quitar; taparán a las de atrás.` : ""),
-      );
+        + (opacas ? ` OJO: ${opacas} salieron opacas y sin fondo plano que quitar; taparán a las de atrás.` : "");
+      setPaso(resumen);
+      // El resumen sube con las capas porque al montarlas esta tarjeta
+      // desaparece: si se quedara aquí, lo que costó y lo que no no lo leería
+      // nadie.
+      if (out.length) onCapas(out, resumen);
       // Los fallos se cuentan al final y por separado, sin borrar lo que sí salió.
       if (fallos.length) setError(`No salieron ${fallos.length}: ${fallos.join(" · ")}`);
     } catch (e) { setError((e as Error).message); setPaso(null); }

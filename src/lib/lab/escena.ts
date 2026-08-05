@@ -135,6 +135,11 @@ export interface Capa {
   /** 0 = infinito (no se mueve), 1 = pegado a la cámara (se mueve entero). */
   depth: number;
   visible?: boolean;
+  /**
+   * Capa de RESERVA: dice dónde irá el personaje y dónde los efectos, pero no
+   * se dibuja. Mandarla al modelo de imagen es pagar por un PNG vacío.
+   */
+  guia?: boolean;
   /** Desenfoque sugerido a la IA para esta capa, de 0 a 1. */
   blur?: number;
   ai?: { prompt?: string; exclude?: string };
@@ -157,6 +162,27 @@ export interface Escena {
 }
 
 export const ESQUEMA = "tvphi.semantic-scene-map/v2";
+
+/** Semánticos que solo reservan sitio: ninguno de ellos se dibuja. */
+const SOLO_RESERVA = new Set<Semantico>(["subject", "vfx_zone", "negative_space"]);
+
+/**
+ * ¿Es una capa de guía, de las que NO hay que mandar a dibujar?
+ *
+ * Importa porque cuesta dinero: cada capa que se manda es una imagen que se
+ * paga, y una guía devuelve un PNG vacío. Pasó de verdad —«03 Reservas de
+ * animación», con su «Draw nothing on this transparent guide layer»— y se pagó.
+ *
+ * Se mira por tres sitios y basta con uno, porque el modelo pone la marca
+ * cuando le apetece: la marca «guia», lo que dice su prompt, y que todo lo que
+ * lleva sea reserva.
+ */
+export function esGuia(c: Capa): boolean {
+  if (c.guia === true) return true;
+  const texto = `${c.name ?? ""} ${c.ai?.prompt ?? ""}`.toLowerCase();
+  if (/draw nothing|nothing is drawn|leave .{0,24}(empty|blank)|guide layer|reserved (area|zone|layer)|placeholder layer|no dibujes nada|capa gu[ií]a|reserva/.test(texto)) return true;
+  return c.objects.length > 0 && c.objects.every((o) => SOLO_RESERVA.has(o.semantic));
+}
 
 // ── Comprobación ────────────────────────────────────────────────────────────
 //
@@ -208,7 +234,12 @@ export function normalizar(d: Escena): Escena {
     },
     palette: { ...PALETA, ...(d.palette ?? {}) },
     layers: d.layers
-      .map((c) => ({ ...c, visible: c.visible !== false, objects: c.objects ?? [] }))
+      .map((c) => {
+        const capa = { ...c, visible: c.visible !== false, objects: c.objects ?? [] };
+        // La marca se deja puesta aquí y no en cada sitio que la necesite: así
+        // el editor la enseña y el que dibuja la salta, mirando lo mismo.
+        return { ...capa, guia: esGuia(capa) };
+      })
       // De atrás hacia delante: el orden de pintado es el de profundidad, y
       // depender de que quien escribe el JSON los ponga en orden es pedir un
       // fallo que además es invisible.

@@ -50,7 +50,11 @@ REGLAS DE LAS CAPAS
   cuenta con palabras en "ai.prompt".
 - Una capa aparte, casi al frente, para RESERVAS: dónde irá el personaje (semantic
   "subject") y dónde irán los efectos animados (semantic "vfx_zone"). Esa capa es una
-  guía: su "ai.prompt" debe decir que no se dibuje nada de eso.
+  guía: lleva "guia": true, su "ai.prompt" dice que no se dibuja nada, NO se manda a
+  dibujar y NO cuenta en el número de capas que se te pide. Es una sola, y solo si
+  hace falta reservar sitio.
+- Todas las DEMÁS capas se dibujan y cada una cuesta una imagen: no metas ninguna
+  que vaya a salir vacía.
 
 COORDENADAS de 0 a 1 sobre el ancho y el alto. Se puede salir un poco (-0.05, 1.05).
 
@@ -111,7 +115,8 @@ export async function POST(req: Request) {
           { role: "system", content: INSTRUCCION },
           { role: "user", content:
             `Escena: ${parsed.data.idea}\n\n`
-            + `Lienzo: ${w}x${h}. Haz exactamente ${parsed.data.capas} capas.` },
+            + `Lienzo: ${w}x${h}. Haz exactamente ${parsed.data.capas} capas que se DIBUJEN. `
+            + "La de reservas, si la pones, va aparte y no cuenta en ese número." },
         ],
       }),
     });
