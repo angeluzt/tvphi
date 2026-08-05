@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Layers3, Trash2, Upload, Wand2, Loader2, AlertTriangle, ChevronUp, ChevronDown } from "lucide-react";
 import { nanoid } from "nanoid";
 import type { EscenaCapa } from "@/lib/story/model";
-import { revisar, type Escena } from "@/lib/lab/escena";
+import { revisar, esGuia, type Escena } from "@/lib/lab/escena";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { prepararCapa } from "@/lib/lab/quitar-fondo";
 
@@ -34,6 +34,9 @@ export function CapasEscena({
   onGuardarImagen: (dataUrl: string, nombre: string) => Promise<string>;
 }) {
   const [paso, setPaso] = useState<string | null>(null);
+  // Aparte de «paso» a propósito: mientras «paso» tenga texto los botones están
+  // bloqueados, y esto es un aviso de después, no un «estoy trabajando».
+  const [nota, setNota] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nCapas, setNCapas] = useState(4);
 
@@ -44,7 +47,7 @@ export function CapasEscena({
       setError("Escribe antes cómo es esta imagen: de ahí sale el mapa.");
       return;
     }
-    setError(null);
+    setError(null); setNota(null);
     try {
       setPaso("Escribiendo el mapa de la escena…");
       const rm = await fetch("/api/story/ia/lab/escena", {
@@ -60,7 +63,10 @@ export function CapasEscena({
       const nuevas: EscenaCapa[] = [];
       // Una capa que falle no tumba el lote: se sigue y se cuenta al final.
       const fallos: string[] = [];
-      const visibles = esc.layers.filter((c) => c.visible !== false);
+      // Sin las de reserva: son guías de dónde va el personaje y los efectos, y
+      // mandarlas a dibujar es pagar un PNG vacío.
+      const visibles = esc.layers.filter((c) => c.visible !== false && !esGuia(c));
+      const guias = esc.layers.filter((c) => c.visible !== false && esGuia(c)).length;
       for (let i = 0; i < visibles.length; i++) {
         const capa = visibles[i];
         setPaso(`Dibujando ${i + 1} de ${visibles.length}: ${capa.name}…`);
@@ -87,6 +93,9 @@ export function CapasEscena({
       }
       if (nuevas.length) onCambio(nuevas);
       setPaso(null);
+      setNota(guias
+        ? `${nuevas.length} capas listas. ${guias} de reserva no se mandó a dibujar: es una guía y no se ha pagado.`
+        : null);
       if (fallos.length) {
         setError(`Salieron ${nuevas.length} de ${visibles.length}. No salieron: ${fallos.join(" · ")}`);
       }
@@ -159,6 +168,7 @@ export function CapasEscena({
       </p>
 
       {paso && <p className="mt-1 flex items-center gap-1.5 text-[11px] text-accent"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {paso}</p>}
+      {nota && !paso && <p className="mt-1 text-[11px] text-accent">{nota}</p>}
       {error && <p className="mt-1 flex items-start gap-1.5 text-[11px] text-danger"><AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" /> {error}</p>}
 
       {capas.map((c, i) => (

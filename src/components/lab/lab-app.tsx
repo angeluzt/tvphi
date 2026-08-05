@@ -15,6 +15,9 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
   const [escena, setEscena] = useState<Escena | null>(null);
   // Lo que se le pasa al editor cuando la IA escribe un mapa nuevo.
   const [impuesta, setImpuesta] = useState<Escena | null>(null);
+  // Qué salió y qué se pagó. Vive aquí y no en la tarjeta de la IA porque esa
+  // se cierra justo al terminar, y era donde se contaba.
+  const [resumen, setResumen] = useState<string | null>(null);
 
   // Pasar el mapa al compositor sin salir de la página: cada capa se pinta en
   // su propio PNG transparente y se le da al compositor como si fueran las
@@ -79,14 +82,21 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
         <GenerarIa
           escena={escena}
           onEscena={(e) => { setImpuesta(e); setEscena(e); }}
-          onCapas={(cs) => {
+          onCapas={(cs, resumen) => {
             // Las imágenes generadas van directas al montaje: es el final del
             // recorrido, y hacer que el usuario las baje y las vuelva a subir
             // no aporta nada.
             setSemilla(cs.map((c) => ({ nombre: c.nombre, url: c.url, via: c.via, vacio: c.vacio })));
+            setResumen(resumen);
             setPestana("compositor");
           }}
         />
+      )}
+
+      {resumen && pestana === "compositor" && (
+        <p className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-[11px] text-accent">
+          {resumen}
+        </p>
       )}
 
       {pestana === "mapa"

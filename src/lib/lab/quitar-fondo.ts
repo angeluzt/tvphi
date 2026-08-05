@@ -118,41 +118,78 @@ const dist = (a: [number, number, number], b: [number, number, number]) =>
 const hex = (c: [number, number, number]) =>
   "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
 
+const tope255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
+
 /**
- * Quita el color de fondo con un borde suave y le baja el tinte a lo que queda.
+ * Cuánto croma le sobra a un color.
  *
- * Lo del tinte («despill») importa más de lo que parece: sobre un fondo magenta,
- * el borde del dibujo queda rosado, y al montarlo sobre otra capa se ve un halo
- * de color que delata el recorte. Se le quita restándole al canal dominante del
- * croma lo que le sobra respecto a los otros dos.
+ * En el croma, unos canales van altos y otro bajo (magenta: rojo y azul arriba,
+ * verde abajo). Esto mide lo que los altos le sacan al bajo: en el croma puro
+ * vale su máximo, en un gris vale cero, y en un color cálido sale negativo.
+ * Aguanta que el croma venga sombreado, cosa que la distancia no aguanta.
  */
-export function quitarColor(
-  cv: HTMLCanvasElement, base: [number, number, number],
-  dentro = 34, fuera = 92,
-) {
+function sobra(p: ArrayLike<number>, o: number, altos: number[], bajos: number[]) {
+  let a = 255; for (const i of altos) a = Math.min(a, p[o + i]);
+  let z = 0; for (const i of bajos) z = Math.max(z, p[o + i]);
+  return a - z;
+}
+
+/**
+ * Quita el croma y le devuelve su color al borde.
+ *
+ * NO SIRVE preguntar «cuánto se parece esto al magenta». El borde de una hoja
+ * sobre magenta es una MEZCLA de hoja y magenta, y a media mezcla ya está
+ * lejísimos del magenta puro: en una escena de verdad se midieron píxeles de
+ * halo en (192,58,137), a 146 de distancia. Un radio que llegue hasta ahí se
+ * come el dibujo, y uno que no llegue deja el borde morado. Por eso quedaba
+ * halo: 15.228 píxeles de una escena, casi el 1%.
+ *
+ * Lo que sí funciona es mirar el TONO —cuánto croma le sobra— y con esa
+ * proporción DESMEZCLAR: si lo que se ve es cob·dibujo + (1−cob)·croma,
+ * entonces el dibujo es (visto − (1−cob)·croma) / cob. Así el borde no se
+ * disimula, se recupera.
+ */
+export function quitarColor(cv: HTMLCanvasElement, base: [number, number, number]) {
   const c = cv.getContext("2d")!;
   const im = c.getImageData(0, 0, cv.width, cv.height);
   const d = im.data;
-  // Qué canal domina el croma: es el que hay que rebajar en los bordes.
-  const dom = base.indexOf(Math.max(...base));
-  const otros = [0, 1, 2].filter((k) => k !== dom);
+
+  const max = Math.max(...base);
+  const altos = [0, 1, 2].filter((i) => base[i] >= max * 0.5);
+  const bajos = [0, 1, 2].filter((i) => base[i] < max * 0.5);
+  // Un croma sin tono propio —un gris, un blanco— no se puede aislar por tono:
+  // ahí se vuelve al método de siempre, por distancia, que es lo único que hay.
+  const K = bajos.length ? sobra(base, 0, altos, bajos) : 0;
+  if (K < 40) { porDistancia(d, base); c.putImageData(im, 0, 0); return { vacio: huecoDe(d), color: hex(base) }; }
 
   for (let i = 0; i < d.length; i += 4) {
     if (d[i + 3] === 0) continue;
-    const p: [number, number, number] = [d[i], d[i + 1], d[i + 2]];
-    const q = dist(p, base);
-    if (q <= dentro) { d[i + 3] = 0; continue; }
-    if (q < fuera) {
-      // Zona de transición: medio transparente, para que el borde no quede
-      // en escalera.
-      const t = (q - dentro) / (fuera - dentro);
-      d[i + 3] = Math.round(d[i + 3] * t);
-      const media = (p[otros[0]] + p[otros[1]]) / 2;
-      if (p[dom] > media) d[i + dom] = Math.round(media + (p[dom] - media) * t * 0.4);
-    }
+    const t = sobra(d, i, altos, bajos) / K;
+    if (t <= 0.05) continue;                 // ni rastro de croma: no se toca
+    // Cuánto dibujo hay en este píxel. El 0.05 de suelo evita que un color
+    // apenas rozado por el croma se quede medio transparente.
+    const cob = Math.min(1, Math.max(0, (1 - t - 0.05) / 0.9));
+    if (cob < 0.02) { d[i + 3] = 0; continue; }
+    // Desmezclar. Se limita el multiplicador para que un píxel casi vacío no
+    // amplifique su propio ruido hasta convertirlo en confeti de colores.
+    const inv = 1 / Math.max(cob, 0.25);
+    d[i] = tope255((d[i] - (1 - cob) * base[0]) * inv);
+    d[i + 1] = tope255((d[i + 1] - (1 - cob) * base[1]) * inv);
+    d[i + 2] = tope255((d[i + 2] - (1 - cob) * base[2]) * inv);
+    d[i + 3] = Math.round(d[i + 3] * cob);
   }
   c.putImageData(im, 0, 0);
   return { vacio: huecoDe(d), color: hex(base) };
+}
+
+/** El método viejo, por distancia. Solo para cromas sin tono que aislar. */
+function porDistancia(d: Uint8ClampedArray, base: [number, number, number], dentro = 34, fuera = 120) {
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue;
+    const q = dist([d[i], d[i + 1], d[i + 2]], base);
+    if (q <= dentro) { d[i + 3] = 0; continue; }
+    if (q < fuera) d[i + 3] = Math.round(d[i + 3] * ((q - dentro) / (fuera - dentro)));
+  }
 }
 
 /**
