@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Upload, Play, Pause, Crosshair, Download, Trash2, ChevronUp, ChevronDown, Eye, EyeOff,
+  Package, FolderOpen, Loader2,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
+import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
+import { ANIM_OPCIONES, camaraAnim, type AnimParalaje } from "@/lib/lab/anim-paralaje";
 
 // Paso 2: apilar las capas ya generadas y moverlas con profundidad.
 //
@@ -41,12 +44,20 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const [capas, setCapas] = useState<CapaImg[]>([]);
   const [moviendo, setMoviendo] = useState(true);
   const [fuerza, setFuerza] = useState(55);
+  const [anim, setAnim] = useState<AnimParalaje>("suave");
   const [aviso, setAviso] = useState("Carga primero el fondo y luego las capas PNG con transparencia.");
+  const [busyZip, setBusyZip] = useState<"bajar" | "subir" | null>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const caja = useRef<HTMLDivElement>(null);
   const raton = useRef({ x: 0, y: 0 });
   const encima = useRef(false);
   const tam = useRef({ w: 1920, h: 1080 });
+  const animRef = useRef(anim);
+  const fuerzaRef = useRef(fuerza);
+  const moviendoRef = useRef(moviendo);
+  animRef.current = anim;
+  fuerzaRef.current = fuerza;
+  moviendoRef.current = moviendo;
 
   async function meter(archivos: FileList | null) {
     if (!archivos?.length) return;
@@ -65,6 +76,66 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       return repartirProfundidad(todas);
     });
     setAviso(`${nuevas.length} imagen${nuevas.length > 1 ? "es" : ""} añadida${nuevas.length > 1 ? "s" : ""}. Ajusta la profundidad de cada una.`);
+  }
+
+  async function exportarZip() {
+    if (!capas.length || busyZip) return;
+    setBusyZip("bajar");
+    try {
+      await bajarMontajeZip({
+        width: tam.current.w,
+        height: tam.current.h,
+        capas: capas.map((c) => ({
+          nombre: c.nombre,
+          depth: c.depth,
+          escala: c.escala,
+          opacidad: c.opacidad,
+          via: c.via,
+          vacio: c.vacio,
+          img: c.img,
+        })),
+      });
+      setAviso(`ZIP con ${capas.length} capas y montaje.json listo.`);
+    } catch (e) {
+      setAviso((e as Error).message || "No se pudo crear el ZIP.");
+    } finally {
+      setBusyZip(null);
+    }
+  }
+
+  async function importarZip(file: File | null) {
+    if (!file || busyZip) return;
+    setBusyZip("subir");
+    try {
+      const pack = await leerMontajeZip(file);
+      const nuevas: CapaImg[] = [];
+      for (const c of pack.capas) {
+        const img = await cargar(c.url);
+        nuevas.push({
+          ...hacerCapa(c.nombre, img, nuevas.length),
+          depth: c.depth,
+          escala: c.escala,
+          opacidad: c.opacidad,
+          via: c.via,
+          vacio: c.vacio,
+        });
+      }
+      if (!nuevas.length) throw new Error("El ZIP no trae capas.");
+      // Tamaño del pack; si faltaba, el de la primera imagen.
+      tam.current = {
+        w: pack.width || nuevas[0].img.naturalWidth,
+        h: pack.height || nuevas[0].img.naturalHeight,
+      };
+      if (!pack.width || !pack.height) {
+        tam.current = { w: nuevas[0].img.naturalWidth, h: nuevas[0].img.naturalHeight };
+      }
+      setCapas(nuevas);
+      setAviso(`Importadas ${nuevas.length} capas del ZIP.`);
+    } catch (e) {
+      setAviso((e as Error).message || "No se pudo importar el ZIP.");
+    } finally {
+      setBusyZip(null);
+    }
   }
 
   // Cargar las capas del mapa directamente, sin pasar por el disco: sirve para
@@ -113,16 +184,21 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     c.fillStyle = "#05070d";
     c.fillRect(0, 0, w, h);
 
-    const k = (fuerza / 100) * 0.08;
-    let ox = 0, oy = 0;
-    if (moviendo) {
-      if (encima.current) { ox = raton.current.x * k; oy = raton.current.y * k * 0.5; }
-      else { const s = ms / 3000; ox = Math.sin(s) * k; oy = Math.cos(s * 0.75) * k * 0.35; }
+    const k = (fuerzaRef.current / 100) * 0.08;
+    let ox = 0, oy = 0, zoom = 1;
+    if (moviendoRef.current) {
+      if (encima.current) {
+        ox = raton.current.x * k;
+        oy = raton.current.y * k * 0.5;
+        zoom = 1;
+      } else {
+        ({ ox, oy, zoom } = camaraAnim(animRef.current, ms, k));
+      }
     }
 
     for (const capa of capas) {
       if (!capa.visible) continue;
-      const e = capa.escala;
+      const e = capa.escala * zoom;
       const dw = w * e, dh = h * e;
       c.save();
       c.globalAlpha = capa.opacidad;
@@ -165,6 +241,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       return n;
     });
 
+  const pistaAnim = ANIM_OPCIONES.find((o) => o.id === anim)?.pista;
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -185,6 +263,18 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         <button onClick={() => void exportarPng()} disabled={!capas.length} className="btn-ghost text-xs">
           <Download className="h-3.5 w-3.5 text-accent" /> Montaje PNG
         </button>
+        <button onClick={() => void exportarZip()} disabled={!capas.length || !!busyZip} className="btn-ghost text-xs">
+          {busyZip === "bajar" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" /> : <Package className="h-3.5 w-3.5 text-accent" />}
+          Descargar ZIP
+        </button>
+        <label className={`btn-ghost cursor-pointer text-xs ${busyZip ? "pointer-events-none opacity-50" : ""}`}>
+          {busyZip === "subir" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" /> : <FolderOpen className="h-3.5 w-3.5 text-accent" />}
+          Importar ZIP
+          <input
+            type="file" accept=".zip,application/zip" className="hidden"
+            onChange={(e) => { void importarZip(e.target.files?.[0] ?? null); e.target.value = ""; }}
+          />
+        </label>
         <button onClick={() => { setCapas([]); setAviso("Vacío."); }} disabled={!capas.length} className="btn-ghost text-xs text-danger">
           <Trash2 className="h-3.5 w-3.5" /> Vaciar
         </button>
@@ -199,7 +289,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           {!capas.length && (
             <p className="text-[11px] text-muted">
               La primera imagen fija el tamaño y hace de fondo. Las siguientes tienen que ser PNG
-              con transparencia, o taparán a las de atrás.
+              con transparencia, o taparán a las de atrás. También puedes importar un ZIP de un montaje previo.
             </p>
           )}
           {capas.map((c, i) => (
@@ -213,10 +303,6 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                 </button>
                 <button onClick={() => setCapas((cs) => cs.filter((x) => x.id !== c.id))} className="text-muted hover:text-danger"><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
-              {/* De dónde salió su transparencia. Se dice AQUÍ, donde vive la
-                  capa: si una llega opaca sin poder quitarle nada, tapará a las
-                  de atrás y hay que saberlo mirando esta lista, no un mensaje
-                  que ya se fue de la pantalla. */}
               {c.via && (
                 <p className={`text-[10px] ${c.via === "opaca" && i > 0 ? "text-gold" : "text-muted"}`}>
                   {c.via === "transparente" && "vino con transparencia"}
@@ -242,8 +328,24 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         </div>
 
         <div className="card space-y-2 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted">
+              Animación
+              <select
+                value={anim}
+                onChange={(e) => setAnim(e.target.value as AnimParalaje)}
+                className="input min-w-0 flex-1 py-1 text-[11px]"
+                aria-label="Tipo de movimiento de cámara"
+              >
+                {ANIM_OPCIONES.map((o) => (
+                  <option key={o.id} value={o.id}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {pistaAnim && <p className="text-[10px] text-muted">{pistaAnim}. Con el ratón encima mandas tú.</p>}
           <label className="flex items-center gap-2 text-[11px] text-muted">
-            Movimiento
+            Fuerza
             <input type="range" min={0} max={100} value={fuerza} onChange={(e) => setFuerza(Number(e.target.value))} className="min-w-0 flex-1" />
             <span className="w-8 tabular-nums">{fuerza}%</span>
           </label>
@@ -259,7 +361,12 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
               encima.current = true;
             }}
             onPointerLeave={() => { encima.current = false; }}
-            onDrop={(e) => { e.preventDefault(); void meter(e.dataTransfer.files); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const z = Array.from(e.dataTransfer.files).find((f) => /\.zip$/i.test(f.name));
+              if (z) void importarZip(z);
+              else void meter(e.dataTransfer.files);
+            }}
             onDragOver={(e) => e.preventDefault()}
           >
             <canvas ref={canvas} className="block h-auto w-full" />
