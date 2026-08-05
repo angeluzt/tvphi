@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Gamepad2, ChevronLeft, ChevronRight, Check, Layers, Minus, Plus, X } from "lucide-react";
+import { Gamepad2, ChevronLeft, ChevronRight, Layers, Minus, Plus, X } from "lucide-react";
 import type { VfxLayer, VfxNode } from "@/lib/story/model";
 import { vfxSpec } from "@/lib/story/vfx";
 
@@ -11,6 +11,12 @@ import { vfxSpec } from "@/lib/story/vfx";
 // para afinar: un píxel de dedo son varios de imagen, y con dos efectos que
 // deben ir juntos —un fuego y su humo— se acaba peleando. Aquí se elige uno o
 // varios y se mueven con barras, con − y +, o con las flechas del teclado.
+//
+// La lista de efectos se ve ENTERA y marca cuál está cogido. Antes solo se
+// decía por escrito cuál se estaba moviendo, y para enterarse de qué había
+// había que ir dándole a «anterior» una y otra vez; con las fichas a la vista
+// se salta al que sea de un toque, y se distingue de un vistazo lo que es de
+// la escena —y cambia en todas sus tomas— de lo que es solo de esta toma.
 //
 // Las barras dicen dónde está el CENTRO de lo seleccionado. Con un solo efecto
 // eso es su sitio; con varios, moverlas desplaza el grupo entero manteniendo
@@ -37,13 +43,21 @@ export function MoverEfectos({
   capas,
   onMover,
   onResaltar,
+  compacto = false,
+  etiqueta,
+  onAbierto,
 }: {
-  /** Los efectos que se ven en esta toma: los de la escena y los suyos. */
+  /** Los efectos que se ven aquí: los de la escena y los de la toma. */
   capas: { capa: VfxLayer; deEscena: boolean }[];
   /** Desplazamiento relativo, ya acotado a 0..1 por el componente. */
   onMover: (ids: string[], dx: number, dy: number) => void;
   /** Cuál está seleccionado, por si conviene enseñarlo en otra parte. */
   onResaltar?: (id: string | null) => void;
+  /** Dentro de la ventana de reproducción, donde el sitio es el que es. */
+  compacto?: boolean;
+  etiqueta?: string;
+  /** Para que quien lo aloja pueda hacerle sitio al abrirlo. */
+  onAbierto?: (v: boolean) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [sel, setSel] = useState<string[]>([]);
@@ -56,6 +70,7 @@ export function MoverEfectos({
   const activas = elegidas.length ? elegidas : usables.slice(0, 1);
   const ids = activas.map((c) => c.capa.id);
   const c = centro(activas.flatMap((x) => x.capa.nodes ?? []));
+  const todos = elegidas.length > 1 && elegidas.length === usables.length;
 
   const mover = (dx: number, dy: number) => { if (ids.length) onMover(ids, dx, dy); };
   const ponerX = (v: number) => mover(v - c.x, 0);
@@ -69,7 +84,7 @@ export function MoverEfectos({
     onResaltar?.(usables[i].capa.id);
   };
 
-  // Las flechas del teclado, mientras el menú está abierto y el foco dentro.
+  // Las flechas del teclado, mientras el mando está abierto.
   useEffect(() => {
     if (!abierto) return;
     const tecla = (e: KeyboardEvent) => {
@@ -91,79 +106,111 @@ export function MoverEfectos({
         ArrowLeft: [-paso, 0], ArrowRight: [paso, 0], ArrowUp: [0, -paso], ArrowDown: [0, paso],
       };
       const m = d[e.key];
-      if (!m) return;
+      if (!m) {
+        // Tab salta de efecto sin soltar el teclado: colocar tres efectos
+        // seguidos deja de ser ir al ratón entre uno y otro.
+        if (e.key === "Tab" && usables.length > 1) { e.preventDefault(); saltar(e.shiftKey ? -1 : 1); }
+        return;
+      }
       e.preventDefault();  // si no, la barra del reproductor se mueve también
       mover(m[0], m[1]);
     };
     window.addEventListener("keydown", tecla);
     return () => window.removeEventListener("keydown", tecla);
-  }, [abierto, ids.join(","), c.x, c.y]);
+  }, [abierto, ids.join(","), c.x, c.y, usables.length, indice]);
 
   const nombre = (v: VfxLayer) => vfxSpec(v.kind)?.label ?? v.kind;
-  const btn = "grid h-6 w-6 shrink-0 place-items-center rounded border border-border text-muted hover:bg-surface-2 disabled:opacity-40";
 
   if (!capas.length) return null;
 
   return (
-    <div className="mt-2">
+    <div className={compacto ? "mt-1.5" : "mt-2"}>
       <button
-        onClick={() => setAbierto((v) => !v)}
+        onClick={() => setAbierto((v) => { onAbierto?.(!v); return !v; })}
         className={`btn-ghost w-full justify-center py-1 text-[11px] ${abierto ? "border-accent/60 text-accent" : ""}`}
         aria-expanded={abierto}
       >
         <Gamepad2 className="h-3.5 w-3.5" />
-        {abierto ? "Cerrar el mando" : "Mover efectos"}
+        {abierto ? "Cerrar el mando" : (etiqueta ?? "Mover efectos")}
+        {!abierto && usables.length > 0 && (
+          <span className="ml-1 grid h-4 min-w-4 place-items-center rounded-full bg-surface-2 px-1 text-[9px] tabular-nums text-muted">
+            {usables.length}
+          </span>
+        )}
       </button>
 
       {abierto && (
         <div ref={caja} tabIndex={-1} className="mt-2 space-y-2 rounded-lg border border-accent/50 bg-surface-2/40 p-2">
           {!usables.length ? (
             <p className="text-[11px] text-muted">
-              Los efectos de esta toma son de pantalla completa (lluvia, nieve, niebla «arriba»):
+              Los efectos de aquí son de pantalla completa (lluvia, nieve, niebla «arriba»):
               no tienen un sitio que mover.
             </p>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button onClick={() => saltar(-1)} className="btn-ghost px-2 py-1 text-[11px]" title="Anterior">
-                  <ChevronLeft className="h-3.5 w-3.5" /> Anterior
+              {/* Anterior / siguiente, y la lista con lo que hay cogido */}
+              <div className="flex items-center gap-1">
+                <button onClick={() => saltar(-1)} className={BTN} title="Efecto anterior" aria-label="Efecto anterior">
+                  <ChevronLeft className="h-3.5 w-3.5" />
                 </button>
-                <button onClick={() => saltar(1)} className="btn-ghost px-2 py-1 text-[11px]" title="Siguiente">
-                  Siguiente <ChevronRight className="h-3.5 w-3.5" />
+                <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+                  {usables.map(({ capa, deEscena }) => {
+                    const on = ids.includes(capa.id);
+                    return (
+                      <button
+                        key={capa.id}
+                        onClick={() => { setSel([capa.id]); onResaltar?.(capa.id); }}
+                        title={`${nombre(capa)}${deEscena ? " · de la escena" : " · de esta toma"}`}
+                        aria-pressed={on}
+                        className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                          on
+                            ? "border-accent bg-accent/20 text-accent"
+                            : "border-border text-muted hover:bg-surface-2 hover:text-fg"
+                        }`}
+                      >
+                        {/* Un punto para distinguir lo compartido de lo propio
+                            sin tener que leer: lo de la escena cambia en TODAS
+                            sus tomas y conviene saberlo antes de moverlo. */}
+                        <span className={`h-1.5 w-1.5 rounded-full ${deEscena ? "bg-brand" : "bg-accent/70"}`} />
+                        {nombre(capa)}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button onClick={() => saltar(1)} className={BTN} title="Efecto siguiente" aria-label="Efecto siguiente">
+                  <ChevronRight className="h-3.5 w-3.5" />
                 </button>
-                <button
-                  onClick={() => { const id = usables[Math.max(0, indice)].capa.id;
-                    setSel([id]); onResaltar?.(id); }}
-                  className="btn-ghost px-2 py-1 text-[11px]"
-                >
-                  <Check className="h-3.5 w-3.5 text-accent" /> Solo este
-                </button>
+              </div>
+
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => { setSel(usables.map((x) => x.capa.id)); onResaltar?.(null); }}
-                  className="btn-ghost px-2 py-1 text-[11px]"
+                  className={`flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-[10px] ${
+                    todos ? "border-accent bg-accent/20 text-accent" : "border-border text-muted hover:bg-surface-2"
+                  }`}
                 >
-                  <Layers className="h-3.5 w-3.5 text-accent" /> Todos
+                  <Layers className="h-3 w-3" /> Todos
                 </button>
+                <p className="min-w-0 flex-1 truncate text-[10px] text-muted">
+                  {activas.length === 1
+                    ? <>Moviendo <span className="text-fg">{nombre(activas[0].capa)}</span>
+                        {activas[0].deEscena && " · de la escena, cambia en todas sus tomas"}</>
+                    : <>Moviendo <span className="text-fg">{activas.length} efectos</span> juntos, sin cambiar la distancia entre ellos</>}
+                </p>
                 {!!sel.length && (
-                  <button onClick={() => { setSel([]); onResaltar?.(null); }} className="text-muted hover:text-fg" aria-label="Quitar la selección">
+                  <button onClick={() => { setSel([]); onResaltar?.(null); }}
+                    className="shrink-0 text-muted hover:text-fg" aria-label="Quitar la selección">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
 
-              <p className="text-[11px] text-muted">
-                {activas.length === 1
-                  ? <>Moviendo <span className="text-fg">{nombre(activas[0].capa)}</span>
-                      {activas[0].deEscena && <span className="text-muted"> · de la escena, cambia en todas sus tomas</span>}</>
-                  : <>Moviendo <span className="text-fg">{activas.length} efectos</span> a la vez, sin cambiar la distancia entre ellos</>}
-              </p>
-
               <Barra etiqueta="Horizontal" valor={c.x} onValor={ponerX} onPaso={(d) => mover(d, 0)} />
               <Barra etiqueta="Vertical" valor={c.y} onValor={ponerY} onPaso={(d) => mover(0, d)} />
 
               <p className="text-[10px] text-muted">
-                Con el mando abierto, las <b className="text-fg">flechas del teclado</b> también lo
-                mueven. Con <b className="text-fg">Mayús</b>, a saltos grandes.
+                También con el teclado: <b className="text-fg">flechas</b> (con <b className="text-fg">Mayús</b>,
+                a saltos grandes) y <b className="text-fg">Tab</b> para el siguiente.
               </p>
             </>
           )}
@@ -173,6 +220,8 @@ export function MoverEfectos({
   );
 }
 
+const BTN = "grid h-6 w-6 shrink-0 place-items-center rounded border border-border text-muted hover:bg-surface-2 disabled:opacity-40";
+
 // Fuera del componente A PROPÓSITO. Definida dentro, React la ve como un tipo
 // distinto en cada render, desmonta el <input> y lo vuelve a montar: el foco se
 // pierde y las flechas del teclado solo funcionaban una vez.
@@ -180,11 +229,10 @@ function Barra({ etiqueta, valor, onValor, onPaso }: {
   etiqueta: string; valor: number;
   onValor: (v: number) => void; onPaso: (d: number) => void;
 }) {
-  const btn = "grid h-6 w-6 shrink-0 place-items-center rounded border border-border text-muted hover:bg-surface-2 disabled:opacity-40";
   return (
     <div className="flex items-center gap-1.5">
       <span className="w-16 shrink-0 text-[11px] text-muted">{etiqueta}</span>
-      <button onClick={() => onPaso(-PASO)} className={btn} aria-label={`${etiqueta} menos`}>
+      <button onClick={() => onPaso(-PASO)} className={BTN} aria-label={`${etiqueta} menos`}>
         <Minus className="h-3 w-3" />
       </button>
       <input
@@ -192,7 +240,7 @@ function Barra({ etiqueta, valor, onValor, onPaso }: {
         onChange={(e) => onValor(Number(e.target.value))}
         className="min-w-0 flex-1" aria-label={etiqueta}
       />
-      <button onClick={() => onPaso(PASO)} className={btn} aria-label={`${etiqueta} más`}>
+      <button onClick={() => onPaso(PASO)} className={BTN} aria-label={`${etiqueta} más`}>
         <Plus className="h-3 w-3" />
       </button>
       <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-muted">
