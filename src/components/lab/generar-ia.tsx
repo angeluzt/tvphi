@@ -67,6 +67,10 @@ export function GenerarIa({
     setError(null); setHechas([]);
     const visibles = escena.layers.filter((c) => c.visible !== false);
     const out: CapaGenerada[] = [];
+    // Una capa que falle NO tumba el lote. Antes se cortaba en la primera y las
+    // siguientes ni se intentaban: pagabas media escena y te quedabas sin nada
+    // que montar. Ahora se sigue y al final se dice cuáles fallaron.
+    const fallos: string[] = [];
     try {
       for (let i = 0; i < visibles.length; i++) {
         const capa = visibles[i];
@@ -87,7 +91,10 @@ export function GenerarIa({
           }),
         });
         const j = await r.json();
-        if (!r.ok) throw new Error(`${capa.name}: ${j.error ?? "no se pudo"}`);
+        if (!r.ok) {
+          fallos.push(`${capa.name}: ${j.error ?? "no se pudo"}`);
+          continue;
+        }
 
         // Aquí se decide si hubo que quitar el fondo, MIRANDO la imagen: no se
         // confía en que la API haya hecho lo que se le pidió.
@@ -95,14 +102,16 @@ export function GenerarIa({
         out.push({ id: capa.id, nombre: capa.name, url: rec.url, via: rec.via, vacio: rec.vacio, color: rec.color });
         setHechas([...out]);
       }
-      onCapas(out);
+      if (out.length) onCapas(out);
       const cromadas = out.filter((c) => c.via === "croma").length;
       const opacas = out.filter((c, i) => i > 0 && c.via === "opaca").length;
       setPaso(
-        `Listo: ${out.length} capas.`
-        + (cromadas ? ` A ${cromadas} hubo que quitarles el fondo de color.` : "")
+        `${out.length} de ${visibles.length} capas.`
+        + (cromadas ? ` A ${cromadas} hubo que quitarles el fondo de color: este modelo no devuelve transparencia.` : "")
         + (opacas ? ` OJO: ${opacas} salieron opacas y sin fondo plano que quitar; taparán a las de atrás.` : ""),
       );
+      // Los fallos se cuentan al final y por separado, sin borrar lo que sí salió.
+      if (fallos.length) setError(`No salieron ${fallos.length}: ${fallos.join(" · ")}`);
     } catch (e) { setError((e as Error).message); setPaso(null); }
   }
 

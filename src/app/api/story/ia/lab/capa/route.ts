@@ -54,7 +54,15 @@ function pngBytes(v: string): Buffer | null {
   } catch { return null; }
 }
 
-function instruccion(d: z.infer<typeof cuerpo>) {
+/**
+ * `croma` = ya sabemos que este modelo NO sabe devolver transparencia.
+ *
+ * En el primer intento el magenta se menciona como plan B, y un plan B enterrado
+ * en el prompt lo cumple el modelo cuando le apetece. En el segundo ya no hay
+ * plan A: se le pide el magenta como LA instrucción, con su color escrito, y
+ * repetida al final, que es donde más pesa.
+ */
+function instruccion(d: z.infer<typeof cuerpo>, croma = false) {
   const comun = [
     "The input image is a SEMANTIC LAYOUT MAP, not artwork.",
     "Flat colors and written labels tell you WHAT goes WHERE. Never reproduce them:",
@@ -70,6 +78,15 @@ function instruccion(d: z.infer<typeof cuerpo>) {
     comun.push(
       "This is the BACKGROUND layer: it must be fully opaque and fill the entire frame edge to edge.",
       "Everything that belongs to nearer layers is drawn later on top, so leave room for it but do not paint it.",
+    );
+  } else if (croma) {
+    comun.push(
+      "This is a FOREGROUND layer that will be cut out and stacked on top of others.",
+      `CHROMA KEY BACKGROUND, MANDATORY: every pixel that is not part of the described content must be flat pure magenta ${CROMA} (R255 G0 B255).`,
+      "That magenta must be perfectly uniform: no gradient, no shading, no vignette, no texture, no glow, no reflection of it on the subject.",
+      "Do not paint sky, ground, fog or scenery in the empty space — only the magenta.",
+      "Do not extend the content to the frame edges unless the map says so.",
+      `Remember: background = flat ${CROMA} magenta, subject = the described content. Nothing else.`,
     );
   } else {
     comun.push(
@@ -118,33 +135,40 @@ export async function POST(req: Request) {
   }
 
   // El formulario se arma cada vez: un FormData ya enviado no se puede reusar.
-  const armar = (conFondo: boolean) => {
+  const armar = (croma: boolean) => {
     const form = new FormData();
     form.set("model", modelo);
-    form.set("prompt", instruccion(parsed.data));
+    form.set("prompt", instruccion(parsed.data, croma));
     form.set("size", TAMANOS[parsed.data.formato]);
     form.set("n", "1");
     form.set("quality", "medium");
     form.set("output_format", "png");
-    if (conFondo) form.set("background", parsed.data.esFondo ? "opaque" : "transparent");
+    // Con croma NO se manda «background»: es justo el parámetro que el modelo
+    // rechaza, y el fondo se pide por prompt.
+    if (!croma) form.set("background", parsed.data.esFondo ? "opaque" : "transparent");
     form.append("image[]", new Blob([new Uint8Array(mapa)], { type: "image/png" }), "mapa.png");
     return form;
   };
-  const pedir = (conFondo: boolean) => fetch(OPENAI("/v1/images/edits"), {
+  const pedir = (croma: boolean) => fetch(OPENAI("/v1/images/edits"), {
     method: "POST",
     headers: { Authorization: `Bearer ${key}` },
-    body: armar(conFondo),
+    body: armar(croma),
   });
 
   try {
-    let r = await pedir(true);
-    // Si el modelo no admite «background» al editar, se reintenta SIN él en vez
-    // de tirar la capa. El prompt ya le ha pedido que, si no puede dar
-    // transparencia, rellene con magenta plano, y el cliente se lo quita. Vale
-    // más una capa recortada a mano que ninguna capa.
-    if (!r.ok) {
+    let r = await pedir(false);
+    let porCroma = false;
+    // «Transparent background is not supported for this model»: hay modelos que
+    // saben editar pero no devolver alfa. Antes eso tumbaba la capa —y con ella
+    // el resto del lote—. Ahora se reintenta pidiendo el fondo por PROMPT, en
+    // magenta plano, y el cliente lo recorta. Sale peor en los bordes finos que
+    // el alfa de verdad, pero sale.
+    if (!r.ok && !parsed.data.esFondo) {
       const aviso = await r.clone().text();
-      if (/background/i.test(aviso)) r = await pedir(false);
+      if (/background|transparen/i.test(aviso)) {
+        r = await pedir(true);
+        porCroma = true;
+      }
     }
     const txt = await r.text();
     let j: any = null;
@@ -165,7 +189,9 @@ export async function POST(req: Request) {
     if (!b64) {
       return NextResponse.json({ error: `«${modelo}» contestó sin imagen.`, modelo }, { status: 502 });
     }
-    return NextResponse.json({ ok: true, imagen: b64, croma: CROMA });
+    // «porCroma» le dice al cliente que este modelo no da alfa: así puede
+    // avisar de una vez en vez de dejarlo en un «se le quitó el color» suelto.
+    return NextResponse.json({ ok: true, imagen: b64, croma: CROMA, porCroma });
   } catch (e: any) {
     return NextResponse.json({ error: "No se pudo hablar con OpenAI: " + (e?.message ?? "") }, { status: 502 });
   }

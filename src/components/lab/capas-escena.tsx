@@ -58,6 +58,8 @@ export function CapasEscena({
       const esc: Escena = rev.escena;
 
       const nuevas: EscenaCapa[] = [];
+      // Una capa que falle no tumba el lote: se sigue y se cuenta al final.
+      const fallos: string[] = [];
       const visibles = esc.layers.filter((c) => c.visible !== false);
       for (let i = 0; i < visibles.length; i++) {
         const capa = visibles[i];
@@ -72,7 +74,7 @@ export function CapasEscena({
           }),
         });
         const jc = await rc.json();
-        if (!rc.ok) throw new Error(`${capa.name}: ${jc.error ?? "no se pudo"}`);
+        if (!rc.ok) { fallos.push(`${capa.name}: ${jc.error ?? "no se pudo"}`); continue; }
         const rec = await prepararCapa(`data:image/png;base64,${jc.imagen}`, i === 0);
         const id = await onGuardarImagen(rec.url, capa.name);
         // La profundidad viene del mapa, que es quien sabe qué está lejos.
@@ -83,8 +85,11 @@ export function CapasEscena({
           opacidad: 1,
         });
       }
-      onCambio(nuevas);
+      if (nuevas.length) onCambio(nuevas);
       setPaso(null);
+      if (fallos.length) {
+        setError(`Salieron ${nuevas.length} de ${visibles.length}. No salieron: ${fallos.join(" · ")}`);
+      }
     } catch (e) { setError((e as Error).message); setPaso(null); }
   }
 
