@@ -11,10 +11,7 @@ import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
   planificarCola, interpolarTramo, escalaPerspectiva, visibilidadPorAvance,
-<<<<<<< HEAD
   acotarAvance, acotarPan, panPerspectiva,
-=======
->>>>>>> origin/claude/tvphi-streaming-platform-w8dpv4
   type AnimParalaje, type MovCola, type PasoSecuencia, type VistaCamara, type EstadoCamara,
   type DesdePaso, type FadeAccion, type FadeCapa, type Tramo,
 } from "@/lib/lab/anim-paralaje";
@@ -277,11 +274,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     return {
       ox: e.ox, oy: e.oy, zoom: e.zoom,
       zoomCapa: (depth) => escalaPerspectiva(e.avance, depth),
-<<<<<<< HEAD
       panCapa: (depth) => panPerspectiva(e.avance, depth),
-=======
-      panCapa: (depth) => depth * escalaPerspectiva(e.avance, depth),
->>>>>>> origin/claude/tvphi-streaming-platform-w8dpv4
       alphaCapa: (d, id) =>
         (id && typeof e.alpha[id] === "number" ? e.alpha[id] : 1) * visibilidadPorAvance(e.avance, d),
       t: 1, fin: true,
@@ -355,11 +348,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           // travelling, y a tamaño completo marea.
           ox: raton.current.x * k * 0.5,
           oy: raton.current.y * k * 0.25,
-<<<<<<< HEAD
           zoom: 1, zoomCapa: () => 1, panCapa: (d) => panPerspectiva(0, d),
-=======
-          zoom: 1, zoomCapa: () => 1, panCapa: (d) => d,
->>>>>>> origin/claude/tvphi-streaming-platform-w8dpv4
           alphaCapa: () => 1, t: 0, fin: false,
         };
       } else {
@@ -969,7 +958,6 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
 }
 
 /**
-<<<<<<< HEAD
  * Botón de flecha que repite mientras se mantiene pulsado.
  *
  * Un clic por cada 6% de cuadro sería un martilleo para cruzar la escena; con
@@ -1025,28 +1013,6 @@ function Num({ etiqueta, valor, min, max, paso, onCambio, disabled, sufijo, anch
   const empujar = (d: number) => { setTexto(null); onCambio(acotar(valor + d * paso)); };
 
   return (
-=======
- * Campo numérico que se deja escribir.
- *
- * El de antes recortaba al rango EN CADA TECLA sobre un valor controlado: al
- * borrarlo saltaba solo a un número, escribir «12» pasaba por «1» y se comía el
- * primer dígito, y no había manera de dejarlo vacío para teclear otra cosa.
- * Aquí se guarda lo tecleado tal cual mientras se escribe y solo se recorta al
- * salir del campo, que es cuando ya se sabe lo que quería poner. Y con ± para
- * no tener que teclear.
- */
-function Num({ etiqueta, valor, min, max, paso, onCambio, disabled, sufijo, ancho = "w-20" }: {
-  etiqueta: string; valor: number; min: number; max: number; paso: number;
-  onCambio: (v: number) => void; disabled?: boolean; sufijo?: string; ancho?: string;
-}) {
-  const [texto, setTexto] = useState<string | null>(null);
-  const acotar = (v: number) => Math.max(min, Math.min(max, v));
-  // Decimales según el paso, para que 0.5 no acabe en 4.300000000000001.
-  const limpio = (v: number) => String(Number(v.toFixed(paso < 1 ? 2 : 0)));
-  const empujar = (d: number) => { setTexto(null); onCambio(acotar(valor + d * paso)); };
-
-  return (
->>>>>>> origin/claude/tvphi-streaming-platform-w8dpv4
     <label className={`text-[11px] text-muted ${disabled ? "opacity-50" : ""}`}>
       {etiqueta}
       <span className="mt-0.5 flex items-center gap-0.5">
