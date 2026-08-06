@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   Upload, Play, Pause, Crosshair, Download, Trash2, ChevronUp, ChevronDown, Eye, EyeOff,
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
+  Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
   planificarCola, interpolarTramo, escalaPerspectiva, visibilidadPorAvance,
+  acotarAvance, acotarPan, panPerspectiva, seCombinan, segundosPosibles,
   type AnimParalaje, type MovCola, type PasoSecuencia, type VistaCamara, type EstadoCamara,
   type DesdePaso, type FadeAccion, type FadeCapa, type Tramo,
 } from "@/lib/lab/anim-paralaje";
@@ -57,6 +59,17 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const [repetirCola, setRepetirCola] = useState(false);
   /** Qué paso de la cola tiene abiertos sus ajustes. Solo uno a la vez. */
   const [abierto, setAbierto] = useState<string | null>(null);
+  /** Dónde está la cámara ahora mismo, para enseñarlo mientras se coloca. */
+  const [pose, setPose] = useState({ ox: 0, oy: 0, avance: 0 });
+  const [arrastrando, setArrastrando] = useState(false);
+  const arrastreRef = useRef<{ x: number; y: number } | null>(null);
+  /** Dedos puestos ahora mismo, para saber cuándo hay pellizco. */
+  const dedos = useRef(new Map<number, { x: number; y: number }>());
+  const pellizcoRef = useRef<number | null>(null);
+  const separacionDedos = () => {
+    const p = [...dedos.current.values()];
+    return p.length < 2 ? 0 : Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+  };
   const [aviso, setAviso] = useState("Carga primero el fondo y luego las capas PNG con transparencia.");
   const [busyZip, setBusyZip] = useState<"bajar" | "subir" | null>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -81,6 +94,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
    * frenar en cada juntura, un tramo necesita saber a dónde va el siguiente.
    */
   const planRef = useRef<Tramo[]>([]);
+  /** La pose con la que arrancó la cola, para que «repetir» vuelva ahí. */
+  const poseInicialRef = useRef<EstadoCamara>(estadoNeutro());
   /** Tras una secuencia: dibujar la pose final en vez del idle. */
   const retenerPoseRef = useRef(false);
 
@@ -98,8 +113,55 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   }
 
   function planificar() {
-    planRef.current = planificarCola(colaRef.current, fuerzaRef.current, metaCapas());
+    // La cola arranca DESDE DONDE ESTÁ LA CÁMARA, no siempre desde el centro.
+    // Es lo que hace que colocar la toma a mano sirva de algo: la dejas donde
+    // quieres que empiece y le das a reproducir.
+    planRef.current = planificarCola(
+      colaRef.current, fuerzaRef.current, metaCapas(), clonarEstado(estadoRef.current),
+    );
     pasoMsRef.current = 0;
+  }
+
+  /** Refresca el marcador de la pose sin repintar en cada píxel arrastrado. */
+  function anotarPose() {
+    const e = estadoRef.current;
+    setPose({ ox: e.ox, oy: e.oy, avance: e.avance });
+  }
+
+  function moverPose(dx: number, dy: number) {
+    const e = estadoRef.current;
+    // Se divide por el paralaje del primer plano para que lo que agarras siga
+    // al dedo: arrastras la piedra de delante y la piedra va contigo.
+    const ref = Math.max(0.2, vistaDesdeEstado(e).panCapa(1));
+    estadoRef.current = {
+      ...e,
+      ox: acotarPan(e.ox + dx / ref),
+      oy: acotarPan(e.oy + dy / ref),
+    };
+    anotarPose();
+  }
+
+  function acercarPose(signo: 1 | -1) {
+    const e = estadoRef.current;
+    // Paso proporcional a lo que queda por delante: cerca del plano de una capa
+    // un incremento fijo daría saltos enormes, porque la escala es 1/(1−a).
+    const paso = 0.045 * Math.max(0.35, 1 - e.avance * 0.55);
+    estadoRef.current = { ...e, avance: acotarAvance(e.avance + signo * paso) };
+    anotarPose();
+  }
+
+  /** Mete la pose actual en el paso que se está preparando. */
+  function tomarPose() {
+    const e = estadoRef.current;
+    setBorrador((b) => ({
+      ...b,
+      desde: "posicion",
+      inicioOx: Math.round(e.ox * 1000) / 1000,
+      inicioOy: Math.round(e.oy * 1000) / 1000,
+      inicioAvance: Math.round(e.avance * 1000) / 1000,
+      inicioZoom: Math.max(0.4, 1 / Math.max(0.08, 1 - e.avance)),
+    }));
+    setAviso("Este paso arrancará desde la posición que tienes en la vista previa.");
   }
 
   async function meter(archivos: FileList | null) {
@@ -219,7 +281,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     return {
       ox: e.ox, oy: e.oy, zoom: e.zoom,
       zoomCapa: (depth) => escalaPerspectiva(e.avance, depth),
-      panCapa: (depth) => depth * escalaPerspectiva(e.avance, depth),
+      panCapa: (depth) => panPerspectiva(e.avance, depth),
       alphaCapa: (d, id) =>
         (id && typeof e.alpha[id] === "number" ? e.alpha[id] : 1) * visibilidadPorAvance(e.avance, d),
       t: 1, fin: true,
@@ -245,7 +307,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     const k = (fuerzaRef.current / 100) * 0.32;
     let vista: VistaCamara = {
       ox: 0, oy: 0, zoom: 1,
-      zoomCapa: () => 1, panCapa: (d) => d, alphaCapa: () => 1, t: 0, fin: false,
+      zoomCapa: () => 1, panCapa: (d) => panPerspectiva(0, d), alphaCapa: () => 1, t: 0, fin: false,
     };
 
     if (enSecuenciaRef.current && planRef.current.length) {
@@ -263,8 +325,10 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         idx++;
         if (idx >= planRef.current.length) {
           if (repetirRef.current) {
+            // Vuelve a donde EMPEZÓ, no al centro: si la toma se colocó abajo,
+            // cada vuelta del bucle tiene que salir de abajo otra vez.
             idx = 0;
-            estadoRef.current = estadoNeutro();
+            estadoRef.current = clonarEstado(poseInicialRef.current);
           } else { acabo = true; }
           break;
         }
@@ -291,7 +355,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           // travelling, y a tamaño completo marea.
           ox: raton.current.x * k * 0.5,
           oy: raton.current.y * k * 0.25,
-          zoom: 1, zoomCapa: () => 1, panCapa: (d) => d,
+          zoom: 1, zoomCapa: () => 1, panCapa: (d) => panPerspectiva(0, d),
           alphaCapa: () => 1, t: 0, fin: false,
         };
       } else {
@@ -351,8 +415,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   function anadirACola() {
     const p = pasoPorDefecto({ ...borrador, id: `p${++pasoSeq}` });
     setCola((c) => [...c, p]);
-    const label = MOV_COLA.find((o) => o.id === p.mov)?.label ?? p.mov;
-    setAviso(`Añadido: ${label} · dist ${p.distancia}% · ${(p.durMs / 1000).toFixed(1)}s`);
+    setAviso(`Añadido: ${nombreMov(p)} · dist ${p.distancia}% · ${(p.durMs / 1000).toFixed(1)}s`);
   }
 
   function updPaso(id: string, patch: Partial<PasoSecuencia>) {
@@ -363,7 +426,10 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     if (!cola.length) return;
     encima.current = false;
     retenerPoseRef.current = false;
-    estadoRef.current = estadoNeutro();
+    // La pose colocada a mano NO se tira: es de donde tiene que arrancar. Lo
+    // único que se reinicia son los fundidos, que sí son de cada pasada.
+    estadoRef.current = { ...clonarEstado(estadoRef.current), alpha: {} };
+    poseInicialRef.current = clonarEstado(estadoRef.current);
     pasoActivoRef.current = 0;
     setPasoActivo(0);
     planificar();
@@ -384,6 +450,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     estadoRef.current = estadoNeutro();
     retenerPoseRef.current = false;
     pasoMsRef.current = 0;
+    setPose({ ox: 0, oy: 0, avance: 0 });
     setAviso("Cámara al centro, fades reiniciados.");
   }
 
@@ -495,11 +562,65 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           {/* La vista previa, arriba y pegada. Antes vivía debajo de toda la
               cola: para tocar un paso había que bajar, y se editaba a ciegas.
               Ahora se queda a la vista mientras se ajusta lo de abajo. */}
-          <div className="sticky top-2 z-10 space-y-2 rounded-xl border border-border bg-surface p-2 shadow-lg shadow-black/40">
+          {/* Pegada solo a partir de tablet. En un móvil la pantalla no da para
+              tener la vista previa fija Y los controles: se comía los botones de
+              abajo y no se podía ni añadir un paso a la cola. */}
+          <div className="z-10 space-y-2 rounded-xl border border-border bg-surface p-2 shadow-lg shadow-black/40 sm:sticky sm:top-2">
             <div
               ref={caja}
-              className="overflow-hidden rounded-lg border border-border bg-black"
+              // «touch-none» es lo que hace que en el móvil se pueda arrastrar:
+              // sin ello el navegador se queda el gesto para desplazar la página
+              // y el dedo no mueve nada.
+              className={`touch-none overflow-hidden rounded-lg border border-border bg-black ${
+                enSecuencia ? "" : arrastrando ? "cursor-grabbing" : "cursor-grab"
+              }`}
+              // Colocar la cámara a mano: se arrastra la escena y cada capa se
+              // mueve con su paralaje, así que se ve dónde va a quedar todo
+              // ANTES de animar. Es la única forma de decir «empieza desde
+              // abajo»: con los números a ciegas no hay manera de acertar.
+              onPointerDown={(e) => {
+                if (enSecuencia || !capas.length) return;
+                dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                // Envuelto porque puede lanzar si el puntero ya se soltó, y una
+                // excepción aquí dejaría el arrastre a medias.
+                try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                encima.current = false;
+                // Con dos dedos se pellizca: se deja de arrastrar y se mide la
+                // separación, que en el móvil es el único gesto de zoom que hay.
+                if (dedos.current.size >= 2) {
+                  arrastreRef.current = null;
+                  pellizcoRef.current = separacionDedos();
+                } else {
+                  arrastreRef.current = { x: e.clientX, y: e.clientY };
+                }
+                setArrastrando(true);
+                // Al empezar a mover, la pose manda sobre el idle.
+                retenerPoseRef.current = true;
+              }}
               onPointerMove={(e) => {
+                if (dedos.current.has(e.pointerId)) {
+                  dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                }
+                if (pellizcoRef.current !== null && dedos.current.size >= 2) {
+                  const d = separacionDedos();
+                  if (d > 0 && pellizcoRef.current > 0) {
+                    // Cada 6% de separación, un paso de acercamiento.
+                    const razon = d / pellizcoRef.current;
+                    if (Math.abs(razon - 1) > 0.06) {
+                      acercarPose(razon > 1 ? 1 : -1);
+                      pellizcoRef.current = d;
+                    }
+                  }
+                  return;
+                }
+                if (arrastreRef.current) {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const dx = (e.clientX - arrastreRef.current.x) / r.width;
+                  const dy = (e.clientY - arrastreRef.current.y) / r.height;
+                  arrastreRef.current = { x: e.clientX, y: e.clientY };
+                  moverPose(dx, dy);
+                  return;
+                }
                 if (enSecuencia || retenerPoseRef.current) return;
                 const r = e.currentTarget.getBoundingClientRect();
                 raton.current = {
@@ -508,7 +629,47 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                 };
                 encima.current = true;
               }}
+              onPointerUp={(e) => {
+                dedos.current.delete(e.pointerId);
+                if (dedos.current.size < 2) pellizcoRef.current = null;
+                if (!dedos.current.size) {
+                  arrastreRef.current = null;
+                  setArrastrando(false);
+                }
+              }}
+              onPointerCancel={(e) => {
+                dedos.current.delete(e.pointerId);
+                if (!dedos.current.size) { arrastreRef.current = null; setArrastrando(false); }
+              }}
               onPointerLeave={() => { encima.current = false; }}
+              // Con el foco puesto, las flechas del teclado colocan la toma.
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (enSecuencia || !capas.length) return;
+                const salto = e.shiftKey ? 0.14 : 0.05;
+                const mapa: Record<string, () => void> = {
+                  ArrowUp: () => moverPose(0, salto),
+                  ArrowDown: () => moverPose(0, -salto),
+                  ArrowLeft: () => moverPose(salto, 0),
+                  ArrowRight: () => moverPose(-salto, 0),
+                  "+": () => acercarPose(1),
+                  "=": () => acercarPose(1),
+                  "-": () => acercarPose(-1),
+                };
+                const f = mapa[e.key];
+                if (!f) return;
+                e.preventDefault();
+                retenerPoseRef.current = true;
+                f();
+              }}
+              // La rueda acerca y aleja: es el gesto que todo el mundo espera y
+              // deja poner la profundidad de arranque sin teclear nada.
+              onWheel={(e) => {
+                if (enSecuencia || !capas.length) return;
+                e.preventDefault();
+                retenerPoseRef.current = true;
+                acercarPose(e.deltaY < 0 ? 1 : -1);
+              }}
               onDrop={(e) => {
                 e.preventDefault();
                 const z = Array.from(e.dataTransfer.files).find((f) => /\.zip$/i.test(f.name));
@@ -524,13 +685,63 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                 {cola.map((q, i) => (
                   <span
                     key={q.id}
-                    title={`${i + 1}. ${MOV_COLA.find((o) => o.id === q.mov)?.label ?? q.mov}`}
+                    title={`${i + 1}. ${nombreMov(q)}`}
                     style={{ flexGrow: q.durMs }}
                     className={`h-1 rounded-full ${enSecuencia && i === pasoActivo ? "bg-brand" : i < pasoActivo ? "bg-accent/50" : "bg-border"}`}
                   />
                 ))}
               </div>
             )}
+            {/* Colocar la toma a mano. Aquí y no abajo del todo porque se usa
+                MIRANDO la vista previa: es un «déjalo así». */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Palanca
+                etiqueta="Palanca: empuja para colocar la toma"
+                disabled={enSecuencia || !capas.length}
+                onMover={(dx, dy) => { retenerPoseRef.current = true; moverPose(dx, dy); }}
+              />
+              <div className="flex flex-col gap-1">
+                <Flecha etiqueta="Acercar" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; acercarPose(1); }}><ZoomIn className="h-4 w-4" /></Flecha>
+                <Flecha etiqueta="Alejar" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; acercarPose(-1); }}><ZoomOut className="h-4 w-4" /></Flecha>
+              </div>
+
+              <div className="flex min-w-[9rem] flex-1 flex-col gap-1">
+                <span className="chip w-fit bg-surface-2 text-[10px] tabular-nums text-muted">
+                  X {pose.ox >= 0 ? "+" : ""}{pose.ox.toFixed(2)} ·
+                  Y {pose.oy >= 0 ? "+" : ""}{pose.oy.toFixed(2)} ·
+                  {" "}{escalaPerspectiva(pose.avance, 1).toFixed(2)}×
+                </span>
+                <span className="text-[10px] text-muted">
+                  Arrastra la escena, empuja la palanca o usa las flechas del teclado.
+                  La cola arranca desde donde la dejes.
+                </span>
+                <button
+                  type="button" onClick={tomarPose} disabled={enSecuencia || !capas.length}
+                  className="btn-ghost w-fit text-[10px] disabled:opacity-40"
+                  title="El paso que estás preparando arrancará justo desde aquí"
+                >
+                  <Crosshair className="h-3 w-3 text-accent" /> Empezar aquí
+                </button>
+              </div>
+
+              {/* Las flechas sueltas, para quien esté en el ordenador y prefiera
+                  dar toques exactos en vez de empujar la palanca. */}
+              <div className="hidden grid-cols-3 gap-0.5 sm:grid">
+                <span />
+                <Flecha etiqueta="Subir la toma" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; moverPose(0, 0.05); }}><ArrowUp className="h-3.5 w-3.5" /></Flecha>
+                <span />
+                <Flecha etiqueta="Mover a la izquierda" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; moverPose(0.05, 0); }}><ArrowLeft className="h-3.5 w-3.5" /></Flecha>
+                <Flecha etiqueta="Bajar la toma" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; moverPose(0, -0.05); }}><ArrowDown className="h-3.5 w-3.5" /></Flecha>
+                <Flecha etiqueta="Mover a la derecha" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; moverPose(-0.05, 0); }}><ArrowRight className="h-3.5 w-3.5" /></Flecha>
+              </div>
+            </div>
+
             <div className="flex items-center gap-2">
               <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted">
                 Fuerza
@@ -577,16 +788,40 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                 Movimiento
                 <select
                   value={borrador.mov}
-                  onChange={(e) => setBorrador((b) => ({
-                    ...b,
-                    mov: e.target.value as MovCola,
-                    fade: e.target.value === "atravesar" && b.fade === "nada" ? "desaparecer" : b.fade,
-                    fadeCapa: e.target.value === "atravesar" && b.fadeCapa === "ninguna" ? "frente" : b.fadeCapa,
-                  }))}
+                  onChange={(e) => setBorrador((b) => {
+                    const mov = e.target.value as MovCola;
+                    return {
+                      ...b,
+                      mov,
+                      // Si el segundo ya no pega con el nuevo primero, se quita:
+                      // dejarlo sería guardar una combinación que se ignora.
+                      mov2: b.mov2 && seCombinan(mov, b.mov2) ? b.mov2 : undefined,
+                      fade: mov === "atravesar" && b.fade === "nada" ? "desaparecer" : b.fade,
+                      fadeCapa: mov === "atravesar" && b.fadeCapa === "ninguna" ? "frente" : b.fadeCapa,
+                    };
+                  })}
                   className="input mt-0.5 w-full py-1 text-[11px]"
                   disabled={enSecuencia}
                 >
                   {MOV_COLA.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+              {/* Dos movimientos a la vez en el mismo tramo. Solo salen los de
+                  OTRO eje: subir mientras te acercas sí, subir y bajar no. */}
+              <label className="min-w-[9rem] flex-1 text-[11px] text-muted">
+                Y a la vez
+                <select
+                  value={borrador.mov2 ?? ""}
+                  onChange={(e) => setBorrador((b) => ({
+                    ...b, mov2: (e.target.value || undefined) as MovCola | undefined,
+                  }))}
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  disabled={enSecuencia || !segundosPosibles(borrador.mov).length}
+                >
+                  <option value="">— nada más —</option>
+                  {MOV_COLA.filter((o) => seCombinan(borrador.mov, o.id)).map((o) => (
                     <option key={o.id} value={o.id}>{o.label}</option>
                   ))}
                 </select>
@@ -649,13 +884,22 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
             </div>
 
             {borrador.desde === "posicion" && (
-              <div className="flex flex-wrap gap-2">
-                <Num etiqueta="Inicio X" valor={borrador.inicioOx} min={-1} max={1} paso={0.05}
+              <div className="flex flex-wrap items-end gap-2">
+                <Num etiqueta="Inicio X" valor={borrador.inicioOx} min={-2.5} max={2.5} paso={0.05}
                   onCambio={(v) => setBorrador((b) => ({ ...b, inicioOx: v }))} disabled={enSecuencia} />
-                <Num etiqueta="Inicio Y" valor={borrador.inicioOy} min={-1} max={1} paso={0.05}
+                <Num etiqueta="Inicio Y" valor={borrador.inicioOy} min={-2.5} max={2.5} paso={0.05}
                   onCambio={(v) => setBorrador((b) => ({ ...b, inicioOy: v }))} disabled={enSecuencia} />
                 <Num etiqueta="Inicio zoom" valor={borrador.inicioZoom} min={0.6} max={2.5} paso={0.05}
-                  onCambio={(v) => setBorrador((b) => ({ ...b, inicioZoom: v }))} disabled={enSecuencia} />
+                  // A mano manda el zoom: se borra el avance guardado por el
+                  // ratón para que no le pise lo que se acaba de teclear.
+                  onCambio={(v) => setBorrador((b) => ({ ...b, inicioZoom: v, inicioAvance: undefined }))}
+                  disabled={enSecuencia} />
+                <button
+                  type="button" onClick={tomarPose} disabled={enSecuencia || !capas.length}
+                  className="btn-ghost text-[10px] disabled:opacity-40"
+                >
+                  <Move className="h-3 w-3 text-accent" /> Tomar la de la vista previa
+                </button>
               </div>
             )}
 
@@ -702,11 +946,11 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           {!!cola.length && (
             <ol className="space-y-1.5 text-[11px]">
               {cola.map((p, i) => {
-                const label = MOV_COLA.find((o) => o.id === p.mov)?.label ?? p.mov;
+                const label = nombreMov(p);
                 const on = enSecuencia && i === pasoActivo;
                 const fadeTxt = p.fade !== "nada" && p.fadeCapa !== "ninguna"
                   ? ` · ${p.fade === "aparecer" ? "aparece" : "desaparece"} ${p.fadeCapa === "frente" ? "frente" : (capas.find((c) => c.id === p.fadeCapa)?.nombre ?? "capa")}`
-                  : p.mov === "atravesar" ? " · fade frente" : "";
+                  : (p.mov === "atravesar" || p.mov2 === "atravesar") ? " · fade frente" : "";
                 const desdeTxt = p.desde === "continuar" ? "" : p.desde === "centro" ? " · desde centro" : " · desde pos.";
                 return (
                   <li
@@ -812,6 +1056,121 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
 }
 
 /**
+ * Palanca tipo mando, para colocar la toma con el dedo.
+ *
+ * En el móvil no hay rueda ni teclado, y los botoncitos de flecha son
+ * imposibles de acertar. Con esto se empuja hacia donde sea y la cámara va
+ * sola mientras se mantenga: cuanto más se separa del centro, más rápido.
+ * Funciona igual con el ratón, así que no hay dos caminos que mantener.
+ */
+function Palanca({ onMover, disabled, etiqueta }: {
+  onMover: (dx: number, dy: number) => void;
+  disabled?: boolean;
+  etiqueta: string;
+}) {
+  const R = 30;
+  const caja = useRef<HTMLDivElement>(null);
+  const vec = useRef({ x: 0, y: 0 });
+  const lazo = useRef<number | null>(null);
+  const [pomo, setPomo] = useState({ x: 0, y: 0 });
+
+  const parar = () => {
+    if (lazo.current !== null) cancelAnimationFrame(lazo.current);
+    lazo.current = null;
+    vec.current = { x: 0, y: 0 };
+    setPomo({ x: 0, y: 0 });
+  };
+  useEffect(() => parar, []);
+
+  const apuntar = (e: React.PointerEvent) => {
+    const r = caja.current?.getBoundingClientRect();
+    if (!r) return;
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    const d = Math.hypot(dx, dy) || 1;
+    const k = Math.min(1, d / R) / d;   // dirección, con módulo de 0 a 1
+    vec.current = { x: dx * k, y: dy * k };
+    setPomo({ x: vec.current.x * R, y: vec.current.y * R });
+  };
+
+  return (
+    <div
+      ref={caja}
+      role="application"
+      aria-label={etiqueta}
+      title={etiqueta}
+      className={`relative shrink-0 touch-none rounded-full border border-border bg-surface-2/70 ${
+        disabled ? "opacity-40" : "cursor-grab active:cursor-grabbing"
+      }`}
+      style={{ width: R * 2 + 12, height: R * 2 + 12 }}
+      onPointerDown={(e) => {
+        if (disabled) return;
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+        apuntar(e);
+        if (lazo.current === null) {
+          const tic = () => {
+            // Empujar la palanca ARRIBA tiene que subir la toma, o sea llevar
+            // la escena hacia abajo: por eso el signo va cambiado.
+            onMover(-vec.current.x * 0.014, -vec.current.y * 0.014);
+            lazo.current = requestAnimationFrame(tic);
+          };
+          lazo.current = requestAnimationFrame(tic);
+        }
+      }}
+      onPointerMove={(e) => { if (lazo.current !== null) apuntar(e); }}
+      onPointerUp={parar}
+      onPointerCancel={parar}
+      onLostPointerCapture={parar}
+    >
+      <span className="pointer-events-none absolute inset-0 m-auto h-px w-4 self-center bg-border" style={{ top: "50%" }} />
+      <span
+        className="pointer-events-none absolute rounded-full bg-accent/80 shadow"
+        style={{
+          width: 20, height: 20,
+          left: `calc(50% - 10px + ${pomo.x}px)`,
+          top: `calc(50% - 10px + ${pomo.y}px)`,
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Botón de flecha que repite mientras se mantiene pulsado.
+ *
+ * Un clic por cada 6% de cuadro sería un martilleo para cruzar la escena; con
+ * mantener pulsado se coloca la toma de un tirón, que es como se usa esto.
+ */
+function Flecha({ etiqueta, onPulsa, disabled, children }: {
+  etiqueta: string; onPulsa: () => void; disabled?: boolean; children: React.ReactNode;
+}) {
+  const timers = useRef<{ retardo?: ReturnType<typeof setTimeout>; repite?: ReturnType<typeof setInterval> }>({});
+  const parar = () => {
+    if (timers.current.retardo) clearTimeout(timers.current.retardo);
+    if (timers.current.repite) clearInterval(timers.current.repite);
+    timers.current = {};
+  };
+  useEffect(() => parar, []);
+  return (
+    <button
+      type="button" disabled={disabled} title={etiqueta} aria-label={etiqueta}
+      onPointerDown={() => {
+        if (disabled) return;
+        onPulsa();
+        timers.current.retardo = setTimeout(() => {
+          timers.current.repite = setInterval(onPulsa, 40);
+        }, 300);
+      }}
+      onPointerUp={parar}
+      onPointerLeave={parar}
+      className="rounded border border-border p-1 text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-30"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
  * Campo numérico que se deja escribir.
  *
  * El de antes recortaba al rango EN CADA TECLA sobre un valor controlado: al
@@ -884,6 +1243,14 @@ function Barra({ etiqueta, valor, min = 0, max, paso, onCambio, formato }: {
       <span className="w-9 shrink-0 text-right tabular-nums">{formato(valor)}</span>
     </label>
   );
+}
+
+/** «Derecha → + Acercarse», para que en la cola se vea que hace dos cosas. */
+function nombreMov(p: { mov: MovCola; mov2?: MovCola }) {
+  const uno = MOV_COLA.find((o) => o.id === p.mov)?.label ?? p.mov;
+  if (!p.mov2) return uno;
+  const dos = MOV_COLA.find((o) => o.id === p.mov2)?.label ?? p.mov2;
+  return `${uno} + ${dos}`;
 }
 
 const cargar = (url: string) =>

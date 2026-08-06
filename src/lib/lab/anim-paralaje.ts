@@ -81,11 +81,24 @@ export type PasoSecuencia = {
    * - centro: reinicia pan/zoom a neutro (conserva opacidades de capa)
    * - posicion: parte de ox/oy/zoom de este paso
    */
+  /**
+   * Segundo movimiento del MISMO tramo, para hacer dos cosas a la vez: subir
+   * mientras te acercas, bajar mientras vas a la izquierda. Tiene que ser de
+   * otro eje —«seCombinan» lo comprueba—, porque dos del mismo se anulan.
+   */
+  mov2?: MovCola;
   desde: DesdePaso;
   /** Solo si desde === "posicion". Unidades de cámara (−1…1 aprox. para pan). */
   inicioOx: number;
   inicioOy: number;
   inicioZoom: number;
+  /**
+   * Avance de cámara al arrancar, cuando la pose se ha cogido moviendo la vista
+   * previa con el ratón. Manda sobre «inicioZoom», que se queda para las colas
+   * viejas: con avances mayores que 1 —cuando ya has cruzado una capa— el zoom
+   * equivalente sale negativo y no hay forma de guardarlo ahí.
+   */
+  inicioAvance?: number;
   /** Solo si mov === "ir-a": destino absoluto. */
   destOx: number;
   destOy: number;
@@ -174,6 +187,29 @@ export function visibilidadPorAvance(avance: number, depth: number) {
  */
 const AVANCE_CASI_CRUZA = 1 - 1 / 3;
 
+/**
+ * Cuánto se desplaza una capa por unidad de paneo.
+ *
+ * Lleva la MISMA profundidad mínima que la escala. Con la profundidad 0 exacta
+ * que se le pone al fondo, el paneo salía multiplicado por cero y el cielo se
+ * quedaba absolutamente clavado mientras todo lo demás se movía: eso no parece
+ * profundidad, parece un decorado de cartón pegado detrás.
+ */
+export function panPerspectiva(avance: number, depth: number) {
+  const d = Math.max(PROF_MINIMA, Math.min(1, depth));
+  return d * escalaPerspectiva(avance, depth);
+}
+
+/** Hasta dónde se puede echar la cámara para atrás. */
+export const AVANCE_MIN = -1.5;
+
+/** Deja el avance dentro de lo que la cámara sabe dibujar. */
+export const acotarAvance = (a: number) =>
+  Math.max(AVANCE_MIN, Math.min(AVANCE_MAX, a));
+
+/** Y el paneo, para que no se vaya a un sitio del que no se pueda volver. */
+export const acotarPan = (v: number) => Math.max(-2.5, Math.min(2.5, v));
+
 /** El avance que hace falta para dejar atrás una capa de esta profundidad. */
 export function avanceParaPasar(depth: number) {
   const d = Math.max(PROF_MINIMA, Math.min(1, depth));
@@ -216,12 +252,14 @@ export function pasoPorDefecto(parcial?: Partial<PasoSecuencia>): PasoSecuencia 
   return {
     id: parcial?.id ?? "p0",
     mov: parcial?.mov ?? "der",
+    mov2: parcial?.mov2,
     durMs: parcial?.durMs ?? 4000,
     distancia: parcial?.distancia ?? 55,
     desde: parcial?.desde ?? "continuar",
     inicioOx: parcial?.inicioOx ?? 0,
     inicioOy: parcial?.inicioOy ?? 0,
     inicioZoom: parcial?.inicioZoom ?? 1,
+    inicioAvance: parcial?.inicioAvance,
     destOx: parcial?.destOx ?? 0,
     destOy: parcial?.destOy ?? 0,
     destZoom: parcial?.destZoom ?? 1.15,
@@ -336,7 +374,9 @@ export function origenPaso(estado: EstadoCamara, paso: PasoSecuencia): EstadoCam
       ox: paso.inicioOx,
       oy: paso.inicioOy,
       zoom: 1,
-      avance: Math.max(-1.5, Math.min(AVANCE_MAX, 1 - 1 / Math.max(0.4, paso.inicioZoom))),
+      avance: acotarAvance(
+        paso.inicioAvance ?? (1 - 1 / Math.max(0.4, paso.inicioZoom)),
+      ),
     };
   }
   return base;
@@ -345,16 +385,72 @@ export function origenPaso(estado: EstadoCamara, paso: PasoSecuencia): EstadoCam
 /**
  * Estado al final del tramo (sin interpolar). Los fades quedan en 0 o 1.
  */
+/**
+ * En qué eje trabaja cada movimiento.
+ *
+ * Sirve para saber cuáles se pueden hacer A LA VEZ: subir mientras te acercas
+ * sí, porque son ejes distintos; subir y bajar a la vez no, porque uno deshace
+ * al otro. Los absolutos («centrar», «ir a») colocan la cámara entera, así que
+ * no admiten compañía.
+ */
+export function ejeDelMov(m: MovCola): "horizontal" | "vertical" | "profundidad" | "absoluto" {
+  if (m === "izq" || m === "der") return "horizontal";
+  if (m === "arriba" || m === "abajo") return "vertical";
+  if (m === "acercar" || m === "alejar" || m === "atravesar") return "profundidad";
+  return "absoluto";
+}
+
+/** ¿Se pueden encadenar en el mismo tramo? */
+export function seCombinan(a: MovCola, b: MovCola) {
+  const ea = ejeDelMov(a), eb = ejeDelMov(b);
+  return ea !== "absoluto" && eb !== "absoluto" && ea !== eb;
+}
+
+/** Los que se pueden poner como segundo movimiento de este. */
+export const segundosPosibles = (a: MovCola) =>
+  MOV_COLA.filter((o) => seCombinan(a, o.id)).map((o) => o.id);
+
 export function destinoPaso(
   origen: EstadoCamara,
   paso: PasoSecuencia,
   fuerzaPct: number,
   capas: { id: string; depth: number }[],
 ): EstadoCamara {
-  const pan = paneoDelPaso(fuerzaPct, paso.distancia);
   const out = clonarEstado(origen);
+  aplicarMov(out, paso.mov, paso, fuerzaPct, capas);
+  // El segundo movimiento va sobre el mismo tramo y toca OTRO eje, así que se
+  // aplica encima sin pisar nada: el resultado es la diagonal de los dos.
+  if (paso.mov2 && seCombinan(paso.mov, paso.mov2)) {
+    aplicarMov(out, paso.mov2, paso, fuerzaPct, capas);
+  }
 
-  switch (paso.mov) {
+  // Atravesar: si no hay fade elegido, desvanece la frontal por defecto.
+  let fadeCapa = paso.fadeCapa;
+  let fade = paso.fade;
+  const cruza = paso.mov === "atravesar" || paso.mov2 === "atravesar";
+  if (cruza && fade === "nada" && fadeCapa === "ninguna") {
+    fadeCapa = "frente";
+    fade = "desaparecer";
+  }
+  // Con el avance de ORIGEN: la capa a desvanecer es la que se tiene delante al
+  // empezar el tramo, no la que quede al acabarlo (que ya estará cruzada).
+  const fadeId = resolverCapaFade(fadeCapa, capas, origen.avance);
+  if (fadeId && fade === "aparecer") out.alpha[fadeId] = 1;
+  if (fadeId && fade === "desaparecer") out.alpha[fadeId] = 0;
+
+  return out;
+}
+
+function aplicarMov(
+  out: EstadoCamara,
+  mov: MovCola,
+  paso: PasoSecuencia,
+  fuerzaPct: number,
+  capas: { id: string; depth: number }[],
+) {
+  const pan = paneoDelPaso(fuerzaPct, paso.distancia);
+
+  switch (mov) {
     case "izq":
       out.ox -= pan;
       break;
@@ -406,21 +502,6 @@ export function destinoPaso(
       out.avance = Math.max(-1.5, Math.min(AVANCE_MAX, 1 - 1 / Math.max(0.4, paso.destZoom)));
       break;
   }
-
-  // Atravesar: si no hay fade elegido, desvanece la frontal por defecto.
-  let fadeCapa = paso.fadeCapa;
-  let fade = paso.fade;
-  if (paso.mov === "atravesar" && fade === "nada" && fadeCapa === "ninguna") {
-    fadeCapa = "frente";
-    fade = "desaparecer";
-  }
-  // Con el avance de ORIGEN: la capa a desvanecer es la que se tiene delante al
-  // empezar el tramo, no la que quede al acabarlo (que ya estará cruzada).
-  const fadeId = resolverCapaFade(fadeCapa, capas, origen.avance);
-  if (fadeId && fade === "aparecer") out.alpha[fadeId] = 1;
-  if (fadeId && fade === "desaparecer") out.alpha[fadeId] = 0;
-
-  return out;
 }
 
 function alphaDe(estado: EstadoCamara, capaId: string) {
@@ -589,7 +670,7 @@ export function interpolarTramo(
   const vista: VistaCamara = {
     ox, oy, zoom,
     zoomCapa: porAvance(avance),
-    panCapa: (depth) => depth * escalaPerspectiva(avance, depth),
+    panCapa: (depth) => panPerspectiva(avance, depth),
     // Lo que se pidió a mano POR lo que manda la cámara: una capa que ya has
     // cruzado no se ve por mucho que su fade diga 1.
     alphaCapa: (depth, capaId) =>
@@ -634,7 +715,7 @@ export function vistaAnim(
     ({
       ox, oy, zoom: 1,
       zoomCapa: porAvance(avance),
-      panCapa: (depth) => depth * escalaPerspectiva(avance, depth),
+      panCapa: (depth) => panPerspectiva(avance, depth),
       alphaCapa: (depth) => visibilidadPorAvance(avance, depth),
       t, fin,
     });
