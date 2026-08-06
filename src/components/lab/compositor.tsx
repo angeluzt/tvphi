@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   Upload, Play, Pause, Crosshair, Download, Trash2, ChevronUp, ChevronDown, Eye, EyeOff,
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
+  Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
   planificarCola, interpolarTramo, escalaPerspectiva, visibilidadPorAvance,
+  acotarAvance, acotarPan, panPerspectiva,
   type AnimParalaje, type MovCola, type PasoSecuencia, type VistaCamara, type EstadoCamara,
   type DesdePaso, type FadeAccion, type FadeCapa, type Tramo,
 } from "@/lib/lab/anim-paralaje";
@@ -57,6 +59,10 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   const [repetirCola, setRepetirCola] = useState(false);
   /** Qué paso de la cola tiene abiertos sus ajustes. Solo uno a la vez. */
   const [abierto, setAbierto] = useState<string | null>(null);
+  /** Dónde está la cámara ahora mismo, para enseñarlo mientras se coloca. */
+  const [pose, setPose] = useState({ ox: 0, oy: 0, avance: 0 });
+  const [arrastrando, setArrastrando] = useState(false);
+  const arrastreRef = useRef<{ x: number; y: number } | null>(null);
   const [aviso, setAviso] = useState("Carga primero el fondo y luego las capas PNG con transparencia.");
   const [busyZip, setBusyZip] = useState<"bajar" | "subir" | null>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -81,6 +87,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
    * frenar en cada juntura, un tramo necesita saber a dónde va el siguiente.
    */
   const planRef = useRef<Tramo[]>([]);
+  /** La pose con la que arrancó la cola, para que «repetir» vuelva ahí. */
+  const poseInicialRef = useRef<EstadoCamara>(estadoNeutro());
   /** Tras una secuencia: dibujar la pose final en vez del idle. */
   const retenerPoseRef = useRef(false);
 
@@ -98,8 +106,55 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   }
 
   function planificar() {
-    planRef.current = planificarCola(colaRef.current, fuerzaRef.current, metaCapas());
+    // La cola arranca DESDE DONDE ESTÁ LA CÁMARA, no siempre desde el centro.
+    // Es lo que hace que colocar la toma a mano sirva de algo: la dejas donde
+    // quieres que empiece y le das a reproducir.
+    planRef.current = planificarCola(
+      colaRef.current, fuerzaRef.current, metaCapas(), clonarEstado(estadoRef.current),
+    );
     pasoMsRef.current = 0;
+  }
+
+  /** Refresca el marcador de la pose sin repintar en cada píxel arrastrado. */
+  function anotarPose() {
+    const e = estadoRef.current;
+    setPose({ ox: e.ox, oy: e.oy, avance: e.avance });
+  }
+
+  function moverPose(dx: number, dy: number) {
+    const e = estadoRef.current;
+    // Se divide por el paralaje del primer plano para que lo que agarras siga
+    // al dedo: arrastras la piedra de delante y la piedra va contigo.
+    const ref = Math.max(0.2, vistaDesdeEstado(e).panCapa(1));
+    estadoRef.current = {
+      ...e,
+      ox: acotarPan(e.ox + dx / ref),
+      oy: acotarPan(e.oy + dy / ref),
+    };
+    anotarPose();
+  }
+
+  function acercarPose(signo: 1 | -1) {
+    const e = estadoRef.current;
+    // Paso proporcional a lo que queda por delante: cerca del plano de una capa
+    // un incremento fijo daría saltos enormes, porque la escala es 1/(1−a).
+    const paso = 0.045 * Math.max(0.35, 1 - e.avance * 0.55);
+    estadoRef.current = { ...e, avance: acotarAvance(e.avance + signo * paso) };
+    anotarPose();
+  }
+
+  /** Mete la pose actual en el paso que se está preparando. */
+  function tomarPose() {
+    const e = estadoRef.current;
+    setBorrador((b) => ({
+      ...b,
+      desde: "posicion",
+      inicioOx: Math.round(e.ox * 1000) / 1000,
+      inicioOy: Math.round(e.oy * 1000) / 1000,
+      inicioAvance: Math.round(e.avance * 1000) / 1000,
+      inicioZoom: Math.max(0.4, 1 / Math.max(0.08, 1 - e.avance)),
+    }));
+    setAviso("Este paso arrancará desde la posición que tienes en la vista previa.");
   }
 
   async function meter(archivos: FileList | null) {
@@ -219,7 +274,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     return {
       ox: e.ox, oy: e.oy, zoom: e.zoom,
       zoomCapa: (depth) => escalaPerspectiva(e.avance, depth),
-      panCapa: (depth) => depth * escalaPerspectiva(e.avance, depth),
+      panCapa: (depth) => panPerspectiva(e.avance, depth),
       alphaCapa: (d, id) =>
         (id && typeof e.alpha[id] === "number" ? e.alpha[id] : 1) * visibilidadPorAvance(e.avance, d),
       t: 1, fin: true,
@@ -245,7 +300,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     const k = (fuerzaRef.current / 100) * 0.32;
     let vista: VistaCamara = {
       ox: 0, oy: 0, zoom: 1,
-      zoomCapa: () => 1, panCapa: (d) => d, alphaCapa: () => 1, t: 0, fin: false,
+      zoomCapa: () => 1, panCapa: (d) => panPerspectiva(0, d), alphaCapa: () => 1, t: 0, fin: false,
     };
 
     if (enSecuenciaRef.current && planRef.current.length) {
@@ -263,8 +318,10 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         idx++;
         if (idx >= planRef.current.length) {
           if (repetirRef.current) {
+            // Vuelve a donde EMPEZÓ, no al centro: si la toma se colocó abajo,
+            // cada vuelta del bucle tiene que salir de abajo otra vez.
             idx = 0;
-            estadoRef.current = estadoNeutro();
+            estadoRef.current = clonarEstado(poseInicialRef.current);
           } else { acabo = true; }
           break;
         }
@@ -291,7 +348,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           // travelling, y a tamaño completo marea.
           ox: raton.current.x * k * 0.5,
           oy: raton.current.y * k * 0.25,
-          zoom: 1, zoomCapa: () => 1, panCapa: (d) => d,
+          zoom: 1, zoomCapa: () => 1, panCapa: (d) => panPerspectiva(0, d),
           alphaCapa: () => 1, t: 0, fin: false,
         };
       } else {
@@ -363,7 +420,10 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     if (!cola.length) return;
     encima.current = false;
     retenerPoseRef.current = false;
-    estadoRef.current = estadoNeutro();
+    // La pose colocada a mano NO se tira: es de donde tiene que arrancar. Lo
+    // único que se reinicia son los fundidos, que sí son de cada pasada.
+    estadoRef.current = { ...clonarEstado(estadoRef.current), alpha: {} };
+    poseInicialRef.current = clonarEstado(estadoRef.current);
     pasoActivoRef.current = 0;
     setPasoActivo(0);
     planificar();
@@ -384,6 +444,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     estadoRef.current = estadoNeutro();
     retenerPoseRef.current = false;
     pasoMsRef.current = 0;
+    setPose({ ox: 0, oy: 0, avance: 0 });
     setAviso("Cámara al centro, fades reiniciados.");
   }
 
@@ -498,8 +559,31 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
           <div className="sticky top-2 z-10 space-y-2 rounded-xl border border-border bg-surface p-2 shadow-lg shadow-black/40">
             <div
               ref={caja}
-              className="overflow-hidden rounded-lg border border-border bg-black"
+              className={`overflow-hidden rounded-lg border border-border bg-black ${
+                enSecuencia ? "" : arrastrando ? "cursor-grabbing" : "cursor-grab"
+              }`}
+              // Colocar la cámara a mano: se arrastra la escena y cada capa se
+              // mueve con su paralaje, así que se ve dónde va a quedar todo
+              // ANTES de animar. Es la única forma de decir «empieza desde
+              // abajo»: con los números a ciegas no hay manera de acertar.
+              onPointerDown={(e) => {
+                if (enSecuencia || !capas.length) return;
+                e.currentTarget.setPointerCapture(e.pointerId);
+                encima.current = false;
+                arrastreRef.current = { x: e.clientX, y: e.clientY };
+                setArrastrando(true);
+                // Al empezar a mover, la pose manda sobre el idle.
+                retenerPoseRef.current = true;
+              }}
               onPointerMove={(e) => {
+                if (arrastreRef.current) {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const dx = (e.clientX - arrastreRef.current.x) / r.width;
+                  const dy = (e.clientY - arrastreRef.current.y) / r.height;
+                  arrastreRef.current = { x: e.clientX, y: e.clientY };
+                  moverPose(dx, dy);
+                  return;
+                }
                 if (enSecuencia || retenerPoseRef.current) return;
                 const r = e.currentTarget.getBoundingClientRect();
                 raton.current = {
@@ -508,7 +592,21 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                 };
                 encima.current = true;
               }}
+              onPointerUp={(e) => {
+                if (!arrastreRef.current) return;
+                e.currentTarget.releasePointerCapture(e.pointerId);
+                arrastreRef.current = null;
+                setArrastrando(false);
+              }}
               onPointerLeave={() => { encima.current = false; }}
+              // La rueda acerca y aleja: es el gesto que todo el mundo espera y
+              // deja poner la profundidad de arranque sin teclear nada.
+              onWheel={(e) => {
+                if (enSecuencia || !capas.length) return;
+                e.preventDefault();
+                retenerPoseRef.current = true;
+                acercarPose(e.deltaY < 0 ? 1 : -1);
+              }}
               onDrop={(e) => {
                 e.preventDefault();
                 const z = Array.from(e.dataTransfer.files).find((f) => /\.zip$/i.test(f.name));
@@ -531,6 +629,45 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                 ))}
               </div>
             )}
+            {/* Colocar la toma a mano. Aquí y no abajo del todo porque se usa
+                MIRANDO la vista previa: es un «déjalo así». */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Move className="h-3.5 w-3.5 shrink-0 text-accent" />
+              <span className="text-[10px] text-muted">
+                Arrastra la escena · rueda para acercar
+              </span>
+              <span className="chip bg-surface-2 text-[10px] tabular-nums text-muted">
+                X {pose.ox >= 0 ? "+" : ""}{pose.ox.toFixed(2)} ·
+                Y {pose.oy >= 0 ? "+" : ""}{pose.oy.toFixed(2)} ·
+                {" "}{escalaPerspectiva(pose.avance, 1).toFixed(2)}×
+              </span>
+              <span className="flex-1" />
+              <div className="flex items-center gap-0.5">
+                <Flecha etiqueta="Subir la toma" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; moverPose(0, 0.06); }}><ArrowUp className="h-3 w-3" /></Flecha>
+                <Flecha etiqueta="Bajar la toma" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; moverPose(0, -0.06); }}><ArrowDown className="h-3 w-3" /></Flecha>
+                <Flecha etiqueta="Mover a la izquierda" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; moverPose(0.06, 0); }}><ArrowLeft className="h-3 w-3" /></Flecha>
+                <Flecha etiqueta="Mover a la derecha" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; moverPose(-0.06, 0); }}><ArrowRight className="h-3 w-3" /></Flecha>
+                <Flecha etiqueta="Acercar" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; acercarPose(1); }}><ZoomIn className="h-3 w-3" /></Flecha>
+                <Flecha etiqueta="Alejar" disabled={enSecuencia || !capas.length}
+                  onPulsa={() => { retenerPoseRef.current = true; acercarPose(-1); }}><ZoomOut className="h-3 w-3" /></Flecha>
+              </div>
+              <button
+                type="button" onClick={tomarPose} disabled={enSecuencia || !capas.length}
+                className="btn-ghost text-[10px] disabled:opacity-40"
+                title="El paso que estás preparando arrancará justo desde aquí"
+              >
+                <Crosshair className="h-3 w-3 text-accent" /> Empezar aquí
+              </button>
+            </div>
+            <p className="text-[10px] text-muted">
+              La cola arranca desde donde dejes la cámara. «Centrar» la devuelve al medio.
+            </p>
+
             <div className="flex items-center gap-2">
               <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted">
                 Fuerza
@@ -649,13 +786,22 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
             </div>
 
             {borrador.desde === "posicion" && (
-              <div className="flex flex-wrap gap-2">
-                <Num etiqueta="Inicio X" valor={borrador.inicioOx} min={-1} max={1} paso={0.05}
+              <div className="flex flex-wrap items-end gap-2">
+                <Num etiqueta="Inicio X" valor={borrador.inicioOx} min={-2.5} max={2.5} paso={0.05}
                   onCambio={(v) => setBorrador((b) => ({ ...b, inicioOx: v }))} disabled={enSecuencia} />
-                <Num etiqueta="Inicio Y" valor={borrador.inicioOy} min={-1} max={1} paso={0.05}
+                <Num etiqueta="Inicio Y" valor={borrador.inicioOy} min={-2.5} max={2.5} paso={0.05}
                   onCambio={(v) => setBorrador((b) => ({ ...b, inicioOy: v }))} disabled={enSecuencia} />
                 <Num etiqueta="Inicio zoom" valor={borrador.inicioZoom} min={0.6} max={2.5} paso={0.05}
-                  onCambio={(v) => setBorrador((b) => ({ ...b, inicioZoom: v }))} disabled={enSecuencia} />
+                  // A mano manda el zoom: se borra el avance guardado por el
+                  // ratón para que no le pise lo que se acaba de teclear.
+                  onCambio={(v) => setBorrador((b) => ({ ...b, inicioZoom: v, inicioAvance: undefined }))}
+                  disabled={enSecuencia} />
+                <button
+                  type="button" onClick={tomarPose} disabled={enSecuencia || !capas.length}
+                  className="btn-ghost text-[10px] disabled:opacity-40"
+                >
+                  <Move className="h-3 w-3 text-accent" /> Tomar la de la vista previa
+                </button>
               </div>
             )}
 
@@ -808,6 +954,41 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Botón de flecha que repite mientras se mantiene pulsado.
+ *
+ * Un clic por cada 6% de cuadro sería un martilleo para cruzar la escena; con
+ * mantener pulsado se coloca la toma de un tirón, que es como se usa esto.
+ */
+function Flecha({ etiqueta, onPulsa, disabled, children }: {
+  etiqueta: string; onPulsa: () => void; disabled?: boolean; children: React.ReactNode;
+}) {
+  const timers = useRef<{ retardo?: ReturnType<typeof setTimeout>; repite?: ReturnType<typeof setInterval> }>({});
+  const parar = () => {
+    if (timers.current.retardo) clearTimeout(timers.current.retardo);
+    if (timers.current.repite) clearInterval(timers.current.repite);
+    timers.current = {};
+  };
+  useEffect(() => parar, []);
+  return (
+    <button
+      type="button" disabled={disabled} title={etiqueta} aria-label={etiqueta}
+      onPointerDown={() => {
+        if (disabled) return;
+        onPulsa();
+        timers.current.retardo = setTimeout(() => {
+          timers.current.repite = setInterval(onPulsa, 40);
+        }, 300);
+      }}
+      onPointerUp={parar}
+      onPointerLeave={parar}
+      className="rounded border border-border p-1 text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-30"
+    >
+      {children}
+    </button>
   );
 }
 

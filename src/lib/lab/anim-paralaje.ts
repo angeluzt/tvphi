@@ -86,6 +86,13 @@ export type PasoSecuencia = {
   inicioOx: number;
   inicioOy: number;
   inicioZoom: number;
+  /**
+   * Avance de cámara al arrancar, cuando la pose se ha cogido moviendo la vista
+   * previa con el ratón. Manda sobre «inicioZoom», que se queda para las colas
+   * viejas: con avances mayores que 1 —cuando ya has cruzado una capa— el zoom
+   * equivalente sale negativo y no hay forma de guardarlo ahí.
+   */
+  inicioAvance?: number;
   /** Solo si mov === "ir-a": destino absoluto. */
   destOx: number;
   destOy: number;
@@ -174,6 +181,29 @@ export function visibilidadPorAvance(avance: number, depth: number) {
  */
 const AVANCE_CASI_CRUZA = 1 - 1 / 3;
 
+/**
+ * Cuánto se desplaza una capa por unidad de paneo.
+ *
+ * Lleva la MISMA profundidad mínima que la escala. Con la profundidad 0 exacta
+ * que se le pone al fondo, el paneo salía multiplicado por cero y el cielo se
+ * quedaba absolutamente clavado mientras todo lo demás se movía: eso no parece
+ * profundidad, parece un decorado de cartón pegado detrás.
+ */
+export function panPerspectiva(avance: number, depth: number) {
+  const d = Math.max(PROF_MINIMA, Math.min(1, depth));
+  return d * escalaPerspectiva(avance, depth);
+}
+
+/** Hasta dónde se puede echar la cámara para atrás. */
+export const AVANCE_MIN = -1.5;
+
+/** Deja el avance dentro de lo que la cámara sabe dibujar. */
+export const acotarAvance = (a: number) =>
+  Math.max(AVANCE_MIN, Math.min(AVANCE_MAX, a));
+
+/** Y el paneo, para que no se vaya a un sitio del que no se pueda volver. */
+export const acotarPan = (v: number) => Math.max(-2.5, Math.min(2.5, v));
+
 /** El avance que hace falta para dejar atrás una capa de esta profundidad. */
 export function avanceParaPasar(depth: number) {
   const d = Math.max(PROF_MINIMA, Math.min(1, depth));
@@ -222,6 +252,7 @@ export function pasoPorDefecto(parcial?: Partial<PasoSecuencia>): PasoSecuencia 
     inicioOx: parcial?.inicioOx ?? 0,
     inicioOy: parcial?.inicioOy ?? 0,
     inicioZoom: parcial?.inicioZoom ?? 1,
+    inicioAvance: parcial?.inicioAvance,
     destOx: parcial?.destOx ?? 0,
     destOy: parcial?.destOy ?? 0,
     destZoom: parcial?.destZoom ?? 1.15,
@@ -336,7 +367,9 @@ export function origenPaso(estado: EstadoCamara, paso: PasoSecuencia): EstadoCam
       ox: paso.inicioOx,
       oy: paso.inicioOy,
       zoom: 1,
-      avance: Math.max(-1.5, Math.min(AVANCE_MAX, 1 - 1 / Math.max(0.4, paso.inicioZoom))),
+      avance: acotarAvance(
+        paso.inicioAvance ?? (1 - 1 / Math.max(0.4, paso.inicioZoom)),
+      ),
     };
   }
   return base;
@@ -589,7 +622,7 @@ export function interpolarTramo(
   const vista: VistaCamara = {
     ox, oy, zoom,
     zoomCapa: porAvance(avance),
-    panCapa: (depth) => depth * escalaPerspectiva(avance, depth),
+    panCapa: (depth) => panPerspectiva(avance, depth),
     // Lo que se pidió a mano POR lo que manda la cámara: una capa que ya has
     // cruzado no se ve por mucho que su fade diga 1.
     alphaCapa: (depth, capaId) =>
@@ -634,7 +667,7 @@ export function vistaAnim(
     ({
       ox, oy, zoom: 1,
       zoomCapa: porAvance(avance),
-      panCapa: (depth) => depth * escalaPerspectiva(avance, depth),
+      panCapa: (depth) => panPerspectiva(avance, depth),
       alphaCapa: (depth) => visibilidadPorAvance(avance, depth),
       t, fin,
     });
