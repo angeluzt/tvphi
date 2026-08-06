@@ -43,7 +43,20 @@ const cuerpo = z.object({
   prompt: z.string().min(4).max(4000),
   escenas: z.number().int().min(1).max(20).optional(),
   modelo: z.string().max(80).optional(),
+  /**
+   * La forma del vídeo. Importa desde el principio y no después: los encuadres
+   * se hacen para esta forma, y las imágenes se piden con este tamaño. Antes
+   * salía siempre apaisado, así que para TikTok no había manera.
+   */
+  formato: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
 });
+
+/** El tamaño real con el que se van a generar las imágenes de cada escena. */
+const MEDIDAS: Record<string, { w: number; h: number }> = {
+  "16:9": { w: 1536, h: 1024 },
+  "9:16": { w: 1024, h: 1536 },
+  "1:1": { w: 1024, h: 1024 },
+};
 
 const INSTRUCCIONES = `Escribes el montaje de un video narrado, en JSON, para la aplicación TVPHI.
 
@@ -123,6 +136,9 @@ export async function POST(req: Request) {
     ? parsed.data.modelo
     : prefs.texto;
 
+  const formato = parsed.data.formato;
+  const medida = MEDIDAS[formato];
+
   const cupo = await estadoCupoHistorias(user.id, user.email);
   if (!cupo.exento && cupo.quedan <= 0) {
     return NextResponse.json({
@@ -145,6 +161,16 @@ export async function POST(req: Request) {
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: INSTRUCCIONES },
+          // La forma va aparte y en su propio mensaje para que no se pierda
+          // entre el resto: es lo que decide si el vídeo sirve para TikTok.
+          { role: "system", content:
+            `FORMATO DE ESTE VÍDEO: ${formato}. Usa "aspect":"${formato}" y, en cada escena, `
+            + `"imgW":${medida.w} y "imgH":${medida.h}. `
+            + (formato === "9:16"
+              ? "Es VERTICAL, para móvil: encuadra en vertical, la acción en el centro y con aire arriba y abajo; nada importante en los bordes laterales."
+              : formato === "1:1"
+                ? "Es CUADRADO: encuadra centrado, sin depender de los lados."
+                : "Es APAISADO, para pantalla ancha.") },
           { role: "system", content: `Catálogo de efectos y reglas del montaje:\n${JSON.stringify(ref)}` },
           { role: "user", content: `Haz un capítulo de ${escenas} escenas sobre esto:\n\n${prompt}` },
         ],
@@ -178,6 +204,16 @@ export async function POST(req: Request) {
   // Se pasa por el mismo normalizador que la importación a mano: lo que venga
   // raro se endereza o se cae aquí, no dentro del proyecto del usuario.
   const project = migrateProject(crudo?.project ?? crudo);
+  // El formato lo pone el servidor, no el modelo: se le pide, pero si contesta
+  // otro el usuario acabaría con un vídeo de otra forma sin enterarse, y los
+  // encuadres ya vendrían hechos para la equivocada.
+  project.aspect = formato;
+  for (const sc of project.scenes) {
+    if (!(sc.imgW > 0) || !(sc.imgH > 0) || (sc.imgW > sc.imgH) !== (medida.w > medida.h)) {
+      sc.imgW = medida.w;
+      sc.imgH = medida.h;
+    }
+  }
   if (!project.scenes.length) {
     return NextResponse.json({ error: "La IA no devolvió ninguna escena" }, { status: 502 });
   }

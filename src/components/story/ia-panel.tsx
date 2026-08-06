@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Sparkles, Loader2 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
+import { ASPECTS, type Aspect } from "@/lib/story/model";
 import type { CupoHistorias } from "./story-app";
 
 // Escribir un capítulo con IA.
@@ -22,6 +23,10 @@ export function IaPanel({
   const [mods, setMods] = useState({ texto: "", imagen: "", voz: "", vozNombre: "alloy" });
   const [prompt, setPrompt] = useState("");
   const [escenas, setEscenas] = useState(6);
+  // La forma del vídeo se elige AQUÍ. Antes no se preguntaba y salía siempre
+  // apaisado, así que para TikTok o Reels no había manera: había que sacar una
+  // copia después y rehacer todos los encuadres.
+  const [formato, setFormato] = useState<Aspect>("16:9");
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [abierto, setAbierto] = useState(false);
@@ -57,6 +62,7 @@ export function IaPanel({
         body: JSON.stringify({
           prompt,
           escenas,
+          formato,
           // Solo el admin manda modelo; el servidor ignora el del resto.
           modelo: esAdmin ? (mods.texto.trim() || undefined) : undefined,
         }),
@@ -115,6 +121,35 @@ export function IaPanel({
           {esAdmin && (
             <ModelosIa tareas={["texto", "voz", "imagen"]} onCambio={setMods} recargar={recargar} />
           )}
+
+          <div>
+            <span className="text-xs text-muted">¿Dónde se va a ver?</span>
+            <div className="mt-1 grid grid-cols-3 gap-1">
+              {ASPECTS.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => setFormato(a.id)}
+                  title={`${a.label} · ${a.corto}`}
+                  className={`flex flex-col items-center gap-1 rounded-lg border px-1 py-2 text-[10px] leading-tight ${
+                    formato === a.id
+                      ? "border-brand bg-brand/10 text-brand"
+                      : "border-border text-muted hover:border-brand/60 hover:text-fg"
+                  }`}
+                >
+                  <span
+                    className="rounded-sm border border-current"
+                    style={{ width: a.ratio >= 1 ? 22 : 22 * a.ratio, height: a.ratio >= 1 ? 22 / a.ratio : 22 }}
+                  />
+                  <span className="font-medium">{a.id}</span>
+                  <span className="text-[9px]">{a.corto.split(",")[0]}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[10px] text-muted">
+              Se decide ahora: los encuadres y las imágenes se hacen para esta forma.
+            </p>
+          </div>
 
           <label className="block">
             <span className="text-xs text-muted">Escenas: {escenas}</span>
