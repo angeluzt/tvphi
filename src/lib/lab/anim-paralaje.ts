@@ -132,8 +132,53 @@ export type VistaCamara = {
 const PROF_MINIMA = 0.03;
 
 /** Más allá de esto una capa es un muro borroso, y además 1/0 = infinito. */
-const ESCALA_MAX = 12;
-const AVANCE_MAX = 0.94;
+const ESCALA_MAX = 40;
+
+/**
+ * Hasta dónde puede avanzar la cámara.
+ *
+ * Antes se cortaba en 0,94, que es justo ANTES del plano de profundidad 1: por
+ * eso el zoom «dejaba de hacer zoom» y no había manera de pasar del primer
+ * plano. Ahora se deja llegar mucho más lejos, lo justo para cruzar la capa más
+ * lejana que no sea el fondo (con profundidad 0,1 hace falta avance 10).
+ */
+const AVANCE_MAX = 14;
+
+/** A partir de este tamaño una capa ya te la estás comiendo: empieza a irse. */
+const ESCALA_ENTRA_FUNDIDO = 6;
+/** Y aquí ya la has pasado del todo. */
+const ESCALA_PASADA = 14;
+
+/**
+ * Cuánto se ve una capa según lo cerca que la tengas.
+ *
+ * Cuando la cámara la alcanza, la capa deja de ser un decorado y pasa a ser una
+ * pared que tapa el cuadro. Se va sola, y como depende SOLO de dónde está la
+ * cámara, se queda fuera en todos los pasos siguientes sin tener que acordarse
+ * de nada: si luego te alejas, vuelve. Eso es lo que hace que al atravesar la
+ * capa 3 la 2 pase a ser la de delante.
+ */
+export function visibilidadPorAvance(avance: number, depth: number) {
+  if (depth <= PROF_MINIMA) return 1;   // el fondo nunca se pasa
+  const e = escalaPerspectiva(avance, depth);
+  if (e <= ESCALA_ENTRA_FUNDIDO) return 1;
+  if (e >= ESCALA_PASADA) return 0;
+  const t = (e - ESCALA_ENTRA_FUNDIDO) / (ESCALA_PASADA - ESCALA_ENTRA_FUNDIDO);
+  return 1 - t * t * (3 - 2 * t);
+}
+
+/**
+ * Hasta dónde empuja el «atravesar» del modo libre: lo justo para triplicar el
+ * primer plano. Más allá la curva 1/(1−a) se dispara, y en un bucle de ida y
+ * vuelta eso es un parpadeo, no un movimiento de cámara.
+ */
+const AVANCE_CASI_CRUZA = 1 - 1 / 3;
+
+/** El avance que hace falta para dejar atrás una capa de esta profundidad. */
+export function avanceParaPasar(depth: number) {
+  const d = Math.max(PROF_MINIMA, Math.min(1, depth));
+  return (1 - 1 / ESCALA_PASADA) / d;
+}
 
 /**
  * Lo que crece una capa cuando la cámara avanza.
@@ -150,6 +195,8 @@ const AVANCE_MAX = 0.94;
 export function escalaPerspectiva(avance: number, depth: number) {
   const d = Math.max(PROF_MINIMA, Math.min(1, depth));
   const den = 1 - avance * d;
+  // Pasado el plano de la capa, la cámara la ha dejado atrás: no se dibuja
+  // (visibilidadPorAvance ya la ha apagado), pero hay que devolver algo finito.
   if (den <= 1 / ESCALA_MAX) return ESCALA_MAX;
   return Math.min(ESCALA_MAX, 1 / den);
 }
@@ -222,8 +269,19 @@ function avanceDelPaso(fuerzaPct: number, distancia: number) {
   return 0.55 * (fuerzaPct / 100) * factorDist(distancia);
 }
 
+/**
+ * Cuánto panea un tramo, en fracción de cuadro.
+ *
+ * Iba con la misma constante que todo lo demás (0,08 como tope absoluto), y eso
+ * daba 40 px de recorrido en tres segundos: 13 px por segundo, o sea nada. Un
+ * travelling tiene que barrer un trozo de cuadro que se note.
+ */
+function paneoDelPaso(fuerzaPct: number, distancia: number) {
+  return 0.62 * (fuerzaPct / 100) * factorDist(distancia);
+}
+
 /** Lo mismo para el modo libre, donde solo hay «fuerza» (k). */
-const avanceIdle = (k: number) => Math.min(AVANCE_MAX, Math.max(0.12, k * 6));
+const avanceIdle = (k: number) => Math.min(0.9, Math.max(0.12, k * 1.6));
 
 function kDeFuerza(fuerzaPct: number) {
   return (fuerzaPct / 100) * 0.08;
@@ -234,17 +292,33 @@ function factorDist(distancia: number) {
   return Math.max(0.05, distancia / 100);
 }
 
+/**
+ * La capa que la cámara tiene delante AHORA, saltándose las que ya ha pasado.
+ *
+ * Es lo que arregla el «la capa 2 ahora es la 1»: una vez cruzada la 3, pedir
+ * «la de delante» tiene que devolver la 2, no seguir señalando a la 3 porque
+ * siga siendo la de más profundidad en la lista.
+ */
+export function capaDelante(
+  capas: { id: string; depth: number }[],
+  avance: number,
+): { id: string; depth: number } | null {
+  let mejor: { id: string; depth: number } | null = null;
+  for (const c of capas) {
+    if (c.depth <= PROF_MINIMA) continue;                 // el fondo no se cruza
+    if (visibilidadPorAvance(avance, c.depth) <= 0.02) continue;  // ya pasada
+    if (!mejor || c.depth > mejor.depth) mejor = c;
+  }
+  return mejor;
+}
+
 export function resolverCapaFade(
   fadeCapa: FadeCapa,
   capas: { id: string; depth: number }[],
+  avance = 0,
 ): string | null {
   if (fadeCapa === "ninguna") return null;
-  if (fadeCapa === "frente") {
-    if (!capas.length) return null;
-    let best = capas[0];
-    for (const c of capas) if (c.depth >= best.depth) best = c;
-    return best.id;
-  }
+  if (fadeCapa === "frente") return capaDelante(capas, avance)?.id ?? null;
   return fadeCapa;
 }
 
@@ -277,21 +351,23 @@ export function destinoPaso(
   fuerzaPct: number,
   capas: { id: string; depth: number }[],
 ): EstadoCamara {
-  const k = kDeFuerza(fuerzaPct) * factorDist(paso.distancia);
+  const pan = paneoDelPaso(fuerzaPct, paso.distancia);
   const out = clonarEstado(origen);
 
   switch (paso.mov) {
     case "izq":
-      out.ox -= k;
+      out.ox -= pan;
       break;
     case "der":
-      out.ox += k;
+      out.ox += pan;
       break;
     case "arriba":
-      out.oy -= k * 0.65;
+      // El tilt va algo más corto que el travelling: el cuadro es más bajo que
+      // ancho, y el mismo recorrido arriba/abajo se sale antes.
+      out.oy -= pan * 0.7;
       break;
     case "abajo":
-      out.oy += k * 0.65;
+      out.oy += pan * 0.7;
       break;
     case "acercar":
       // Solo avance: el zoom de lente agrandaría también el cielo, y un cielo
@@ -302,12 +378,15 @@ export function destinoPaso(
       out.avance = Math.max(-1.5, out.avance - avanceDelPaso(fuerzaPct, paso.distancia));
       break;
     case "atravesar": {
-      // No suma una cantidad fija: se come una FRACCIÓN de lo que queda hasta
-      // el plano de delante. Así siempre acaba pasando al otro lado, esté la
-      // cámara donde esté, y el último tramo es el más rápido: como cruzar un
-      // arco de verdad.
-      const queda = AVANCE_MAX - out.avance;
-      out.avance += queda * Math.min(0.92, 0.55 + factorDist(paso.distancia) * 0.4);
+      // Cruza la capa que TIENE DELANTE ahora mismo, no una cantidad fija ni la
+      // capa de más profundidad de la lista: si ya se atravesó la 3, la de
+      // delante es la 2, y es esa la que hay que cruzar ahora.
+      const siguiente = capaDelante(capas, out.avance);
+      const meta = siguiente ? avanceParaPasar(siguiente.depth) : out.avance + 0.8;
+      // Con distancia al 100 se cruza entera; con menos, se queda a medio camino
+      // y hace falta otro paso, que es lo suyo para dosificarlo.
+      out.avance += Math.max(0.08, (meta - out.avance) * factorDist(paso.distancia));
+      out.avance = Math.min(AVANCE_MAX, out.avance);
       break;
     }
     case "centrar":
@@ -335,7 +414,9 @@ export function destinoPaso(
     fadeCapa = "frente";
     fade = "desaparecer";
   }
-  const fadeId = resolverCapaFade(fadeCapa, capas);
+  // Con el avance de ORIGEN: la capa a desvanecer es la que se tiene delante al
+  // empezar el tramo, no la que quede al acabarlo (que ya estará cruzada).
+  const fadeId = resolverCapaFade(fadeCapa, capas, origen.avance);
   if (fadeId && fade === "aparecer") out.alpha[fadeId] = 1;
   if (fadeId && fade === "desaparecer") out.alpha[fadeId] = 0;
 
@@ -509,7 +590,10 @@ export function interpolarTramo(
     ox, oy, zoom,
     zoomCapa: porAvance(avance),
     panCapa: (depth) => depth * escalaPerspectiva(avance, depth),
-    alphaCapa: (_depth, capaId) => (capaId ? alphaDe(estado, capaId) : 1),
+    // Lo que se pidió a mano POR lo que manda la cámara: una capa que ya has
+    // cruzado no se ve por mucho que su fade diga 1.
+    alphaCapa: (depth, capaId) =>
+      (capaId ? alphaDe(estado, capaId) : 1) * visibilidadPorAvance(avance, depth),
     t, fin,
   };
   return { vista, estado };
@@ -544,22 +628,28 @@ export function vistaAnim(
 
   // «avance» en vez de un zoom por capa suelto: así el modo libre y la cola se
   // mueven con la misma cámara, y una prueba rápida predice lo que hará la cola.
-  const base = (ox: number, oy: number, avance = 0, ac: VistaCamara["alphaCapa"] = identidad): VistaCamara =>
+  // La visibilidad por cercanía la pone «base» para todos los presets: es de la
+  // cámara, no de cada efecto, así que ninguno tiene que acordarse de ella.
+  const base = (ox: number, oy: number, avance = 0): VistaCamara =>
     ({
       ox, oy, zoom: 1,
       zoomCapa: porAvance(avance),
       panCapa: (depth) => depth * escalaPerspectiva(avance, depth),
-      alphaCapa: ac, t, fin,
+      alphaCapa: (depth) => visibilidadPorAvance(avance, depth),
+      t, fin,
     });
 
   switch (kind) {
     case "suave": {
+      // El idle de reposo se queda corto a propósito: es un respiro de fondo,
+      // no un movimiento de cámara.
+      const q = k * 0.35;
       if (opts.modo === "tramo") {
         const a = avance * Math.PI * 2;
-        return base(Math.sin(a) * k, Math.cos(a * 0.75) * k * 0.35);
+        return base(Math.sin(a) * q, Math.cos(a * 0.75) * q * 0.35);
       }
       const s = ms / 3000;
-      return base(Math.sin(s) * k, Math.cos(s * 0.75) * k * 0.35);
+      return base(Math.sin(s) * q, Math.cos(s * 0.75) * q * 0.35);
     }
     case "izq-der":
       return base(tramoSwing * k, 0);
@@ -573,16 +663,13 @@ export function vistaAnim(
       return base(0, 0, avance * avanceIdle(k));
     case "alejar":
       return base(0, 0, (1 - avance) * avanceIdle(k));
-    case "atravesar": {
-      const a = avance * Math.min(AVANCE_MAX, 0.55 + k * 4);
-      return base(0, 0, a, (depth) => {
-        if (depth < 0.15) return 1;
-        // Se desvanece según lo CERCA que esté ya, no según el reloj: así la
-        // capa se apaga justo cuando la estás cruzando, no antes ni después.
-        const cerca = escalaPerspectiva(a, depth);
-        return 1 - smooth(2.2, 6, cerca);
-      });
-    }
+    case "atravesar":
+      // Se queda a las puertas de cruzar, no lo cruza del todo. Esto es un
+      // bucle de ida y vuelta: llevarlo hasta el final significa recorrer la
+      // parte hiperbólica de la curva, donde la escala se dispara, y en bucle
+      // eso no es un travelling, es un parpadeo (medido: 3733 px/s frente a los
+      // ~270 del resto). Para cruzar de verdad está el paso de la cola.
+      return base(0, 0, avance * AVANCE_CASI_CRUZA);
     case "diagonal":
       return base(tramoSwing * k, tramoSwing * k * 0.55);
     case "orbita": {
