@@ -94,8 +94,15 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
    * frenar en cada juntura, un tramo necesita saber a dónde va el siguiente.
    */
   const planRef = useRef<Tramo[]>([]);
-  /** La pose con la que arrancó la cola, para que «repetir» vuelva ahí. */
-  const poseInicialRef = useRef<EstadoCamara>(estadoNeutro());
+  /**
+   * EL FOTOGRAMA CERO: dónde empieza la animación.
+   *
+   * Aparte del estado vivo a propósito. Si se planifica desde la cámara actual,
+   * al acabar la cola esa cámara ya está en el final y darle otra vez sigue
+   * avanzando, así que la misma animación nunca se puede repetir. Esto solo lo
+   * cambian el usuario colocando la toma y el botón de centrar.
+   */
+  const inicioRef = useRef<EstadoCamara>(estadoNeutro());
   /** Tras una secuencia: dibujar la pose final en vez del idle. */
   const retenerPoseRef = useRef(false);
 
@@ -113,11 +120,12 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   }
 
   function planificar() {
-    // La cola arranca DESDE DONDE ESTÁ LA CÁMARA, no siempre desde el centro.
-    // Es lo que hace que colocar la toma a mano sirva de algo: la dejas donde
-    // quieres que empiece y le das a reproducir.
+    // Siempre desde la pose de INICIO, nunca desde donde esté la cámara ahora.
+    // Antes se planificaba desde el estado vivo, y al acabar la cola ese estado
+    // era el final: darle otra vez a reproducir seguía avanzando desde ahí y no
+    // había forma de repetir la misma animación.
     planRef.current = planificarCola(
-      colaRef.current, fuerzaRef.current, metaCapas(), clonarEstado(estadoRef.current),
+      colaRef.current, fuerzaRef.current, metaCapas(), clonarEstado(inicioRef.current),
     );
     pasoMsRef.current = 0;
   }
@@ -128,17 +136,27 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     setPose({ ox: e.ox, oy: e.oy, avance: e.avance });
   }
 
+  /**
+   * Colocar la cámara a mano REDEFINE dónde empieza la animación. Es lo que
+   * hace que «lo dejo aquí» signifique algo: no es una vista suelta, es el
+   * fotograma cero.
+   */
+  function fijarInicio(e: EstadoCamara) {
+    estadoRef.current = e;
+    inicioRef.current = clonarEstado(e);
+    anotarPose();
+  }
+
   function moverPose(dx: number, dy: number) {
     const e = estadoRef.current;
     // Se divide por el paralaje del primer plano para que lo que agarras siga
     // al dedo: arrastras la piedra de delante y la piedra va contigo.
     const ref = Math.max(0.2, vistaDesdeEstado(e).panCapa(1));
-    estadoRef.current = {
+    fijarInicio({
       ...e,
       ox: acotarPan(e.ox + dx / ref),
       oy: acotarPan(e.oy + dy / ref),
-    };
-    anotarPose();
+    });
   }
 
   function acercarPose(signo: 1 | -1) {
@@ -146,8 +164,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     // Paso proporcional a lo que queda por delante: cerca del plano de una capa
     // un incremento fijo daría saltos enormes, porque la escala es 1/(1−a).
     const paso = 0.045 * Math.max(0.35, 1 - e.avance * 0.55);
-    estadoRef.current = { ...e, avance: acotarAvance(e.avance + signo * paso) };
-    anotarPose();
+    fijarInicio({ ...e, avance: acotarAvance(e.avance + signo * paso) });
   }
 
   /** Mete la pose actual en el paso que se está preparando. */
@@ -328,7 +345,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
             // Vuelve a donde EMPEZÓ, no al centro: si la toma se colocó abajo,
             // cada vuelta del bucle tiene que salir de abajo otra vez.
             idx = 0;
-            estadoRef.current = clonarEstado(poseInicialRef.current);
+            estadoRef.current = clonarEstado(inicioRef.current);
           } else { acabo = true; }
           break;
         }
@@ -338,7 +355,11 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
         setEnSecuencia(false);
         retenerPoseRef.current = true;
         pasoMsRef.current = 0;
-        setAviso("Secuencia terminada — la pose se conserva. «Centrar» la reinicia.");
+        // Al acabar, la cámara VUELVE al inicio que se definió: es lo que deja
+        // ver otra vez el fotograma cero y poder repetir la misma animación.
+        estadoRef.current = clonarEstado(inicioRef.current);
+        anotarPose();
+        setAviso("Terminada. La cámara vuelve al inicio que fijaste: dale otra vez y hace lo mismo.");
         vista = vistaDesdeEstado(estadoRef.current);
       } else {
         if (idx !== pasoActivoRef.current) { pasoActivoRef.current = idx; setPasoActivo(idx); }
@@ -426,16 +447,17 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     if (!cola.length) return;
     encima.current = false;
     retenerPoseRef.current = false;
-    // La pose colocada a mano NO se tira: es de donde tiene que arrancar. Lo
-    // único que se reinicia son los fundidos, que sí son de cada pasada.
-    estadoRef.current = { ...clonarEstado(estadoRef.current), alpha: {} };
-    poseInicialRef.current = clonarEstado(estadoRef.current);
+    // Siempre desde el inicio fijado, con los fundidos limpios: así la misma
+    // cola da el mismo resultado las veces que se le dé.
+    estadoRef.current = { ...clonarEstado(inicioRef.current), alpha: {} };
+    inicioRef.current = clonarEstado(estadoRef.current);
     pasoActivoRef.current = 0;
     setPasoActivo(0);
     planificar();
     setEnSecuencia(true);
     setMoviendo(true);
-    setAviso(`Reproduciendo secuencia (${cola.length} pasos, estado encadenado)…`);
+    anotarPose();
+    setAviso(`Reproduciendo (${cola.length} pasos). Al acabar vuelve al inicio.`);
   }
 
   function pararSecuencia() {
@@ -448,10 +470,11 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     encima.current = false;
     raton.current = { x: 0, y: 0 };
     estadoRef.current = estadoNeutro();
+    inicioRef.current = estadoNeutro();
     retenerPoseRef.current = false;
     pasoMsRef.current = 0;
     setPose({ ox: 0, oy: 0, avance: 0 });
-    setAviso("Cámara al centro, fades reiniciados.");
+    setAviso("Cámara al centro. La animación vuelve a empezar desde aquí.");
   }
 
   const upd = (id: string, p: Partial<CapaImg>) =>
@@ -707,22 +730,29 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                   onPulsa={() => { retenerPoseRef.current = true; acercarPose(-1); }}><ZoomOut className="h-4 w-4" /></Flecha>
               </div>
 
-              <div className="flex min-w-[9rem] flex-1 flex-col gap-1">
-                <span className="chip w-fit bg-surface-2 text-[10px] tabular-nums text-muted">
-                  X {pose.ox >= 0 ? "+" : ""}{pose.ox.toFixed(2)} ·
-                  Y {pose.oy >= 0 ? "+" : ""}{pose.oy.toFixed(2)} ·
-                  {" "}{escalaPerspectiva(pose.avance, 1).toFixed(2)}×
-                </span>
-                <span className="text-[10px] text-muted">
-                  Arrastra la escena, empuja la palanca o usa las flechas del teclado.
-                  La cola arranca desde donde la dejes.
+              <div className="flex min-w-[10rem] flex-1 flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="chip bg-surface-2 text-[10px] tabular-nums text-muted">
+                    X {pose.ox >= 0 ? "+" : ""}{pose.ox.toFixed(2)} ·
+                    Y {pose.oy >= 0 ? "+" : ""}{pose.oy.toFixed(2)} ·
+                    {" "}{escalaPerspectiva(pose.avance, 1).toFixed(2)}×
+                  </span>
+                  <span className="chip bg-brand/15 text-[10px] text-brand">inicio de la animación</span>
+                </div>
+                {/* Todas las formas de hacerlo, dichas. Arrastrar la escena es
+                    la más cómoda y era justo la que no se veía por ningún lado. */}
+                <span className="text-[10px] leading-relaxed text-muted">
+                  <b className="text-fg">Arrastra la escena</b> con el ratón o el dedo · empuja la
+                  <b className="text-fg"> palanca</b> · <b className="text-fg">flechas</b> del teclado
+                  (Shift = más) · <b className="text-fg">rueda</b> o <b className="text-fg">pellizco</b> para
+                  acercar. Donde la dejes es donde <b className="text-fg">empieza y vuelve</b> la animación.
                 </span>
                 <button
                   type="button" onClick={tomarPose} disabled={enSecuencia || !capas.length}
                   className="btn-ghost w-fit text-[10px] disabled:opacity-40"
                   title="El paso que estás preparando arrancará justo desde aquí"
                 >
-                  <Crosshair className="h-3 w-3 text-accent" /> Empezar aquí
+                  <Crosshair className="h-3 w-3 text-accent" /> Usar en el paso
                 </button>
               </div>
 
@@ -934,7 +964,7 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
               {!!cola.length && (
                 <button
                   type="button"
-                  onClick={() => { setCola([]); pararSecuencia(); retenerPoseRef.current = false; estadoRef.current = estadoNeutro(); }}
+                  onClick={() => { setCola([]); pararSecuencia(); retenerPoseRef.current = false; estadoRef.current = clonarEstado(inicioRef.current); }}
                   className="btn-ghost text-xs text-danger"
                 >
                   Vaciar cola
