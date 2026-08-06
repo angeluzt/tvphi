@@ -266,3 +266,28 @@ año que te quedas.
 - [OpenAI TTS Pricing 2026: tts-1 vs tts-1-hd vs gpt-4o-mini-tts (TextToLab)](https://texttolab.com/blog/openai-tts-pricing)
 - [YouTube Shorts RPM vs long-form: datos de 274 canales (AIR Media-Tech)](https://air.io/en/air-data-findings/youtube-shorts-rpm-vs-long-form-how-much-do-shorts-earn-in-2026)
 - [Long-Form vs Shorts Revenue 2026: $3 RPM vs $0.05 RPM (FluxNote)](https://fluxnote.io/guides/youtube-long-form-vs-shorts-revenue)
+
+---
+
+## Ver el gasto real desde la app
+
+En `/admin` (solo administradores) hay una sección **«Lo que se está gastando»**
+que lee los costes de la propia API de OpenAI: hoy, este mes, los últimos N
+días, la serie por día y el desglose por modelo. Con botón de copiar el JSON.
+
+Dos cosas que conviene saber antes de configurarlo:
+
+**Hace falta una clave distinta.** Los costes viven bajo `/v1/organization` y
+piden una **clave de administrador de la organización** (`sk-admin-…`), que se
+saca aparte en el panel de OpenAI. La clave que genera las historias devuelve
+401 ahí. Va en `OPENAI_ADMIN_KEY`, solo en el servidor.
+
+**No existe API para el saldo que queda.** OpenAI publica lo gastado, no lo
+disponible. Por eso la sección no inventa un «te queda»: si pones
+`OPENAI_PRESUPUESTO_MENSUAL` con lo que decidas gastarte al mes, resta de ahí y
+lo dice claramente; si no, deja el hueco vacío y explica por qué.
+
+```
+OPENAI_ADMIN_KEY=sk-admin-...
+OPENAI_PRESUPUESTO_MENSUAL=25
+```
