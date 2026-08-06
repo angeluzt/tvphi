@@ -2,19 +2,24 @@
 
 import {
   Plus, Trash2, Wand2, Volume2, Sticker, Image as ImageIcon, ChevronUp, ChevronDown, Clock,
-  Loader2, Repeat, Play, Pause, Copy, RefreshCw,
+  Loader2, Repeat, Play, Pause, Copy, RefreshCw, Sparkles, AlertTriangle, Minus,
 } from "lucide-react";
+import { useState } from "react";
 import { nanoid } from "nanoid";
 import type { VoiceStatus } from "@/lib/story/tts";
+import { BibliotecaSonidos } from "./biblioteca-sonidos";
+import { EscucharAudio } from "./escuchar-audio";
+import { refSonido } from "@/lib/story/musica";
 import { MotionEditor } from "./motion-editor";
 import { Slider } from "./slider";
 import { GapInput } from "./gap-input";
 import { NumberInput } from "./number-input";
 import { LockToggle } from "./lock-toggle";
 import { VfxEditor } from "./vfx-editor";
+import { PestanasToma, type PestanaToma } from "./pestanas-toma";
 import {
-  newDialogue, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
-  overlaySoundStart,
+  newDialogue, newSfx, shotDur, moveDur, dialogueStarts, sfxStarts, dialogueDur, VOICE_EFFECTS, overlayWindows,
+  overlaySoundStart, duracionQueCabe,
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop, type Frame,
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect, type VfxLayer,
 } from "@/lib/story/model";
@@ -59,6 +64,8 @@ export function ShotEditor({
   onOmitirEfectoEscena,
   onSoloEnEstaToma,
   vocesIa,
+  pestana,
+  onPestana,
 }: {
   shot: Shot;
   index: number;
@@ -99,7 +106,19 @@ export function ShotEditor({
   onSoloEnEstaToma: (vfxId: string) => void;
   /** Si hay OpenAI: se muestra el desplegable de voces TTS (alloy, nova…). */
   vocesIa?: boolean;
+  /** Qué sección se está viendo. Vive fuera para que se mantenga al cambiar
+   *  de toma: quien está colocando efectos sigue en efectos, sin volver a
+   *  buscarlos toma por toma. */
+  pestana: PestanaToma;
+  onPestana: (p: PestanaToma) => void;
 }) {
+  const [verSonidos, setVerSonidos] = useState(false);
+  // Con duración fija la toma no crece para que quepa la voz: si se queda
+  // corta, la narración sigue sonando cuando ya empezó la de la toma siguiente
+  // y las dos a la vez no se entienden. Se avisa aquí y se ofrece la cuenta
+  // hecha; los tiempos no se tocan solos, que son de quien los puso.
+  const cabe = shot.autoDuration ? 0 : duracionQueCabe(shot);
+  const seCorta = !shot.autoDuration && cabe > shotDur(shot) + 0.01;
   const dur = shotDur(shot);
   const movim = moveDur(shot); // lo que tarda el recorrido, sin la pausa
   const hold = Math.max(0, shot.holdSec || 0);
@@ -148,7 +167,9 @@ export function ShotEditor({
   }
 
   return (
-    <div className={`rounded-xl border bg-surface-2/40 p-3 ${expanded ? "border-brand/60" : "border-border"}`}>
+    // El id deja que el puesto de mando traiga esta toma a la vista al saltar
+    // de una a otra, en vez de tener que buscarla rodando la rueda.
+    <div id={`toma-${shot.id}`} className={`scroll-mt-24 rounded-xl border bg-surface-2/40 p-3 ${expanded ? "border-brand/60" : "border-border"}`}>
       <div className="flex items-center gap-2">
         <button onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-2 text-left">
           <span className="chip shrink-0 bg-brand/15 text-brand">Toma {index + 1}</span>
@@ -212,12 +233,31 @@ export function ShotEditor({
       {/* Con el candado puesto se apagan los controles (fieldset) y también los
           arrastres, que no son controles de formulario. */}
       <div className={locked ? "pointer-events-none select-none opacity-60" : ""}>
+      {/* Fuera del fieldset: con la toma bloqueada se sigue pudiendo mirar qué
+          lleva dentro, que es justo lo que se quiere de un candado. */}
+      <PestanasToma
+        activa={pestana}
+        onCambiar={onPestana}
+        cuentas={{
+          camara: 0,
+          voz: shot.dialogues.length,
+          sonido: shot.sfx.length,
+          imagenes: shot.overlays.length,
+          efectos: (shot.vfx?.length ?? 0)
+            + (shot.usarVfxEscena !== false
+              ? sceneVfx.filter((v) => !(shot.omitirVfxEscena ?? []).includes(v.id)).length
+              : 0),
+        }}
+      />
       <fieldset disabled={locked} className="contents">
       {/* Movimiento */}
+      {pestana === "camara" && (
       <div className="mt-3">
         <MotionEditor shot={shot} imageId={imageId} imgW={imgW} imgH={imgH} prevTo={prevTo} onChange={onChange} />
       </div>
+      )}
 
+      {pestana === "camara" && (<>
       {/* Tiempo de la toma: movimiento de cámara + pausa quieta al final */}
       <div className="mt-3 rounded-xl border border-border p-2.5">
         <span className="label">Tiempo de la toma</span>
@@ -247,6 +287,34 @@ export function ShotEditor({
             disabledHint="Lo marcan los diálogos. Pon «Fija» para escribirlo."
           />
         </div>
+
+        {seCorta && (
+          <div className="mt-2 rounded-lg border border-gold/50 bg-gold/10 p-2 text-[11px]">
+            <p className="flex items-start gap-1.5 font-medium text-gold">
+              <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+              La toma dura {dur.toFixed(1)} s y su narración {cabe.toFixed(1)} s.
+            </p>
+            <p className="mt-1 text-muted">
+              Con duración fija la toma no se estira, así que esta voz seguiría sonando cuando ya
+              empezó la de la toma siguiente. Al reproducir se corta para que no se oigan las dos a
+              la vez: se pierde el final de la frase.
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              <button
+                onClick={() => onChange({ ...shot, durationSec: Math.max(0.3, cabe - hold) })}
+                className="btn-ghost px-2 py-1 text-[11px]"
+              >
+                Alargarla a {cabe.toFixed(1)} s
+              </button>
+              <button
+                onClick={() => onChange({ ...shot, autoDuration: true })}
+                className="btn-ghost px-2 py-1 text-[11px]"
+              >
+                Que la marquen los diálogos
+              </button>
+            </div>
+          </div>
+        )}
         <div className="mt-2 grid grid-cols-2 gap-2">
           {/* La pausa es tiempo AÑADIDO, no un trozo de la duración: acabado el
               recorrido la imagen se queda quieta y hasta que no pasa no empieza
@@ -292,7 +360,10 @@ export function ShotEditor({
         />
       </div>
 
+      </>)}
+
       {/* Diálogos */}
+      {pestana === "voz" && (
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Diálogos (voz IA)</span>
@@ -412,8 +483,9 @@ export function ShotEditor({
                   </select>
                 </label>
                 {d.audioId ? (
-                  <span className="text-[11px] text-muted">
-                    🔊 {dialogueDur(d).toFixed(1)}s · empieza en {dStarts[i].toFixed(1)}s
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted">
+                    <EscucharAudio audioId={d.audioId} titulo="la voz" />
+                    {dialogueDur(d).toFixed(1)}s · empieza en {dStarts[i].toFixed(1)}s
                   </span>
                 ) : (
                   <span className="text-[11px] text-muted">sin voz aún</span>
@@ -453,21 +525,49 @@ export function ShotEditor({
         </div>
       </div>
 
+      )}
+
       {/* Sonidos de la toma */}
+      {pestana === "sonido" && (
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Sonidos de esta toma</span>
-          <label className="btn-ghost ml-auto cursor-pointer text-xs">
-            <Volume2 className="h-3.5 w-3.5 text-accent" /> Añadir sonido
+          <button
+            onClick={() => setVerSonidos((v) => !v)}
+            className="btn-ghost ml-auto text-xs"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-accent" /> De la app
+          </button>
+          <label className="btn-ghost cursor-pointer text-xs">
+            <Volume2 className="h-3.5 w-3.5 text-accent" /> Subir sonido
             <input type="file" accept="audio/*" className="hidden" onChange={onAddSfx} />
           </label>
         </div>
+
+        {verSonidos && (
+          <BibliotecaSonidos
+            onCerrar={() => setVerSonidos(false)}
+            onElegir={(s) => {
+              // Referencia, no archivo: lo sirve la app (ver getAsset).
+              const nuevo = newSfx(refSonido(s), s.titulo, s.segundos);
+              // Un ambiente entra ya en bucle y bajo: suena todo el rato
+              // debajo de la voz. Al 35% seguía siendo demasiado —una lluvia
+              // así tapa la narración—, y además ahora se aparta sola cuando
+              // se habla, igual que la música, así que 0.12 es el nivel de los
+              // silencios. Un golpe puntual se queda al 80%: para eso es un
+              // golpe, y dura dos segundos.
+              if (s.bucle) { nuevo.loop = true; nuevo.volume = 0.12; }
+              onChange({ ...shot, sfx: [...shot.sfx, nuevo] });
+              setVerSonidos(false);
+            }}
+          />
+        )}
 
         {/* Sueltos: se encadenan con su pausa, como los diálogos */}
         <div className="mt-2 space-y-1">
           {sueltos.map(({ s, i }) => (
             <div key={s.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-2 py-1 text-xs">
-              <Volume2 className="h-3.5 w-3.5 text-accent" />
+              <EscucharAudio audioId={s.audioId} volumen={s.volume} titulo={s.name} />
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
               <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Pausa antes" />
               <span className="text-[11px] text-muted">en {sStarts[i].toFixed(1)}s</span>
@@ -499,6 +599,7 @@ export function ShotEditor({
             <div className="mt-1 space-y-1">
               {bucles.map(({ s, i }) => (
                 <div key={s.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <EscucharAudio audioId={s.audioId} volumen={s.volume} titulo={s.name} />
                   <span className="min-w-0 flex-1 truncate">{s.name}</span>
                   <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Empieza tras" />
                   <VolumeInput value={s.volume} onChange={(v) => updSfx(s.id, { volume: v })} />
@@ -577,7 +678,10 @@ export function ShotEditor({
         ))}
       </div>
 
+      )}
+
       {/* Stickers: PNG quietos o GIF animados */}
+      {pestana === "imagenes" && (
       <div className="mt-3">
         <div className="flex items-center gap-2">
           <span className="label">Imágenes encima (PNG / GIF)</span>
@@ -713,7 +817,9 @@ export function ShotEditor({
                       Cuelga del sticker, así que se mueve con él. */}
                   <div className="rounded-lg border border-border/60 p-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Volume2 className="h-3.5 w-3.5 text-accent" />
+                      {o.soundId
+                        ? <EscucharAudio audioId={o.soundId} volumen={o.soundVolume ?? 0.9} titulo={o.soundName} />
+                        : <Volume2 className="h-3.5 w-3.5 text-accent" />}
                       <span className="flex-1 truncate text-[11px]">
                         {o.soundId ? (o.soundName || "Sonido") : <span className="text-muted">Sonido de este sticker</span>}
                       </span>
@@ -831,6 +937,9 @@ export function ShotEditor({
         </div>
       </div>
 
+      )}
+
+      {pestana === "efectos" && (<>
       <div className="mt-3 space-y-2">
         <label className="flex items-center gap-2 text-xs">
           <input
@@ -908,6 +1017,7 @@ export function ShotEditor({
         onChange={(v) => onChange({ ...shot, vfx: v })}
         onSelect={onSelectVfx}
       />
+      </>)}
       </fieldset>
       </div>
       </>
@@ -943,14 +1053,29 @@ const vozPreset = (p: number) => {
 const fuera = (tam: number) => -Math.max(1, tam);
 
 // Volumen con pasos finos (1 %) y el valor a la vista, para poder afinar.
+// El volumen de un sonido, con − y + al lado.
+//
+// Sin ellos la barra es inservible para lo que de verdad se usa: la diferencia
+// entre un ambiente al 8% y al 12% es un píxel de barra, y ese píxel decide si
+// se oye la narración. Cada toque mueve un punto exacto.
 function VolumeInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const mover = (dir: -1 | 1) =>
+    onChange(Number(Math.max(0, Math.min(1, value + dir * 0.01)).toFixed(2)));
+  const btn = "grid h-5 w-5 shrink-0 place-items-center rounded border border-border " +
+    "text-muted hover:bg-surface-2 disabled:opacity-40";
   return (
     <span className="flex items-center gap-1">
+      <button onClick={() => mover(-1)} disabled={value <= 0} className={btn} aria-label="Bajar volumen">
+        <Minus className="h-3 w-3" />
+      </button>
       <input
         type="range" min={0} max={1} step={0.01} value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-20" title="Volumen" aria-label="Volumen"
       />
+      <button onClick={() => mover(1)} disabled={value >= 1} className={btn} aria-label="Subir volumen">
+        <Plus className="h-3 w-3" />
+      </button>
       <span className="w-9 text-right text-[11px] tabular-nums text-muted">{pct(value)}</span>
     </span>
   );

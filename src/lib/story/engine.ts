@@ -8,8 +8,25 @@ import {
 import { VfxScene, type VfxInput } from "./vfx";
 import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
+import { esDeBiblioteca, esDeBibliotecaSonido, esRitmico } from "./musica";
 import { Recorder } from "@/lib/studio/recorder";
 
+
+// La música se aparta cuando alguien habla.
+//
+// Es la única forma de que un porcentaje fijo funcione. La música de la
+// biblioteca está masterizada a -14 dBFS y una narración TTS suena bastante
+// más bajo, así que un volumen que se oye bien en un silencio tapa la voz en
+// cuanto empieza a hablar. Poner la música tan baja que nunca moleste es
+// dejarla inaudible el resto del tiempo. Bajándola solo mientras se narra, el
+// mismo número sirve para las dos cosas.
+const DUCK = 0.3;        // a cuánto se queda mientras hay voz (-10.5 dB)
+const DUCK_ENTRA = 0.25; // lo que tarda en apartarse, antes de la primera sílaba
+const DUCK_SALE = 0.45;  // y en volver, ya acabada la frase
+const JUNTAR_VOZ = 1.2;  // huecos más cortos que esto no la dejan volver a subir
+
+// Fondo de la app: música o ambiente en bucle. Es lo que se aparta al narrar.
+const esAmbienteDeApp = (id: string) => esDeBiblioteca(id) || esDeBibliotecaSonido(id);
 
 // Motor de "Historias narradas": anima el encuadre de cada toma sobre su imagen,
 // encadena transiciones, dibuja los stickers, mezcla el audio (diálogos + efectos
@@ -29,6 +46,8 @@ export class StoryEngine {
   private gains = new Map<string, GainNode>();
   private audioStartCtx = 0;
   private audioStartHead = 0;
+  // Tramos en los que se está narrando, ya unidos los huecos cortos.
+  private ventanasVoz: { a: number; b: number }[] = [];
 
   private images = new Map<string, HTMLImageElement>();
   private buffers = new Map<string, AudioBuffer>();
@@ -92,6 +111,9 @@ export class StoryEngine {
   // El motor es quien manda sobre si suena o no; la interfaz solo lo refleja.
   onPlaying: ((v: boolean) => void) | null = null;
   private starting = false; // evita programar el audio dos veces a la vez
+  // Cancelar una exportación a medias. No se puede "deshacer" lo grabado, así
+  // que lo que se hace es parar la reproducción y tirar lo que haya salido.
+  private abortarExport = false;
 
   // Tamaño del lienzo: lo marca el formato del proyecto (horizontal, vertical
   // o cuadrado). Todo lo que se dibuja se mide sobre estos dos números.
@@ -153,11 +175,25 @@ export class StoryEngine {
     if (!this.playing) this.render();
   }
 
+  /** Tras reemplazar un archivo en el almacén: olvidar la copia en memoria. */
+  invalidateAsset(id: string) {
+    this.images.delete(id);
+    this.buffers.delete(id);
+    this.anims.delete(id);
+    // Estirados/cosidos de ese audio también quedan obsoletos.
+    for (const k of [...this.estirados.keys()]) {
+      if (k.startsWith(id + ":")) this.estirados.delete(k);
+    }
+    this.cosidos.delete(id);
+  }
+
   private async ensureAssets(p: StoryProject) {
     const imgIds = new Set<string>();
     const audioIds = new Set<string>();
     for (const sc of p.scenes) {
       imgIds.add(sc.imageId);
+      // Las láminas del paralaje también son imágenes que hay que traer.
+      for (const capa of sc.capas ?? []) imgIds.add(capa.imageId);
       for (const sh of sc.shots) {
         for (const d of sh.dialogues) if (d.audioId) audioIds.add(d.audioId);
         for (const s of sh.sfx) audioIds.add(s.audioId);
@@ -171,17 +207,25 @@ export class StoryEngine {
 
     await Promise.all([
       ...[...imgIds].map(async (id) => {
-        if (this.images.has(id)) return;
+        if (!id) return;
+        const ya = this.images.get(id);
+        // Solo se reutiliza si cargó de verdad. Una entrada rota (0×0) bloqueaba
+        // el reintento y el play se oía sin imagen.
+        if (ya && ya.complete && ya.naturalWidth > 0) return;
+        this.images.delete(id);
         const url = await assetUrl(id);
         if (!url) return;
         const img = new Image();
         img.src = url;
         this.images.set(id, img);
-        // Repinta en cuanto la imagen esté lista (si no se está reproduciendo).
-        img.decode?.().then(() => { if (!this.playing) this.render(); }).catch(() => {});
+        // Repinta en cuanto la imagen esté lista (también durante el play:
+        // si no, la primera generación con IA dejaba el lienzo negro hasta pausar).
+        img.decode?.().then(() => { this.render(); }).catch(() => {});
+        img.onload = () => { this.render(); };
         void this.loadAnim(id);
       }),
       ...[...audioIds].map(async (id) => {
+        if (!id) return;
         if (this.buffers.has(id)) return;
         const blob = await getAsset(id);
         if (!blob) return;
@@ -352,9 +396,45 @@ export class StoryEngine {
     const now = this.audioCtx.currentTime;
     for (const f of this.flat) {
       for (const d of f.shot.dialogues) this.gains.get(`dlg:${d.id}`)?.gain.setTargetAtTime(p.narrationVolume, now, 0.02);
-      for (const s of f.shot.sfx) this.gains.get(`sfx:${s.id}`)?.gain.setTargetAtTime(s.volume, now, 0.02);
+      for (const s of f.shot.sfx) {
+        const g = this.gains.get(`sfx:${s.id}`);
+        if (!g) continue;
+        // Si es música, mover la barra tiene que reescribir toda la curva: si
+        // no, el valor nuevo se queda peleando con el ducking ya programado.
+        if (s.loop && esAmbienteDeApp(s.audioId)) this.curvaMusica(g, s.volume);
+        else g.gain.setTargetAtTime(s.volume, now, 0.02);
+      }
     }
-    for (const l of p.audioLayers) this.gains.get(`lay:${l.id}`)?.gain.setTargetAtTime(l.volume, now, 0.02);
+    for (const l of p.audioLayers) {
+      const g = this.gains.get(`lay:${l.id}`);
+      if (!g) continue;
+      if (l.kind === "music") this.curvaMusica(g, l.volume);
+      else g.gain.setTargetAtTime(l.volume, now, 0.02);
+    }
+  }
+
+  // La automatización de una pista de música: su volumen normal, y DUCK veces
+  // ese volumen mientras se narra. Se reescribe entera cada vez —cancelando lo
+  // que hubiera— para que mover la barra durante la reproducción no deje media
+  // curva vieja por delante.
+  private curvaMusica(g: GainNode, base: number) {
+    const ctx = this.audioCtx;
+    if (!ctx) return;
+    const ahora = ctx.currentTime;
+    // El instante de la historia en el que estamos ahora mismo.
+    const cabeza = this.audioStartHead + (ahora - this.audioStartCtx);
+    const bajo = base * DUCK;
+    g.gain.cancelScheduledValues(ahora);
+    const hablandoYa = this.ventanasVoz.some((v) => cabeza >= v.a - DUCK_ENTRA && cabeza < v.b + DUCK_SALE);
+    g.gain.setValueAtTime(hablandoYa ? bajo : base, ahora);
+    for (const v of this.ventanasVoz) {
+      const fin = ahora + (v.b - cabeza);
+      if (fin < ahora) continue; // ya pasó
+      // setTargetAtTime hace la bajada exponencial, que es como se oye natural.
+      // Con tau = tiempo/3 llega al 95% en ese tiempo.
+      g.gain.setTargetAtTime(bajo, Math.max(ahora, ahora + (v.a - cabeza) - DUCK_ENTRA), DUCK_ENTRA / 3);
+      g.gain.setTargetAtTime(base, Math.max(ahora, fin), DUCK_SALE / 3);
+    }
   }
 
   private scheduleAudio(fromT: number) {
@@ -375,6 +455,14 @@ export class StoryEngine {
       rate?: number;
       // Cuánto se estira el audio antes de sonar (1 = tal cual).
       alpha?: number;
+      // Es una voz: no puede sonar encima de la voz siguiente.
+      narracion?: boolean;
+      // Si se corta antes de acabar, se baja el volumen en vez de segarlo.
+      desvanecer?: boolean;
+      // Es música: se aparta sola mientras se narra.
+      musica?: boolean;
+      // Lo que ocupa en la línea de tiempo (la voz ya lo sabe del modelo).
+      duracion: number;
     }
     const events: Ev[] = [];
 
@@ -394,7 +482,8 @@ export class StoryEngine {
         events.push({
           key: `dlg:${d.id}`, t: f.start + dStarts[k], audioId: d.audioId,
           gain: this.project!.narrationVolume, loop: false, until: Infinity,
-          effect: efecto, rate, alpha: tono / vel,
+          effect: efecto, rate, alpha: tono / vel, narracion: true,
+          duracion: dialogueDur(d),
         });
       });
       const sStarts = sfxStarts(f.shot);
@@ -406,11 +495,18 @@ export class StoryEngine {
           events.push({
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
             gain: s.volume, loop: true, until: span.end, changes: span.changes,
+            duracion: s.dur || 0,
+            // Cualquier cosa de la app puesta en BUCLE dentro de una toma es
+            // fondo: una pista de música, sí, pero también la lluvia o una
+            // taberna. Todas suenan bajo la narración de principio a fin, así
+            // que todas tienen que apartarse cuando alguien habla. Un GOLPE no
+            // entra aquí: dura dos segundos y se supone que se oye.
+            musica: esAmbienteDeApp(s.audioId),
           });
         } else {
           events.push({
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
-            gain: s.volume, loop: false, until: Infinity,
+            gain: s.volume, loop: false, until: Infinity, duracion: s.dur || 0,
           });
         }
       });
@@ -422,18 +518,53 @@ export class StoryEngine {
         const v = ventanas[k];
         events.push({
           key: `ovl:${o.id}`, t: f.start + overlaySoundStart(o, v), audioId: o.soundId,
-          gain: o.soundVolume ?? 0.9, loop: !!o.soundLoop,
+          gain: o.soundVolume ?? 0.9, loop: !!o.soundLoop, duracion: 0,
           until: o.soundLoop ? f.start + v.end : Infinity,
         });
       });
     });
 
     for (const l of this.project.audioLayers) {
-      events.push({ key: `lay:${l.id}`, t: l.startSec, audioId: l.audioId, gain: l.volume, loop: l.loop, until: Infinity });
+      events.push({
+        key: `lay:${l.id}`, t: l.startSec, audioId: l.audioId, gain: l.volume,
+        loop: l.loop, until: Infinity, duracion: 0, musica: l.kind === "music",
+      });
+    }
+
+    // Dos voces a la vez no es una mezcla, es ruido: no se entiende ninguna de
+    // las dos. Pasa cuando una toma tiene duración fija más corta que su
+    // narración, y entonces la voz sigue sonando cuando ya arrancó la
+    // siguiente. Que la toma quepa es cosa del proyecto (hay aviso y botón de
+    // arreglarlo en el editor); aquí solo se garantiza que NUNCA se oigan dos
+    // encima, ni en un proyecto viejo ni en uno escrito a mano.
+    //
+    // Se corta con un desvanecido corto en vez de a hachazo: un corte seco a
+    // mitad de palabra hace "clac".
+    const voces = events.filter((e) => e.narracion).sort((a, b) => a.t - b.t);
+    for (let i = 0; i < voces.length - 1; i++) {
+      voces[i].until = Math.min(voces[i].until, voces[i + 1].t);
+      voces[i].desvanecer = true;
+    }
+
+    // Cuándo se está narrando, para que la música se aparte. Se juntan los
+    // huecos cortos: entre dos frases seguidas la música no debe subir y volver
+    // a bajar, que se oye como un bombeo.
+    this.ventanasVoz = [];
+    for (const v of voces) {
+      const fin = isFinite(v.until) ? v.until : v.t + v.duracion;
+      const ult = this.ventanasVoz[this.ventanasVoz.length - 1];
+      if (ult && v.t - ult.b < JUNTAR_VOZ) ult.b = Math.max(ult.b, fin);
+      else this.ventanasVoz.push({ a: v.t, b: fin });
     }
 
     for (const ev of events) {
-      const buf = this.estirar(ev.audioId, ev.alpha ?? 1);
+      // Si se repite, se usa la versión cosida: sin eso el bucle deja un
+      // agujero o da un salto cada vuelta. Solo las de la biblioteca, que son
+      // las que se midieron; un archivo del usuario se deja como está.
+      const deLaApp = esDeBiblioteca(ev.audioId) || esDeBibliotecaSonido(ev.audioId);
+      const buf = ev.loop && deLaApp
+        ? this.coser(ev.audioId)
+        : this.estirar(ev.audioId, ev.alpha ?? 1);
       if (!buf) continue;
       const rate = ev.rate ?? 1;
       // Con efecto de tono el audio suena más lento o más rápido, así que ocupa
@@ -466,10 +597,119 @@ export class StoryEngine {
           if (c.at <= fromT) g.gain.value = c.volume;
           else g.gain.setValueAtTime(c.volume, now + (c.at - fromT));
         }
+        // Solo hay que desvanecer si de verdad se le corta la cola.
+        if (ev.desvanecer && isFinite(endT) && ev.t + dur > endT + 0.01) {
+          const fin = now + Math.max(0, endT - fromT);
+          const rampa = Math.min(0.12, Math.max(0.02, (endT - Math.max(ev.t, fromT)) / 4));
+          g.gain.setValueAtTime(g.gain.value, Math.max(now, fin - rampa));
+          g.gain.linearRampToValueAtTime(0.0001, fin);
+        }
         if (isFinite(endT)) src.stop(now + Math.max(0, endT - fromT));
         this.sources.push(src);
         this.gains.set(ev.key, g);
+        // La música se aparta bajo la voz. Va al final, ya con la fuente en
+        // marcha, para que la curva se escriba sobre la ganancia definitiva.
+        // Un bucle con cambios de volumen por toma se queda como estaba: ahí
+        // manda lo que el usuario puso en cada toma.
+        if (ev.musica && !ev.changes?.length && this.ventanasVoz.length) this.curvaMusica(g, ev.gain);
       } catch {}
+    }
+  }
+
+  // Coser el bucle: mezclar el final de la pista sobre su principio.
+  //
+  // Casi ninguna pista generada acaba donde empieza. De las 41 de la
+  // biblioteca, 21 bajan a silencio y 6 se quedan a medias: al repetirse se
+  // oye un agujero o un salto. En vez de pedir pistas nuevas, se arregla al
+  // cargarlas — el último trozo se desvanece encima del primero, que entra a
+  // volumen completo y tapa el hueco.
+  //
+  // Solo se usa cuando la pista SE REPITE. Si suena una vez —la música de la
+  // última escena, por ejemplo— se oye su final original, con su fundido.
+  private cosidos = new Map<string, AudioBuffer>();
+
+  /** Desnivel de la unión, en dB: último segundo contra el primero. Es lo que
+   *  se oye al dar la vuelta —un agujero o un porrazo— y es también el criterio
+   *  para decidir si hay que coser: si la unión ya está plana, no se toca. */
+  private desnivelDelBucle(buf: AudioBuffer): number {
+    const d = buf.getChannelData(0), sr = buf.sampleRate, n = d.length;
+    const nivel = (a: number, b: number) => {
+      let s = 0;
+      for (let i = a; i < b; i++) s += d[i] * d[i];
+      return Math.sqrt(s / Math.max(1, b - a));
+    };
+    const w = Math.min(Math.floor(sr), Math.floor(n / 4));
+    return 20 * Math.log10(Math.max(nivel(n - w, n), 1e-9) / Math.max(nivel(0, w), 1e-9));
+  }
+
+  /** Cuánto dura la caída del final: desde donde el nivel baja del 60% del
+   *  cuerpo hasta el final. Es lo que hay que cruzar para que no quede hueco. */
+  private largoDelFundido(buf: AudioBuffer): number {
+    const d = buf.getChannelData(0), sr = buf.sampleRate, n = d.length;
+    const trozo = Math.floor(sr * 0.25);
+    const nivel = (a: number, b: number) => {
+      let s = 0;
+      for (let i = a; i < b; i++) s += d[i] * d[i];
+      return Math.sqrt(s / Math.max(1, b - a));
+    };
+    const cuerpo = nivel(Math.floor(n * 0.2), Math.floor(n * 0.7));
+    if (cuerpo <= 0) return 0;
+    // Se retrocede en trozos de 250 ms mientras se siga oyendo flojo.
+    let caida = 0;
+    for (let fin = n; fin - trozo > n * 0.5; fin -= trozo) {
+      if (nivel(fin - trozo, fin) >= cuerpo * 0.6) break;
+      caida += trozo / sr;
+    }
+    // Si no hay fundido, NO se toca. Se probó cruzar igualmente 0.8 s "por si
+    // acaso" y estropeaba las pistas que ya enlazaban bien: dos que estaban en
+    // 1 dB de salto se iban a 7 y 8. Coser algo que no está roto lo rompe.
+    if (caida <= 0) return 0;
+    return Math.min(Math.max(caida, 0.5), buf.duration / 3);
+  }
+
+  private coser(audioId: string): AudioBuffer | undefined {
+    const buf = this.buffers.get(audioId);
+    if (!buf) return undefined;
+    const ya = this.cosidos.get(audioId);
+    if (ya) return ya;
+    if (buf.duration < 2) return buf;
+    // Los que llevan compás van cuadrados a mano en el catálogo y NO se tocan:
+    // el cruce acorta el archivo y se lleva por delante el último golpe, y
+    // encima la vara de abajo los da por rotos siempre —un archivo que empieza
+    // en el hueco entre dos latidos marca un desnivel enorme aunque empalme
+    // perfecto—. Coserlos es justo lo que los descuadra.
+    if (esRitmico(audioId)) { this.cosidos.set(audioId, buf); return buf; }
+    this.ensureAudio();
+    // Coser algo que no está roto lo rompe: se probó cruzar todas y dos pistas
+    // que enlazaban con 1 dB de desnivel se iban a 7 y 8. Así que primero se
+    // mira si la unión está mal, con la misma vara con la que luego se juzga.
+    if (Math.abs(this.desnivelDelBucle(buf)) < 4) { this.cosidos.set(audioId, buf); return buf; }
+    // El cruce tiene que cubrir TODO el fundido final, no un trozo fijo: una
+    // pista que se apaga durante seis segundos con un cruce de tres sigue
+    // dejando medio agujero. Se mide dónde empieza a caer y se cruza desde
+    // ahí, con un tope de un tercio de la pista para no comerse la música.
+    const cruce = this.largoDelFundido(buf);
+    if (cruce < 0.2) return buf;
+    try {
+      const sr = buf.sampleRate;
+      const nCruce = Math.floor(cruce * sr);
+      const nSalida = buf.length - nCruce; // la copia dura menos: el cruce se solapa
+      const out = this.audioCtx!.createBuffer(buf.numberOfChannels, nSalida, sr);
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const src = buf.getChannelData(c);
+        const dst = out.getChannelData(c);
+        dst.set(src.subarray(0, nSalida));
+        // La cola, desvanecida, encima de la cabeza, que va subiendo.
+        for (let i = 0; i < nCruce; i++) {
+          const t = i / nCruce;
+          // Curva de igual potencia: con una rampa lineal el cruce se hunde.
+          dst[i] = dst[i] * Math.sin(t * Math.PI / 2) + src[nSalida + i] * Math.cos(t * Math.PI / 2);
+        }
+      }
+      this.cosidos.set(audioId, out);
+      return out;
+    } catch {
+      return buf;
     }
   }
 
@@ -499,45 +739,51 @@ export class StoryEngine {
     this.running = true;
     const loop = () => {
       if (!this.running) return;
-      if (this.playing && this.audioCtx) {
-        this.playhead = this.audioStartHead + (this.audioCtx.currentTime - this.audioStartCtx);
-        const limit = Math.min(this.duration(), this.rangeEnd);
-        if (this.playhead >= limit) {
-          if (this.looping) {
-            // Vuelta a empezar sin cortar: se reprograma el sonido desde el inicio.
-            this.playhead = this.rangeStart;
-            this.stopSources();
-            this.scheduleAudio(this.playhead);
+      try {
+        if (this.playing && this.audioCtx) {
+          this.playhead = this.audioStartHead + (this.audioCtx.currentTime - this.audioStartCtx);
+          const limit = Math.min(this.duration(), this.rangeEnd);
+          if (this.playhead >= limit) {
+            if (this.looping) {
+              // Vuelta a empezar sin cortar: se reprograma el sonido desde el inicio.
+              this.playhead = this.rangeStart;
+              this.stopSources();
+              this.scheduleAudio(this.playhead);
+              this.onTime?.(this.playhead);
+              this.render();
+              this.raf = requestAnimationFrame(loop);
+              return;
+            }
+            this.playhead = limit;
+            this.pause(); // avisa por onPlaying
             this.onTime?.(this.playhead);
+            this.onEnded?.();
             this.render();
             this.raf = requestAnimationFrame(loop);
             return;
           }
-          this.playhead = limit;
-          this.pause(); // avisa por onPlaying
           this.onTime?.(this.playhead);
-          this.onEnded?.();
           this.render();
-          this.raf = requestAnimationFrame(loop);
-          return;
-        }
-        this.onTime?.(this.playhead);
-        this.render();
-      } else if (this.vfxLive && this.project && this.flat.length) {
-        // ~30 fps: bastante para ver el efecto al colocar; no satura como a 60.
-        const now = performance.now();
-        if (!this.lastVfxFrame) this.lastVfxFrame = now;
-        if (now - this.lastVfxFrame >= 33) {
-          this.vfxExtra += (now - this.lastVfxFrame) / 1000;
-          this.lastVfxFrame = now;
-          // Antes de MAX_PASOS (15 s): reinicio suave para que no “desaparezcan”
-          // ni salten al ponerse al día de golpe.
-          if (this.vfxExtra > 12) {
-            this.vfxScenes.clear();
-            this.vfxExtra = 0.8;
+        } else if (this.vfxLive && this.project && this.flat.length) {
+          // ~30 fps: bastante para ver el efecto al colocar; no satura como a 60.
+          const now = performance.now();
+          if (!this.lastVfxFrame) this.lastVfxFrame = now;
+          if (now - this.lastVfxFrame >= 33) {
+            this.vfxExtra += (now - this.lastVfxFrame) / 1000;
+            this.lastVfxFrame = now;
+            // Antes de MAX_PASOS (15 s): reinicio suave para que no “desaparezcan”
+            // ni salten al ponerse al día de golpe.
+            if (this.vfxExtra > 12) {
+              this.vfxScenes.clear();
+              this.vfxExtra = 0.8;
+            }
+            this.render();
           }
-          this.render();
         }
+      } catch (e) {
+        // Un efecto mal formado no puede tumbar el bucle: si se para el rAF,
+        // el audio de Web Audio sigue y parece que «solo suena sin imagen».
+        console.warn("Error al pintar el fotograma", e);
       }
       this.raf = requestAnimationFrame(loop);
     };
@@ -672,8 +918,28 @@ export class StoryEngine {
     ctx.save();
     ctx.globalAlpha = alpha;
     if (offsetX) ctx.translate(offsetX, 0);
-    if (img && img.complete && img.naturalWidth) {
-      const fr = lerpFrame(frames.from, frames.to, p);
+    const fr = lerpFrame(frames.from, frames.to, p);
+    const capas = f.scene.capas ?? [];
+    if (capas.length) {
+      // PARALAJE. Cada lámina se recorta con SU propio encuadre: el de la
+      // cámara mezclado con el de partida según su profundidad. Con depth 1 la
+      // lámina sigue a la cámara igual que una foto normal; con depth 0 se
+      // queda clavada en el encuadre inicial y no se entera de que la cámara se
+      // ha movido. Lo de en medio es lo que da la sensación de fondo.
+      for (const capa of capas) {
+        const im = this.images.get(capa.imageId);
+        if (!im || !im.complete || !im.naturalWidth) continue;
+        const frC = lerpFrame(frames.from, fr, Math.max(0, Math.min(1, capa.depth)));
+        // El zoom de la lámina se aplica estrechando el recorte: así se agranda
+        // sobre el cuadro y al desplazarse no asoma el borde.
+        const e = Math.max(1, capa.escala || 1);
+        const { sx, sy, sw, sh } = framePx({ ...frC, w: frC.w / e }, im.naturalWidth, im.naturalHeight);
+        ctx.save();
+        ctx.globalAlpha = alpha * Math.max(0, Math.min(1, capa.opacidad ?? 1));
+        ctx.drawImage(im, sx, sy, sw, sh, 0, 0, this.w, this.h);
+        ctx.restore();
+      }
+    } else if (img && img.complete && img.naturalWidth) {
       const { sx, sy, sw, sh } = framePx(fr, iw, ih);
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, this.w, this.h);
     }
@@ -770,7 +1036,16 @@ export class StoryEngine {
       const nodes = v.nodes ?? [];
       return {
         id: v.id, kind: v.kind, shape: v.shape,
-        nodes: (v.follow || v.espacio === "imagen")
+        // Los sitios se mueven con la cámara... salvo con forma "arriba".
+        //
+        // Ahí los nodos no son un punto de la foto: son «el borde de arriba del
+        // cuadro», de donde nace la lluvia o la nieve. Si se pasan por la
+        // cámara, al acercarse la línea de nacimiento se estira mucho más allá
+        // de la pantalla y casi todas las gotas nacen fuera: se ve la misma
+        // lluvia con una cuarta parte de gotas (medido: 1.5% de pantalla
+        // mojada al abierto contra 0.4% al acercar). Por eso "arriba" se deja
+        // siempre en coordenadas de cuadro, igual que hace esVfxDeEscena.
+        nodes: (v.shape !== "arriba" && (v.follow || v.espacio === "imagen"))
           ? nodes.map((n) => seguir(n, v.espacio === "imagen"))
           : nodes,
         colorHex: v.colorHex, params: v.params,
@@ -787,7 +1062,7 @@ export class StoryEngine {
     escena.setZoomScale(zoomScale);
     let clave = f.shot.id + sufijo;
     for (const v of capas) {
-      clave += `|${v.id},${v.kind},${v.shape},${v.nodes.length},${v.timing},${v.startSec},${v.endSec}`;
+      clave += `|${v.id},${v.kind},${v.shape},${(v.nodes ?? []).length},${v.timing},${v.startSec},${v.endSec}`;
     }
     // En pausa el reloj extra no debe “salirse” del final de la toma (si no,
     // montar da de baja todo). Y se recicla antes de MAX_PASOS para no hacer
@@ -872,6 +1147,7 @@ export class StoryEngine {
     await new Promise<void>((res) => {
       let fin = false;
       const acabar = () => { if (!fin) { fin = true; clearInterval(vigía); res(); } };
+      // Si se cancela, este clip deja de pintarse y se sale.
       v.onended = acabar;
       // Red de seguridad por atasco, no por duración: hay videos que no dicen
       // cuánto duran, así que se corta solo si el tiempo deja de avanzar.
@@ -882,6 +1158,7 @@ export class StoryEngine {
       }, 5000);
       const pintar = () => {
         if (fin) return;
+        if (this.abortarExport) { acabar(); return; }
         this.drawVideoFrame(v);
         onTime?.(v.currentTime);
         if (v.ended) { acabar(); return; }
@@ -908,10 +1185,14 @@ export class StoryEngine {
         this.onEnded = prevEnded;
         this.onTime = prevTime;
         clearTimeout(watchdog);
+        limpiar();
         this.pause();
         resolve();
       };
       const watchdog = setTimeout(finish, Math.ceil(dur * 1000) + 5000);
+      // Se mira si han cancelado; el bucle de pintado no pasa por aquí.
+      const vigilante = setInterval(() => { if (this.abortarExport) finish(); }, 200);
+      const limpiar = () => clearInterval(vigilante);
       try {
         this.playhead = 0;
         this.scheduleAudio(0);
@@ -922,6 +1203,7 @@ export class StoryEngine {
         this.onTime = (t) => { prevTime?.(t); onTime?.(t); };
       } catch (e) {
         clearTimeout(watchdog);
+        limpiar();
         this.onEnded = prevEnded;
         this.onTime = prevTime;
         reject(e);
@@ -929,8 +1211,12 @@ export class StoryEngine {
     });
   }
 
+  /** Corta una exportación en marcha. Lo grabado hasta ahí se descarta. */
+  cancelarExport() { this.abortarExport = true; }
+
   async export(mimeType: string, onProgress?: (p: number) => void): Promise<Blob> {
     if (!this.project) throw new Error("Sin proyecto");
+    this.abortarExport = false;
     this.pause();
     this.clearRange(); // se exporta siempre el video entero
     this.ensureAudio();
@@ -959,13 +1245,17 @@ export class StoryEngine {
     const avisar = (t: number) => onProgress?.(total ? Math.min(1, (hecho + t) / total) : 0);
     mr.start(1000);
     try {
-      if (vIntro) { await this.playClip(vIntro, avisar); hecho += intro!.dur; avisar(0); }
-      if (dur > 0) { await this.playStory(avisar); hecho += dur; avisar(0); }
-      if (vOutro) { await this.playClip(vOutro, avisar); hecho += outro!.dur; }
+      if (vIntro && !this.abortarExport) { await this.playClip(vIntro, avisar); hecho += intro!.dur; avisar(0); }
+      if (dur > 0 && !this.abortarExport) { await this.playStory(avisar); hecho += dur; avisar(0); }
+      if (vOutro && !this.abortarExport) { await this.playClip(vOutro, avisar); hecho += outro!.dur; }
     } finally {
       this.pause();
       if (mr.state !== "inactive") mr.stop();
     }
-    return cerrado;
+    const blob = await cerrado;
+    // Se espera igualmente a que el grabador cierre —si no, quedan pistas
+    // vivas— pero lo cancelado no se devuelve como si fuera un vídeo bueno.
+    if (this.abortarExport) throw new Error("CANCELADO");
+    return blob;
   }
 }

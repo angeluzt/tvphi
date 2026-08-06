@@ -306,6 +306,27 @@ export interface ShotFraming {
   to: Frame;
 }
 
+/**
+ * Una lámina de la escena, para el paralaje.
+ *
+ * En vez de UNA foto, la escena puede llevar varias apiladas, cada una con su
+ * profundidad. Al mover la cámara no se desplazan igual: el fondo casi nada y
+ * el primer plano mucho, y eso da hondura a una imagen que es plana.
+ *
+ * Es opcional. Sin capas, todo funciona exactamente como siempre: una escena
+ * de antes ni sabe que esto existe.
+ */
+export interface EscenaCapa {
+  id: string;
+  imageId: string;
+  nombre: string;
+  /** 0 = quieta aunque la cámara se mueva · 1 = se mueve con ella. */
+  depth: number;
+  /** Se agranda un poco para que al desplazarse no asome el borde. */
+  escala: number;
+  opacidad: number;
+}
+
 export interface StoryScene {
   id: string;
   imageId: string; // clave en el store de imágenes (IndexedDB)
@@ -319,6 +340,11 @@ export interface StoryScene {
   // y sirve para dibujarla luego; también vale escrito a mano. Es opcional: los
   // proyectos de antes no lo tienen y siguen funcionando igual.
   prompt?: string;
+  /**
+   * Láminas con profundidad. Si hay, se dibujan EN VEZ de imageId; imageId
+   * sigue guardándose porque es la miniatura y el respaldo si se quitan.
+   */
+  capas?: EscenaCapa[];
 }
 
 export interface AudioLayer {
@@ -645,6 +671,78 @@ export function totalDuration(p: StoryProject) {
   return flatten(p).reduce((a, f) => a + f.dur, 0);
 }
 
+// --------------------------------------------------------------------------
+// Narraciones que se pisan
+// --------------------------------------------------------------------------
+// Una toma con duración FIJA no crece para que quepa su voz: si se le ponen
+// 1,2 s y la narración dura 4, la siguiente toma empieza a los 1,2 s y las dos
+// voces suenan a la vez casi tres segundos. No es una rareza teórica —es
+// justo lo que sale de la receta de «golpe de tensión»— y suena a ruido.
+//
+// Esto lo detecta sobre la línea de tiempo entera, que es donde se ve: un
+// diálogo puede pasarse del final de SU toma sin molestar a nadie (una voz en
+// off que cruza un corte está bien); lo que nunca puede es seguir sonando
+// cuando ya arrancó el siguiente.
+
+export interface Empalme {
+  sceneId: string;
+  shotId: string;
+  sceneIndex: number;
+  shotIndex: number;
+  /** Segundos que suenan las dos voces a la vez. */
+  segundos: number;
+  /** Lo que tendría que durar la toma para que no pase. */
+  necesita: number;
+}
+
+/** Instante global en que arranca cada diálogo, en orden de reproducción. */
+function marcasDeNarracion(flat: FlatShot[]) {
+  const out: { f: FlatShot; d: Dialogue; empieza: number; acaba: number }[] = [];
+  for (const f of flat) {
+    const st = dialogueStarts(f.shot);
+    f.shot.dialogues.forEach((d, i) => {
+      if (!d.audioId) return; // sin voz generada no suena nada
+      out.push({ f, d, empieza: f.start + st[i], acaba: f.start + st[i] + dialogueDur(d) });
+    });
+  }
+  return out;
+}
+
+/** Tomas cuya narración se pisa con la siguiente. Vacío = todo bien. */
+export function empalmes(p: StoryProject): Empalme[] {
+  const flat = flatten(p);
+  const marcas = marcasDeNarracion(flat);
+  const porToma = new Map<string, Empalme>();
+  for (let i = 1; i < marcas.length; i++) {
+    const a = marcas[i - 1], b = marcas[i];
+    const pisa = a.acaba - b.empieza;
+    if (pisa <= 0.01) continue;
+    // La toma de la voz que se pasa es la que hay que alargar.
+    const previo = porToma.get(a.f.shot.id);
+    const necesita = a.acaba - a.f.start;
+    if (!previo || pisa > previo.segundos) {
+      porToma.set(a.f.shot.id, {
+        sceneId: a.f.scene.id, shotId: a.f.shot.id,
+        sceneIndex: a.f.sceneIndex, shotIndex: a.f.shotIndex,
+        segundos: +pisa.toFixed(2),
+        necesita: Math.ceil(necesita * 10) / 10,
+      });
+    }
+  }
+  return [...porToma.values()];
+}
+
+/**
+ * Lo que tiene que durar el movimiento de una toma para que su voz quepa.
+ * Es lo que pone el botón de arreglar: nada de adivinar, la cuenta exacta.
+ */
+export function duracionQueCabe(s: Shot) {
+  const st = dialogueStarts(s);
+  let fin = 0;
+  s.dialogues.forEach((d, i) => { if (d.audioId) fin = Math.max(fin, st[i] + dialogueDur(d)); });
+  return Math.ceil(fin * 10) / 10;
+}
+
 // Tramo (inicio, fin) que ocupa una escena entera en la línea de tiempo.
 export function sceneRange(flat: FlatShot[], sceneId: string): { start: number; end: number } | null {
   const parts = flat.filter((f) => f.scene.id === sceneId);
@@ -873,14 +971,14 @@ export function projectAssets(p: StoryProject): string[] {
     ids.add(sc.imageId);
     for (const sh of sc.shots) {
       for (const d of sh.dialogues) if (d.audioId) ids.add(d.audioId);
-      for (const s of sh.sfx) ids.add(s.audioId);
+      for (const s of sh.sfx) if (s.audioId) ids.add(s.audioId);
       for (const o of sh.overlays) {
         ids.add(o.imageId);
         if (o.soundId) ids.add(o.soundId);
       }
     }
   }
-  for (const l of p.audioLayers) ids.add(l.audioId);
+  for (const l of p.audioLayers) if (l.audioId) ids.add(l.audioId);
   if (p.intro) ids.add(p.intro.assetId);
   if (p.outro) ids.add(p.outro.assetId);
   return [...ids].filter(Boolean);
@@ -1064,6 +1162,7 @@ function normalizeFraming(f: any, imgW: number, imgH: number): ShotFraming | nul
 function normalizeShot(s: any, imgW: number, imgH: number): Shot {
   const base = newShot(imgW, imgH);
   const hasFrames = s.from && s.to && typeof s.from.cx === "number";
+  const { sfx, audioOverrides } = normalizeSfxYOverrides(s);
   return {
     ...base,
     id: s.id ?? base.id,
@@ -1080,8 +1179,8 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
     transition: s.transition ?? base.transition,
     transitionDur: s.transitionDur ?? base.transitionDur,
     dialogues: startsToGaps<Dialogue>((s.dialogues ?? []).map((d: any) => ({ ...d, effect: d.effect ?? "none", speed: Number(d.speed) || 1, pitch: Number(d.pitch) || 1, stale: !!d.stale, ...(typeof d.quien === "string" && d.quien.trim() ? { quien: d.quien.trim().slice(0, 60) } : {}), ...(typeof d.voz === "string" && d.voz.trim() ? { voz: d.voz.trim().slice(0, 40) } : {}) }))),
-    sfx: startsToGaps<ShotSfx>((s.sfx ?? []).map((x: any) => ({ ...x, dur: x.dur ?? 0, loop: x.loop ?? false }))),
-    audioOverrides: s.audioOverrides ?? [],
+    sfx,
+    audioOverrides,
     overlays: (s.overlays ?? []).map(normalizeOverlay),
     vfx: (s.vfx ?? []).map(normalizeVfx),
     usarVfxEscena: s.usarVfxEscena !== false,
@@ -1090,6 +1189,47 @@ function normalizeShot(s: any, imgW: number, imgH: number): Shot {
       : [],
     altFrames: normalizeAltFrames(s.altFrames, imgW, imgH),
   };
+}
+
+// La IA a veces mete dentro de sfx cosas que son audioOverrides
+// ({ stop:true, volume:null } sin audioId). Eso tumba el guardado (Datos
+// inválidos) y hace petar el motor al llamar esDeBiblioteca(undefined).
+function normalizeSfxYOverrides(s: any): { sfx: ShotSfx[]; audioOverrides: AudioOverride[] } {
+  const overrides: AudioOverride[] = [];
+  const vistos = new Set<string>();
+  const meterOverride = (sfxId: string, stop: boolean, volume: unknown) => {
+    if (!sfxId || vistos.has(sfxId)) return;
+    vistos.add(sfxId);
+    overrides.push({
+      sfxId,
+      stop: !!stop,
+      volume: volume == null || volume === "" ? null : Number(volume),
+    });
+  };
+  for (const o of Array.isArray(s.audioOverrides) ? s.audioOverrides : []) {
+    if (o && typeof o.sfxId === "string") meterOverride(o.sfxId, !!o.stop, o.volume);
+  }
+  const sfx: ShotSfx[] = [];
+  for (const x of Array.isArray(s.sfx) ? s.sfx : []) {
+    if (!x || typeof x !== "object") continue;
+    if (!x.audioId && x.stop) {
+      // Basura tipo { id:"stoprain1", stop:true }: si trae sfxId se rescata;
+      // si no, se tira (los overrides buenos ya vienen en audioOverrides).
+      if (typeof x.sfxId === "string") meterOverride(x.sfxId, true, x.volume);
+      continue;
+    }
+    if (typeof x.audioId !== "string" || !x.audioId.trim()) continue;
+    sfx.push({
+      id: typeof x.id === "string" && x.id ? x.id : nanoid(6),
+      audioId: x.audioId.trim(),
+      name: String(x.name || "Sonido").slice(0, 120),
+      volume: typeof x.volume === "number" && Number.isFinite(x.volume) ? x.volume : 0.8,
+      dur: Number(x.dur) || 0,
+      gapSec: Number(x.gapSec) || 0,
+      loop: !!x.loop,
+    });
+  }
+  return { sfx: startsToGaps(sfx), audioOverrides: overrides.slice(0, 30) };
 }
 
 function promoteSceneVfx(shots: Shot[], rawSceneVfx: any): { vfx: VfxLayer[]; shots: Shot[] } {
@@ -1124,6 +1264,9 @@ function normalizeAltFrames(raw: any, imgW: number, imgH: number): Shot["altFram
   return Object.keys(out).length ? out : undefined;
 }
 
+const num01 = (v: unknown, sino: number) =>
+  typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : sino;
+
 export function migrateProject(raw: any): StoryProject {
   if (!raw || typeof raw !== "object") return emptyProject();
 
@@ -1142,6 +1285,19 @@ export function migrateProject(raw: any): StoryProject {
           shots,
           vfx,
           ...(typeof sc.prompt === "string" && sc.prompt.trim() ? { prompt: sc.prompt.trim().slice(0, 2000) } : {}),
+          // Las láminas del paralaje. Aquí la escena se reconstruye campo a
+          // campo, así que lo que no se copie se pierde al abrir el capítulo:
+          // se guardaba bien y desaparecía al recargar.
+          ...(Array.isArray(sc.capas) && sc.capas.length
+            ? { capas: sc.capas.map((c: any) => ({
+                id: String(c.id ?? nanoid(6)),
+                imageId: String(c.imageId ?? ""),
+                nombre: String(c.nombre ?? "Capa"),
+                depth: num01(c.depth, 0),
+                escala: Math.max(1, Math.min(2, Number(c.escala) || 1)),
+                opacidad: num01(c.opacidad, 1),
+              })).filter((c: EscenaCapa) => c.imageId) }
+            : {}),
         };
       }),
       audioLayers: raw.audioLayers ?? [],

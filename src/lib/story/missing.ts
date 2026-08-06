@@ -15,6 +15,7 @@
 // vez, sin tocar el proyecto.
 
 import { getAsset } from "./store";
+import { esDeBiblioteca, esDeBibliotecaSonido } from "./musica";
 import type { StoryProject } from "./model";
 
 export type TipoRef = "escena" | "sticker" | "voz" | "sonido" | "musica" | "video";
@@ -98,6 +99,11 @@ export async function faltantes(p: StoryProject): Promise<Falta[]> {
   }
   const out: Falta[] = [];
   for (const f of porId.values()) {
+    // Música/sonidos de la app (lib:… / son:…): viven en el servidor, no en
+    // IndexedDB. getAsset() ya los resuelve por red; si aquí se miraran como
+    // archivo local, un fallo de red o 401 los marcaría «perdidos» y el panel
+    // pediría «Buscar» algo que el usuario no puede reponer a mano.
+    if (esDeBiblioteca(f.id) || esDeBibliotecaSonido(f.id)) continue;
     if (!(await getAsset(f.id))) out.push(f);
   }
   return out;

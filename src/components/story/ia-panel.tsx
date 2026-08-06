@@ -71,7 +71,15 @@ export function IaPanel({
       if (j.cupo) onCupo?.(j.cupo);
       if (!r.ok) throw new Error(j.error || "Error");
       onGenerado(j.name, j.project);
-      setAviso(`Capítulo escrito ✓ · ${j.imagenes} escenas.`);
+      // Si se ha enderezado la música, se dice: el usuario tiene que poder
+      // entender por qué su capítulo no suena como el JSON que pidió.
+      const arreglos: string[] = [];
+      if (j.musica?.bajadas) arreglos.push(`música bajada al 12% (venía muy alta y tapaba la voz)`);
+      if (j.musica?.movidas) {
+        arreglos.push(`${j.musica.movidas} música${j.musica.movidas > 1 ? "s" : ""} de más movida${j.musica.movidas > 1 ? "s" : ""} a su escena`);
+      }
+      setAviso(`Capítulo escrito ✓ · ${j.imagenes} escenas.` +
+        (arreglos.length ? ` · ${arreglos.join(" · ")}` : ""));
     } catch (e: any) { setAviso(e?.message ?? "No se pudo generar"); }
     setOcupado(false);
   }

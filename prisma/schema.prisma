@@ -24,6 +24,10 @@ model User {
   avatarUrl    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  /// Cuándo cambió la contraseña por última vez. Las sesiones firmadas antes
+  /// de esta fecha dejan de valer: es lo que echa a quien tuviera la cuenta
+  /// abierta. Nulo = nunca la ha cambiado, así que no invalida nada.
+  passwordChangedAt DateTime?
 
   channel        Channel?
   templates      Template[]
@@ -40,6 +44,7 @@ model User {
   memberships    ChannelMember[]
   issuedModActions ModerationAction[] @relation("ModActor")
   targetModActions ModerationAction[] @relation("ModTarget")
+  passwordResets PasswordResetToken[]
 }
 
 model Channel {
@@ -480,4 +485,26 @@ model Payout {
   channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@index([channelId, createdAt])
+}
+
+// Ajustes globales de la app (cupo IA, etc.). Una fila por clave.
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// Token de un solo uso para restablecer contraseña (se guarda el hash, no el valor).
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }

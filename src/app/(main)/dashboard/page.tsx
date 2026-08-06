@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { Sparkles, User as UserIcon } from "lucide-react";
+import { PasswordAccountForms } from "@/components/account/password-forms";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,8 @@ export default async function AccountPage() {
           </div>
         </div>
       </div>
+
+      <PasswordAccountForms />
 
       <div className="card p-5">
         <h2 className="text-lg font-bold">Tus historias</h2>

@@ -180,3 +180,40 @@ export function prepararCapituloGenerado(project: any): { quitadas: string[]; ri
   ritmarCapitulo(project);
   return { quitadas, ritmado: true };
 }
+
+// Red de seguridad para la música, por la misma razón que la del guion: pedir
+// no es garantizar. El prompt decía «volume 0.3» y una cama global, y eso es
+// exactamente lo que salía; se corrigió el texto, pero un modelo puede seguir
+// devolviendo lo que le parezca y el usuario ya lo ha pagado.
+//
+// Dos cosas se enderezan aquí:
+//   · el volumen, porque a 0.3 la biblioteca (masterizada a -14 dBFS) tapa la
+//     narración; el rango bueno es 0.08-0.15 y la música ya baja sola al narrar.
+//   · más de una cama global, porque suenan sumadas (+3 dB) y se comen la voz.
+export const VOL_MUSICA_MAX = 0.18;
+export const VOL_MUSICA = 0.12;
+
+export function ajustarMusicaCapitulo(project: any) {
+  const capas = project.audioLayers ?? [];
+  const musicas = capas.filter((l: any) => l.kind === "music");
+  let bajadas = 0;
+  for (const l of musicas) {
+    if (l.volume > VOL_MUSICA_MAX) { l.volume = VOL_MUSICA; bajadas++; }
+  }
+  // Se queda la primera; las demás sobran. No se tiran: pasan a la primera
+  // toma de una escena distinta, que es donde la música por escena tiene
+  // sentido, y así no se pierde la elección del modelo.
+  const sobran = musicas.slice(1);
+  for (const l of sobran) {
+    project.audioLayers = project.audioLayers.filter((x: any) => x.id !== l.id);
+    const escena = project.scenes[Math.min(project.scenes.length - 1,
+      Math.floor(project.scenes.length / 2))];
+    const toma = escena?.shots?.[0];
+    if (!toma) continue;
+    toma.sfx = [...(toma.sfx ?? []), {
+      id: l.id, audioId: l.audioId, name: l.name,
+      volume: Math.min(l.volume, VOL_MUSICA), dur: 0, gapSec: 0, loop: true,
+    }];
+  }
+  return { bajadas, movidas: sobran.length };
+}

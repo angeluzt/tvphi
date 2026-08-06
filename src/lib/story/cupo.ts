@@ -2,15 +2,49 @@ import { prisma } from "@/lib/prisma";
 
 // Cupo de historias CON IA (escribir capítulo), no de videos manuales.
 //
-// Ventana móvil de 24 h: 3 generaciones; al agotar, espera a que caduque la
+// Ventana móvil de 24 h: N generaciones; al agotar, espera a que caduque la
 // más antigua. Los usos se guardan en AiCredential.models.usosIaCapitulo.
+// N se lee de AppSetting (admin) o, si no hay, de STORY_DAILY_LIMIT (env).
 
 const VENTANA_MS = 24 * 60 * 60 * 1000;
 const CLAVE_USOS = "usosIaCapitulo";
+const CLAVE_LIMITE = "story_daily_limit";
+const LIMITE_DEFECTO = 3;
+const LIMITE_MIN = 1;
+const LIMITE_MAX = 100;
 
-function limite(): number {
-  const n = Number(process.env["STORY_DAILY_LIMIT"] ?? 3);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
+function parseLimite(raw: unknown): number | null {
+  const n = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
+  if (!Number.isFinite(n) || n < LIMITE_MIN) return null;
+  return Math.min(LIMITE_MAX, Math.floor(n));
+}
+
+function limiteEnv(): number {
+  return parseLimite(process.env["STORY_DAILY_LIMIT"]) ?? LIMITE_DEFECTO;
+}
+
+/** Cupo de capítulos IA / 24 h para usuarios normales. */
+export async function leerLimiteIa(): Promise<number> {
+  try {
+    const row = await prisma.appSetting.findUnique({ where: { key: CLAVE_LIMITE } });
+    const desdeDb = row ? parseLimite(row.value) : null;
+    if (desdeDb != null) return desdeDb;
+  } catch {
+    // Si aún no existe la tabla (migración pendiente), cae al env.
+  }
+  return limiteEnv();
+}
+
+/** Guarda el cupo IA (admin). Devuelve el valor efectivo. */
+export async function guardarLimiteIa(n: number): Promise<number> {
+  const v = parseLimite(n);
+  if (v == null) throw new Error(`El límite debe estar entre ${LIMITE_MIN} y ${LIMITE_MAX}.`);
+  await prisma.appSetting.upsert({
+    where: { key: CLAVE_LIMITE },
+    create: { key: CLAVE_LIMITE, value: String(v) },
+    update: { value: String(v) },
+  });
+  return v;
 }
 
 /** Correos admin / sin cupo. Separados por coma en STORY_QUOTA_EXEMPT_EMAILS. */
@@ -45,7 +79,7 @@ function usosRecientes(models: unknown): Date[] {
 }
 
 export async function estadoCupoHistorias(userId: string, email: string): Promise<CupoHistorias> {
-  const lim = limite();
+  const lim = await leerLimiteIa();
   if (exento(email)) {
     return { exento: true, usadas: 0, limite: lim, quedan: lim, retryAt: null };
   }

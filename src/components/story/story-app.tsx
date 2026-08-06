@@ -8,19 +8,27 @@ import {
   Settings2, AlertTriangle, Sparkles, Check, RefreshCw, Image as ImageIcon,
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
+import { BibliotecaMusica } from "./biblioteca-musica";
+import { EscucharAudio } from "./escuchar-audio";
+import { PantallaRender } from "./pantalla-render";
+import { refPista, esDeBiblioteca, esDeBibliotecaSonido, type Pista } from "@/lib/story/musica";
 import { VOCES_INFO } from "@/lib/story/modelos";
 import { MissingAssets } from "./missing-assets";
 import { StoryHome, StoryBreadcrumb } from "./story-home";
 import { faltantes, referencias, type Falta } from "@/lib/story/missing";
 import { crearReferenciaVfx } from "@/lib/story/vfx-image-reference";
 import { crearZip, leerZip, nombreArchivo, idDeNombre } from "@/lib/story/zip";
-import { getAsset } from "@/lib/story/store";
+import { getAsset, putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { StoryEngine } from "@/lib/story/engine";
 import { synthesize, audioDuration, VOICES, type VoiceStatus } from "@/lib/story/tts";
-import { putAsset, assetUrl, cachedUrl, deleteAsset } from "@/lib/story/store";
 import { ShotEditor } from "./shot-editor";
 import { VfxEditor } from "./vfx-editor";
 import { VfxCanvas, VfxTools } from "./vfx-canvas";
+import { MarcaEfecto } from "./marca-efecto";
+import { MoverEfectos, desplazar } from "./mover-efectos";
+import type { PestanaToma } from "./pestanas-toma";
+import { CapasEscena } from "@/components/lab/capas-escena";
+import { MandoTramo } from "./mando-tramo";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
 import { NumberInput } from "./number-input";
@@ -118,6 +126,7 @@ export function StoryApp({
   initialCupo,
   initialOpenId = null,
   initialSerie = null,
+  lab = false,
 }: {
   initialProjects: ProjMeta[];
   initialCupo: CupoHistorias;
@@ -125,6 +134,12 @@ export function StoryApp({
   initialOpenId?: string | null;
   /** Carpeta de serie a mostrar en el inicio (?serie=). */
   initialSerie?: string | null;
+  /**
+   * Editor del laboratorio: enseña lo que está en pruebas —de momento, las
+   * capas con paralaje— y solo se monta desde una página cerrada a admin.
+   * En el editor normal esto no existe, así que nadie más puede tropezárselo.
+   */
+  lab?: boolean;
 }) {
   const [project, setProject] = useState<StoryProject>(emptyProject());
   const [projects, setProjects] = useState<ProjMeta[]>(initialProjects);
@@ -168,10 +183,9 @@ export function StoryApp({
     { fase: "dibujando" | "narrando" | "listo" | "parado"; hechas: number; total: number; detalle: string } | null
   >(null);
   const [montarAlEntrar, setMontarAlEntrar] = useState(false);
-  // Tras montar un borrador de IA, bajar el ZIP con imágenes y audios.
-  const zipTrasMontajeRef = useRef(false);
   // Qué pieza se está rehaciendo ahora mismo.
   const [rehaciendo, setRehaciendo] = useState<string | null>(null);
+  const [verBiblioteca, setVerBiblioteca] = useState(false);
   // Primero se elige dónde trabajar (serie → capítulo) y solo después se abre el
   // editor. La URL (?id= / ?serie=) recuerda el sitio para que un reload no
   // te tire al inicio.
@@ -208,6 +222,13 @@ export function StoryApp({
   const [playing, setPlaying] = useState(false);
   const [openScene, setOpenScene] = useState<string | null>(null);
   const [selShot, setSelShot] = useState<string | null>(null);
+  // La sección de la toma que se está viendo. Vive aquí, y no dentro de cada
+  // toma, para que se mantenga al saltar de una a otra: quien está colocando
+  // efectos sigue en efectos toma tras toma, sin volver a buscar la pestaña.
+  const [pestanaToma, setPestanaToma] = useState<PestanaToma>("camara");
+  // Con el mando desplegado la ventana crece: en un portátil se comía el 84% de
+  // la pantalla y tapaba justo lo que se está editando. Se le encoge la imagen.
+  const [mandoAbierto, setMandoAbierto] = useState(false);
   const [selOverlay, setSelOverlay] = useState<string | null>(null);
   const [selVfx, setSelVfx] = useState<string | null>(null);
   // Colocar sitios se enciende y se apaga: apagado, la previsualización se ve
@@ -248,6 +269,11 @@ export function StoryApp({
   const [format, setFormat] = useState<"webm" | "mp4" | "gif" | "mp3">("webm");
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState(0);
+  // Lo que se está haciendo ahora mismo, para decirlo en la pantalla de render.
+  const [etapaRender, setEtapaRender] = useState<string | null>(null);
+  // El paquete ya hecho, esperando a que el usuario decida bajárselo. Antes se
+  // disparaba la descarga sola y aparecía un archivo sin haberlo pedido.
+  const [paquete, setPaquete] = useState<{ blob: Blob; nombre: string; archivos: number } | null>(null);
   const [dirty, setDirty] = useState(false);
 
   // Archivos que el proyecto usa pero que no están en este navegador.
@@ -284,14 +310,17 @@ export function StoryApp({
     const eng = engineRef.current;
     // Si se edita una toma suelta, el canvas está en la ventana flotante.
     // No recolocarlo aquí o se queda negra al dibujar/mover efectos.
-    if (!eng || vista !== "editor" || section) return;
+    // Mientras se exporta, el lienzo vive en la pantalla de render; no hay que
+    // arrancárselo. Al acabar, «exporting» cambia y vuelve a su sitio: por eso
+    // está en las dependencias.
+    if (!eng || vista !== "editor" || section || exporting) return;
     const host = previewRef.current;
     if (host && eng.canvas.parentElement !== host) {
       eng.canvas.className = "h-full w-full object-contain";
       host.appendChild(eng.canvas);
       eng.update(projRef.current);
     }
-  }, [vista, project, section]);
+  }, [vista, project, section, exporting]);
 
   const cargarSeries = () =>
     fetch("/api/story/series").then((r) => r.json()).then((j) => setSeries(j.series ?? [])).catch(() => {});
@@ -476,6 +505,33 @@ export function StoryApp({
     const v = overlayWindow(o, sh.overlays, f.dur);
     engineRef.current?.seek(f.start + (v.start + v.end) / 2);
   }
+  // Llevar el reproductor a un momento en el que ESE efecto se vea.
+  //
+  // Un efecto puede durar solo un tramo de la toma. Si el cabezal está fuera,
+  // en la imagen no hay nada que mirar: se elige, se mueve con las flechas y
+  // parece que no pasa nada, porque lo que se mueve está apagado. Solo se salta
+  // si de verdad hace falta: si ya se está viendo, no se toca el cabezal, que
+  // moverlo sin motivo es lo que hacía perder el sitio.
+  function irAlEfecto(vfxId: string) {
+    const eng = engineRef.current;
+    if (!eng) return;
+    let duenyo: { f: (typeof flat)[number]; capa: VfxLayer } | null = null;
+    for (const f of flat) {
+      const capa = (f.shot.vfx ?? []).find((v) => v.id === vfxId)
+        ?? (f.scene.vfx ?? []).find((v) => v.id === vfxId);
+      if (capa) { duenyo = { f, capa }; break; }
+    }
+    if (!duenyo) return;
+    const { f, capa } = duenyo;
+    // Su ventana dentro de la toma, en segundos del vídeo entero.
+    const desde = capa.timing === "range" ? f.start + Math.max(0, capa.startSec) : f.start;
+    const hasta = capa.timing === "range"
+      ? f.start + Math.min(f.dur, Math.max(capa.startSec + 0.1, capa.endSec))
+      : f.start + f.dur;
+    if (playhead >= desde && playhead <= hasta) return; // ya se está viendo
+    eng.seek((desde + hasta) / 2);
+  }
+
   function toggleLoop() {
     const v = !loopSection;
     setLoopSection(v);
@@ -489,6 +545,38 @@ export function StoryApp({
     const f = flat.find((x) => x.shot.id === shotId);
     if (f) void playSection(f.start, f.start + f.dur, `Escena ${si + 1} · toma ${hi + 1}`, { shotId });
   }
+  // Saltar de toma desde la ventana de reproducción: cambia el tramo que se ve,
+  // abre esa toma en la lista y la trae a la vista. Es lo que evita bajar a
+  // buscarla cada vez que se pasa a la siguiente.
+  function saltarToma(dir: -1 | 1) {
+    const i = flat.findIndex((x) => x.shot.id === (section?.shotId ?? selShot));
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= flat.length) return;
+    const destino = flat[j];
+    const sc = project.scenes.find((s) => s.shots.some((h) => h.id === destino.shot.id));
+    if (!sc) return;
+    const si = project.scenes.indexOf(sc);
+    const hi = sc.shots.findIndex((h) => h.id === destino.shot.id);
+    const eng = engineRef.current;
+    // Su escena tiene que quedar abierta: si está plegada, la toma ni siquiera
+    // se dibuja, y saltar a ella parecía no hacer nada.
+    setOpenScene(sc.id);
+    setSelShot(destino.shot.id);
+    setSelOverlay(null);
+    if (eng) {
+      const fin = destino.start + destino.dur;
+      eng.pause();
+      setSection({ start: destino.start, end: fin, label: `Escena ${si + 1} · toma ${hi + 1}`,
+        shotId: destino.shot.id, sceneId: sc.id });
+      eng.setRange(destino.start, fin, loopSection);
+      eng.seek(destino.start);
+    }
+    // Sin esperar a que React pinte, la caja aún no existe en el DOM.
+    requestAnimationFrame(() =>
+      document.getElementById(`toma-${destino.shot.id}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" }));
+  }
+
   function closeSection() {
     const eng = engineRef.current!;
     eng.pause();
@@ -619,6 +707,7 @@ export function StoryApp({
       .then(async (blob) => {
         const audioId = nanoid(10);
         await putAsset(audioId, blob);
+        engineRef.current?.invalidateAsset(audioId);
         const secs = await audioDuration(blob);
         patchDialogue(sceneId, shotId, d.id, { audioId, dur: secs, stale: false });
         // Al regenerar, la voz anterior ya no la usa nadie: se quita para no ir
@@ -761,6 +850,40 @@ export function StoryApp({
     curFlat?.scene.vfx?.find((v) => v.id === selVfx)
     ?? curFlat?.shot.vfx?.find((v) => v.id === selVfx)
     ?? null;
+
+  // La capa marcada, buscada por id en TODO el proyecto: el mando de la ventana
+  // puede estar moviendo un efecto de una toma que no es la abierta en la lista,
+  // y entonces curVfx —que solo mira esa— se queda en nulo y no se marcaría nada
+  // encima de la imagen.
+  const marcado: VfxLayer | null = selVfx
+    ? (project.scenes.flatMap((sc) => [...(sc.vfx ?? []), ...sc.shots.flatMap((s) => s.vfx ?? [])])
+        .find((v) => v.id === selVfx) ?? null)
+    : null;
+
+  // Los efectos que se ven en el tramo abierto en la ventana de reproducción.
+  // Se sacan de la escena/toma que esa ventana está enseñando, no de la toma
+  // marcada en la lista de abajo: son cosas distintas —se puede estar viendo
+  // una escena entera mientras la lista tiene abierta otra toma— y el mando
+  // tiene que mover lo que se está viendo.
+  const capasDelTramo: { capa: VfxLayer; deEscena: boolean }[] = (() => {
+    if (!section) return [];
+    // El tramo puede venir identificado por la escena o solo por la toma:
+    // se busca por las dos, que si no el mando se quedaba sin capas y no salía.
+    const sc = project.scenes.find((x) => x.id === section.sceneId)
+      ?? project.scenes.find((x) => x.shots.some((s) => s.id === section.shotId));
+    if (!sc) return [];
+    const tomas = section.shotId
+      ? sc.shots.filter((s) => s.id === section.shotId)
+      : sc.shots;
+    // Los de la escena solo si alguna de esas tomas los enseña: si están
+    // quitados en la toma que se ve, moverlos aquí no se notaría.
+    const escena = (sc.vfx ?? []).filter((v) =>
+      tomas.some((s) => s.usarVfxEscena !== false && !(s.omitirVfxEscena ?? []).includes(v.id)));
+    return [
+      ...escena.map((capa) => ({ capa, deEscena: true })),
+      ...tomas.flatMap((s) => (s.vfx ?? []).map((capa) => ({ capa, deEscena: false }))),
+    ];
+  })();
   function updVfxNodes(id: string, nodes: VfxNode[]) {
     if (!curFlat) return;
     if ((curFlat.scene.vfx ?? []).some((v) => v.id === id)) {
@@ -775,6 +898,29 @@ export function StoryApp({
       vfx: curFlat.shot.vfx.map((v) => (v.id === id ? { ...v, nodes, auto: false } : v)),
     });
   }
+  // Desplazar varios efectos a la vez, sean de la escena o de la toma. Se hace
+  // en UNA sola actualización: hacerlo capa a capa dispararía un render por
+  // efecto y las flechas del teclado irían a tirones.
+  function moverVfx(ids: string[], dx: number, dy: number) {
+    if (!ids.length) return;
+    const juego = new Set(ids);
+    const mueve = (v: VfxLayer): VfxLayer =>
+      juego.has(v.id) ? { ...v, nodes: desplazar(v.nodes ?? [], dx, dy), auto: false } : v;
+    // Se busca por id en todo el proyecto en vez de mirar solo la toma abierta.
+    // El mando también vive dentro de la ventana de reproducción, y ahí se está
+    // viendo un tramo que no tiene por qué ser la toma seleccionada en la lista;
+    // atándolo a la toma abierta, las flechas no movían nada.
+    mut((p) => ({
+      ...p,
+      scenes: p.scenes.map((sc) => ({
+        ...sc,
+        vfx: (sc.vfx ?? []).map(mueve),
+        shots: sc.shots.map((sh) => ({ ...sh, vfx: (sh.vfx ?? []).map(mueve) })),
+      })),
+    }));
+    engineRef.current?.resetVfx();
+  }
+
   function updOverlayPos(patch: Partial<PngOverlay>) {
     if (!curFlat || !curOverlay) return;
     updShot(curFlat.scene.id, curFlat.shot.id, {
@@ -796,6 +942,21 @@ export function StoryApp({
     };
     mut((p) => ({ ...p, audioLayers: [...p.audioLayers, layer] }));
   }
+  // Añadir una pista de la biblioteca de la app. No se copia nada al navegador:
+  // se guarda solo la referencia "lib:<id>", y el archivo lo sirve la propia
+  // aplicación desde /musica.
+  function addPistaBiblioteca(pista: Pista) {
+    const layer: AudioLayer = {
+      id: nanoid(6), kind: "music", audioId: refPista(pista), name: pista.titulo,
+      // La música se aparta sola bajo la voz (ver DUCK en engine.ts), así que
+      // este número es el de los silencios, no el que compite con la narración.
+      volume: 0.12, startSec: 0, loop: true,
+    };
+    mut((p) => ({ ...p, audioLayers: [...p.audioLayers, layer] }));
+    setVerBiblioteca(false);
+    setStatus(`«${pista.titulo}» añadida ✓`);
+  }
+
   function updLayer(id: string, patch: Partial<AudioLayer>) {
     mut((p) => ({ ...p, audioLayers: p.audioLayers.map((l) => (l.id === id ? { ...l, ...patch } : l)) }));
   }
@@ -888,14 +1049,18 @@ export function StoryApp({
     setBusy("save");
     setStatus(null);
     try {
+      // Se normaliza otra vez: un ZIP de la IA puede traer sfx basura que tumba
+      // el schema del servidor. migrateProject lo limpia.
+      const data = migrateProject(projRef.current);
+      if (data !== projRef.current) setProject(data);
       const res = await fetch("/api/story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: projectId ?? undefined, name, data: project, seriesId }),
+        body: JSON.stringify({ id: projectId ?? undefined, name, data, seriesId }),
       });
       const j = await res.json();
       if (j.cupo) setCupo(j.cupo);
-      if (!res.ok) throw new Error(j.error || "Error");
+      if (!res.ok) throw new Error([j.error, j.detalle].filter(Boolean).join(" — ") || "Error");
       setProjectId(j.project.id);
       void cargarSeries();
       setProjects((prev) => [
@@ -918,6 +1083,7 @@ export function StoryApp({
     setReponiendo(falta.id);
     try {
       await putAsset(falta.id, file);
+      engineRef.current?.invalidateAsset(falta.id);
       // Una imagen de escena manda en la proporción: los encuadres se guardan en
       // tanto por uno, así que si la nueva imagen no mide igual hay que rehacer
       // las medidas o el encuadre sale torcido.
@@ -993,6 +1159,7 @@ export function StoryApp({
       // Se guarda con el MISMO identificador, igual que al reponerla a mano: si
       // esa imagen se usaba en varios sitios, todos quedan arreglados de una vez.
       await putAsset(falta.id, blob);
+      engineRef.current?.invalidateAsset(falta.id);
       const medidas = await medirImagen(blob);
       mut((p) => ({
         ...p,
@@ -1075,6 +1242,36 @@ export function StoryApp({
     } finally { setRehaciendo(null); }
   }
 
+  // Si el JSON trae durationSec corto pero autoDuration y las voces ya están,
+  // la línea de tiempo la marca dialogue.dur (vía shotDur). Si dur quedó viejo
+  // o a 0, el playhead corre de más/de menos respecto al audio. Se alinea con
+  // lo que realmente dura cada archivo en este navegador.
+  async function alinearDursConAudio(p: StoryProject): Promise<StoryProject> {
+    let cambio = false;
+    const scenes = [];
+    for (const sc of p.scenes) {
+      const shots = [];
+      for (const sh of sc.shots) {
+        const dialogues = [];
+        for (const d of sh.dialogues) {
+          if (!d.audioId) { dialogues.push(d); continue; }
+          const blob = await getAsset(d.audioId);
+          if (!blob) { dialogues.push(d); continue; }
+          const secs = await audioDuration(blob).catch(() => 0);
+          if (secs < 0.05 || Math.abs((d.dur || 0) - secs) < 0.2) {
+            dialogues.push(d);
+            continue;
+          }
+          cambio = true;
+          dialogues.push({ ...d, dur: secs });
+        }
+        shots.push({ ...sh, dialogues });
+      }
+      scenes.push({ ...sc, shots });
+    }
+    return cambio ? { ...p, scenes } : p;
+  }
+
   // ---------- montar el capítulo entero, a la vista ----------
   //
   // Antes, al escribir un capítulo con IA, salía un borrador con todas las
@@ -1093,7 +1290,6 @@ export function StoryApp({
       for (let i = 0; i < pend.length; i++) {
         setMontaje({ fase: "dibujando", hechas: i, total: pend.length, detalle: pend[i].donde.join(" · ") });
         if (!(await dibujarUna(pend[i], descripcionDe(pend[i])))) {
-          zipTrasMontajeRef.current = false;
           setMontaje({ fase: "parado", hechas: i, total: pend.length, detalle: "dibujando las imágenes" });
           return;
         }
@@ -1108,21 +1304,19 @@ export function StoryApp({
         detalle: (d.quien || "narrador") + ": " + d.text.slice(0, 40),
       });
       if (!(await genVoice(sceneId, shotId, d))) {
-        zipTrasMontajeRef.current = false;
         setMontaje({ fase: "parado", hechas: i, total: voces.length, detalle: "generando las voces" });
         return;
       }
     }
 
     setFaltas(await faltantes(projRef.current));
+    const alineado = await alinearDursConAudio(projRef.current);
+    if (alineado !== projRef.current) {
+      setProject(alineado);
+      engineRef.current?.update(alineado);
+    }
     setMontaje({ fase: "listo", hechas: voces.length, total: voces.length, detalle: "" });
     setStatus("Capítulo montado ✓ · revísalo y guarda");
-    // Historia con IA: al terminar el montaje se descarga el paquete solo.
-    if (zipTrasMontajeRef.current) {
-      zipTrasMontajeRef.current = false;
-      setStatus("Capítulo montado ✓ · descargando el ZIP…");
-      await exportPaquete();
-    }
   }
 
   // Arranca en cuanto la IA entrega el borrador, no antes: hace falta que el
@@ -1165,6 +1359,16 @@ export function StoryApp({
       for (const r of refs) {
         if (vistos.has(r.id)) continue;
         vistos.add(r.id);
+        // La música y los sonidos DE LA APP no se meten nunca en el ZIP.
+        //
+        // Hay dos razones y la segunda manda: (a) ya viajan dentro de la
+        // aplicación, así que copiarlos engorda el paquete para nada; y (b) su
+        // licencia permite usarlos DENTRO de un proyecto, no repartirlos como
+        // archivos sueltos. Un ZIP descargable con los mp3 dentro es
+        // exactamente repartirlos. Solo salen los archivos que ha subido el
+        // usuario, que son suyos; los de la app viajan como referencia
+        // ("lib:…", "son:…") y se resuelven al abrir el proyecto.
+        if (esDeBiblioteca(r.id) || esDeBibliotecaSonido(r.id)) continue;
         const blob = await getAsset(r.id);
         if (!blob) { sinArchivo++; continue; }
         const ext = (blob.type.split("/")[1] || "bin").replace(/[^\w]/g, "").slice(0, 5);
@@ -1181,8 +1385,14 @@ export function StoryApp({
         datos: new TextEncoder().encode(JSON.stringify(meta, null, 2)),
       });
       const zip = crearZip(entradas);
-      download(zip, `${(name || "historia").replace(/[^\w\-]+/g, "-")}-completo.zip`);
-      setStatus(`Paquete descargado ✓ · ${entradas.length - 1} archivos${sinArchivo ? ` (faltaban ${sinArchivo})` : ""}`);
+      // No se descarga solo: se deja preparado y con un botón. Que aparezca un
+      // archivo en Descargas sin haberlo pedido molesta más de lo que ayuda.
+      setPaquete({
+        blob: zip,
+        nombre: `${(name || "historia").replace(/[^\w\-]+/g, "-")}-completo.zip`,
+        archivos: entradas.length - 1,
+      });
+      setStatus(`Paquete listo ✓ · ${entradas.length - 1} archivos${sinArchivo ? ` (faltaban ${sinArchivo})` : ""}`);
     } catch (e: any) { setStatus("No se pudo empaquetar: " + (e?.message ?? "")); }
     setBusy(null);
   }
@@ -1205,11 +1415,13 @@ export function StoryApp({
         if (!id) continue;
         // Se copia a un búfer propio: la porción del ZIP apunta al original.
         await putAsset(id, new Blob([new Uint8Array(x.datos)]));
+        engineRef.current?.invalidateAsset(id);
         puestos++;
       }
       const crudo = JSON.parse(new TextDecoder().decode(meta.datos));
-      const data = migrateProject(crudo?.project ?? crudo);
+      let data = migrateProject(crudo?.project ?? crudo);
       if (!data.scenes.length) throw new Error("ese proyecto no tiene escenas");
+      data = await alinearDursConAudio(data);
       setProject(data);
       setProjectId(null);
       if (crudo?.name) setName(String(crudo.name));
@@ -1225,8 +1437,8 @@ export function StoryApp({
       const f2 = await faltantes(data);
       setFaltas(f2);
       setStatus(f2.length
-        ? `Paquete importado ✓ · ${puestos} archivos puestos, faltan ${f2.length}`
-        : `Paquete importado ✓ · ${puestos} archivos puestos, no falta nada`);
+        ? `Paquete importado ✓ · ${puestos} archivos puestos, faltan ${f2.length}. Pulsa Guardar para quedártelo.`
+        : `Paquete importado ✓ · ${puestos} archivos puestos. Pulsa Guardar para quedártelo en tu cuenta.`);
     } catch (e: any) { setStatus("No se pudo importar: " + (e?.message ?? "")); }
     setBusy(null);
   }
@@ -1319,10 +1531,12 @@ export function StoryApp({
       const res = await fetch(`/api/story?id=${id}`);
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || "Error");
-      const data = migrateProject(j.project.data);
+      const data0 = migrateProject(j.project.data);
+      const data = await alinearDursConAudio(data0);
       const ids = new Set<string>();
       for (const sc of data.scenes) {
         ids.add(sc.imageId);
+        for (const capa of sc.capas ?? []) ids.add(capa.imageId);
         for (const sh of sc.shots) sh.overlays.forEach((o) => ids.add(o.imageId));
       }
       await Promise.all([...ids].map((i) => assetUrl(i)));
@@ -1341,7 +1555,15 @@ export function StoryApp({
       seek(0);
       setStatus(opts?.silencioso ? null : "Proyecto cargado ✓");
     } catch (err: any) {
-      setStatus("Error al cargar: " + (err?.message ?? ""));
+      const msg = String(err?.message ?? "Error");
+      // Suele ser un ?id= de un borrador que nunca se guardó, o un ZIP sin «Guardar».
+      setStatus(
+        /no está en tu cuenta|ya no existe|No encontrado/i.test(msg)
+          ? (msg.includes("Importa") || msg.includes("zip")
+            ? msg
+            : "Ese capítulo no está en tu cuenta. Si lo tienes en un .zip: Importar .zip → luego Guardar.")
+          : "Error al cargar: " + msg,
+      );
       // Si venía de la URL y falló, vuelve al inicio limpio.
       if (opts?.silencioso) {
         setVista("inicio");
@@ -1485,6 +1707,7 @@ export function StoryApp({
     const eng = engineRef.current!;
     setExporting(true);
     setProgress(0);
+    setEtapaRender(null);
     setStatus(null);
     const nombre = `tvphi-historia-${Date.now()}`;
     try {
@@ -1493,7 +1716,7 @@ export function StoryApp({
         const nativo = format === "mp4" ? Recorder.pickMp4() : webmMime;
         if (format === "mp4" && !nativo) {
           // El navegador no sabe grabar MP4: hay que recodificar.
-          setStatus("Convirtiendo a MP4 (puede tardar)…");
+          setEtapaRender("Convirtiendo a MP4… ya no hace falta esperar delante.");
           const b = await eng.export(webmMime, (p) => setProgress(p * 0.5));
           download(await convert(b, "mp4", (p) => setProgress(0.5 + p * 0.5)), `${nombre}.mp4`);
         } else {
@@ -1501,7 +1724,7 @@ export function StoryApp({
           // Lo que sale del grabador no lleva escrita su duración (el móvil marca
           // 0:00) y el MP4 sale fragmentado, que es lo que rechaza YouTube. Se
           // vuelve a empaquetar sin recodificar, que es rápido.
-          setStatus("Cerrando el archivo…");
+          setEtapaRender("Cerrando el archivo…");
           let final = bruto;
           try {
             final = await remux(bruto, format, (p) => setProgress(0.85 + p * 0.15));
@@ -1511,15 +1734,23 @@ export function StoryApp({
           download(final, `${nombre}.${format}`);
         }
       } else {
-        setStatus(`Convirtiendo a ${format.toUpperCase()} (puede tardar)…`);
+        setEtapaRender(`Convirtiendo a ${format.toUpperCase()}… ya no hace falta esperar delante.`);
         const b = await eng.export(webmMime, (p) => setProgress(p * 0.5));
         download(await convert(b, format, (p) => setProgress(0.5 + p * 0.5)), `${nombre}.${format}`);
       }
       setStatus((s) => (s?.startsWith("El video se descargó") ? s : "Descarga lista ✓"));
     } catch (err: any) {
-      setStatus("Error al exportar: " + (err?.message ?? ""));
+      setStatus(err?.message === "CANCELADO"
+        ? "Exportación cancelada · no se ha descargado nada."
+        : "Error al exportar: " + (err?.message ?? ""));
     }
+    setEtapaRender(null);
     setExporting(false);
+  }
+
+  function cancelarRender() {
+    engineRef.current?.cancelarExport();
+    setEtapaRender("Cancelando…");
   }
 
   if (vista === "inicio") {
@@ -1606,8 +1837,9 @@ export function StoryApp({
           seek(0);
           setStatus(`Borrador de la IA: ${data.scenes.length} escenas. Montando…`);
           // Sin esperar a que el usuario pida nada: se dibuja y se narra solo,
-          // y él lo va viendo aparecer. Al acabar, el ZIP se descarga solo.
-          zipTrasMontajeRef.current = true;
+          // y él lo va viendo aparecer. El ZIP ya NO se descarga al acabar:
+          // aparecía un archivo en Descargas sin haberlo pedido, y quien lo
+          // quiera lo tiene en «Todo (.zip)».
           setMontarAlEntrar(true);
         }}
       />
@@ -1616,6 +1848,17 @@ export function StoryApp({
 
   return (
     <div className="tool-ui grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+      {/* Mientras se graba, se tapa todo: cualquier cosa que se toque durante
+          esos minutos acabaría dentro del vídeo. */}
+      {exporting && (
+        <PantallaRender
+          canvas={engineRef.current?.canvas ?? null}
+          progreso={progress}
+          etapa={etapaRender}
+          segundos={durFinal}
+          onCancelar={cancelarRender}
+        />
+      )}
       <div className="space-y-4">
         {/* Dónde estás y cómo salir: sin esto, entrar al editor era un viaje sin
             vuelta y no se sabía de qué serie era el capítulo. */}
@@ -1634,7 +1877,23 @@ export function StoryApp({
             desplaza con ella: es grande, y clavada arriba estorbaba más de lo que
             ayudaba, porque se comía media pantalla mientras editabas la toma.
             Para editar de cerca está la ventana de la escena o la toma, que sí se
-            queda arriba pero es pequeña y lleva sus propias herramientas. */}
+            queda arriba pero es pequeña y lleva sus propias herramientas.
+
+            Con un tramo abierto se encoge a una línea: el lienzo está prestado a
+            la ventana de arriba, así que este cuadro no enseñaba nada y aun así
+            se comía media pantalla de las que hay que recorrer para llegar a la
+            toma. Encogido, la lista empieza casi arriba del todo. */}
+        {section ? (
+          <div className="card flex flex-wrap items-center gap-2 p-2.5">
+            <span className="chip shrink-0 bg-brand/15 text-brand">{section.label}</span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted">
+              Se está viendo en la ventana de arriba, que se queda fija mientras editas.
+            </span>
+            <button onClick={closeSection} className="btn-ghost shrink-0 text-xs">
+              <X className="h-3.5 w-3.5" /> Volver al video completo
+            </button>
+          </div>
+        ) : (
         <div className="card p-3">
           {/* Los botones van FUERA del cuadro: encima de la imagen tapaban justo
               la parte donde hace falta poner sitios. */}
@@ -1679,18 +1938,19 @@ export function StoryApp({
                 Sube imágenes para empezar tu historia.
               </div>
             )}
-            {/* El lienzo está prestado a la miniatura flotante: se explica en vez
-                de dejar un recuadro negro. */}
-            {section && (
-              <div className="absolute inset-0 grid place-items-center gap-2 p-4 text-center">
-                <div>
-                  <p className="text-sm text-fg/80">Viendo <strong>{section.label}</strong> en la ventana de arriba</p>
-                  <button onClick={closeSection} className="btn-ghost mx-auto mt-2 text-xs">
-                    <X className="h-3.5 w-3.5" /> Volver al video completo
-                  </button>
-                </div>
-              </div>
+            {/* Con «Colocando» ya salen las guías: dos marcas serían ruido. */}
+            {/* La marca va sobre «marcado», que se busca por id en todo el
+                proyecto. Las guías de «Colocar sitios» solo saben pintar la capa
+                de la toma abierta en la lista, y la ventana puede estar
+                enseñando otra: con un efecto DE LA TOMA no se pintaba nada y no
+                había forma de saber cuál se estaba moviendo. Si esas guías ya
+                están dibujando esta misma capa, aquí va solo el nombre. */}
+            {marcado && (
+              <MarcaEfecto layer={marcado} soloEtiqueta={colocando && curVfx?.id === marcado.id} />
             )}
+            {/* Antes había aquí un cartel de «se está viendo arriba»: ya no hace
+                falta, porque con un tramo abierto este cuadro no se dibuja y en
+                su sitio va una línea que lo dice y devuelve al vídeo entero. */}
           </div>
 
           <div className="mt-3 flex items-center gap-3">
@@ -1704,9 +1964,28 @@ export function StoryApp({
             />
           </div>
 
-          {/* Línea de tiempo: escenas agrupadas, tomas dentro */}
+          {/* El mando: colocar a dedo sirve para poner algo aproximado, no para
+              afinar ni para mover dos efectos juntos sin descuadrarlos. */}
+          {curFlat && (
+            <MoverEfectos
+              capas={[
+                ...(curFlat.scene.vfx ?? []).map((capa) => ({ capa, deEscena: true })),
+                ...((curFlat.shot.vfx ?? []).map((capa) => ({ capa, deEscena: false }))),
+              ]}
+              onMover={moverVfx}
+              onResaltar={(id) => { setSelVfx(id); if (id) irAlEfecto(id); }}
+            />
+          )}
+
+        </div>
+        )}
+
+        {/* Línea de tiempo: escenas agrupadas, tomas dentro.
+            Va FUERA del reproductor grande para que siga estando cuando ese se
+            encoge: es la forma más corta de saltar a cualquier toma, y perderla
+            al abrir un tramo obligaba justo a lo que se quiere evitar. */}
           {flat.length > 0 && (
-            <div className="relative mt-2 w-full overflow-hidden rounded-lg bg-surface-2 p-1">
+            <div className="card relative w-full overflow-hidden p-1">
               <div className="flex h-12 w-full gap-1">
                 {project.scenes.map((sc, si) => {
                   const scDur = sc.shots.reduce((a, s) => a + shotDur(s), 0);
@@ -1731,7 +2010,6 @@ export function StoryApp({
                 style={{ left: `${dur ? (playhead / dur) * 100 : 0}%` }} />
             </div>
           )}
-        </div>
 
         {/* Lo que falta, en cuanto falta: va justo debajo del reproductor porque
             es lo primero que hay que resolver al abrir un proyecto de otro sitio. */}
@@ -2114,6 +2392,26 @@ export function StoryApp({
                           />
                         </label>
                       </div>
+                      {/* En pruebas y solo en el editor del laboratorio: partir
+                          la escena en láminas con profundidad. */}
+                      {lab && (
+                        <CapasEscena
+                          capas={sc.capas ?? []}
+                          prompt={sc.prompt ?? ""}
+                          formato={project.aspect === "9:16" ? "9:16" : project.aspect === "1:1" ? "1:1" : "16:9"}
+                          onCambio={(capas) => mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => (s.id === sc.id ? { ...s, capas: capas.length ? capas : undefined } : s)),
+                          }))}
+                          onGuardarImagen={async (dataUrl, nombre) => {
+                            const blob = await (await fetch(dataUrl)).blob();
+                            const id = `capa-${nanoid(8)}`;
+                            await putAsset(id, blob);
+                            await assetUrl(id);
+                            return id;
+                          }}
+                        />
+                      )}
                       {dibujo?.ancla === sc.id && (
                         <div className="mt-2 rounded-lg border border-accent/40 bg-surface p-2.5">
                           <div className="flex items-center gap-2">
@@ -2289,6 +2587,8 @@ export function StoryApp({
                           if (id) irAlSticker(sh, id);
                         }}
                         vocesIa={vozOpenAi}
+                        pestana={pestanaToma}
+                        onPestana={setPestanaToma}
                       />
                     ))}
                     <button onClick={() => addShot(sc)} className="btn-ghost w-full text-sm">
@@ -2488,18 +2788,51 @@ export function StoryApp({
 
         <div className="card p-3">
           <span className="label">Música y sonido global</span>
+          {/* La biblioteca primero: es lo que resuelve el caso normal sin que
+              nadie tenga que buscar un archivo. Subir la tuya sigue igual. */}
+          <button onClick={() => setVerBiblioteca(true)} className="btn-brand mt-2 w-full text-xs">
+            <Music className="h-4 w-4" /> Elegir música de la biblioteca
+          </button>
           <div className="mt-2 flex gap-2">
-            <label className="btn-ghost flex-1 cursor-pointer text-xs"><Music className="h-4 w-4 text-accent" /> Música
+            <label className="btn-ghost flex-1 cursor-pointer text-xs"><Music className="h-4 w-4 text-accent" /> Subir música
               <input type="file" accept="audio/*" className="hidden" onChange={(e) => addAudioLayer("music", e)} />
             </label>
             <label className="btn-ghost flex-1 cursor-pointer text-xs"><Volume2 className="h-4 w-4 text-accent" /> Efecto
               <input type="file" accept="audio/*" className="hidden" onChange={(e) => addAudioLayer("sfx", e)} />
             </label>
           </div>
+          {verBiblioteca && (
+            <BibliotecaMusica onElegir={addPistaBiblioteca} onCerrar={() => setVerBiblioteca(false)} />
+          )}
+          {/* Dos camas de música a la vez suman +3 dB y se comen la narración.
+              Casi siempre es un descuido, así que se dice y se ofrece quitar
+              la de más en vez de dejar que el usuario lo descubra oyéndolo. */}
+          {project.audioLayers.filter((l) => l.kind === "music").length > 1 && (
+            <div className="mt-2 rounded-lg border border-gold/50 bg-gold/10 p-2 text-[11px]">
+              <p className="flex items-start gap-1.5 font-medium text-gold">
+                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                Hay {project.audioLayers.filter((l) => l.kind === "music").length} músicas de fondo sonando a la vez.
+              </p>
+              <p className="mt-1 text-muted">
+                Suenan sumadas, así que tapan la voz aunque cada una esté baja. Deja una sola,
+                o pon la música dentro de cada escena para que cambie con ella.
+              </p>
+              <button
+                onClick={() => mut((p) => {
+                  const primera = p.audioLayers.find((l) => l.kind === "music");
+                  return { ...p, audioLayers: p.audioLayers.filter((l) => l.kind !== "music" || l.id === primera?.id) };
+                })}
+                className="btn-ghost mt-1.5 px-2 py-1 text-[11px]"
+              >
+                Dejar solo la primera
+              </button>
+            </div>
+          )}
           <div className="mt-2 space-y-2">
             {project.audioLayers.map((l) => (
               <div key={l.id} className="rounded-lg border border-border p-2 text-sm">
                 <div className="flex items-center gap-2">
+                  <EscucharAudio audioId={l.audioId} volumen={l.volume} titulo={l.name} />
                   {l.kind === "music" ? <Music className="h-3.5 w-3.5 text-accent" /> : <Volume2 className="h-3.5 w-3.5 text-accent" />}
                   <span className="flex-1 truncate text-xs">{l.name}</span>
                   <button
@@ -2518,6 +2851,14 @@ export function StoryApp({
                     min={0} max={3600} step={0.5}
                   />
                 </div>
+                {/* Sin esto el número engaña: no es el volumen con el que se
+                    oye bajo la voz, sino el de los huecos entre frases. */}
+                {l.kind === "music" && (
+                  <p className="mt-1 text-[10px] leading-tight text-muted">
+                    Es el volumen en los silencios. Mientras se narra baja sola a{" "}
+                    <span className="text-accent">{Math.round(l.volume * 30)}%</span> para no tapar la voz.
+                  </p>
+                )}
                 <label className="mt-1 flex items-center gap-2 text-[11px] text-muted">
                   <input type="checkbox" checked={l.loop} onChange={(e) => updLayer(l.id, { loop: e.target.checked })} />
                   Repetir en bucle todo el video
@@ -2559,6 +2900,24 @@ export function StoryApp({
               <input type="file" accept=".zip,application/zip" className="hidden" onChange={importPaquete} />
             </label>
           </div>
+          {/* El paquete se prepara y espera. Antes se disparaba la descarga
+              sola y aparecía un archivo sin haberlo pedido. */}
+          {paquete && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-accent/50 bg-accent/5 px-2 py-2">
+              <span className="min-w-0 flex-1 text-[11px]">
+                Paquete listo · {paquete.archivos} archivos · {(paquete.blob.size / 1e6).toFixed(1)} MB
+              </span>
+              <button
+                onClick={() => { download(paquete.blob, paquete.nombre); }}
+                className="btn-brand px-3 py-1 text-[11px]"
+              >
+                <Download className="h-3.5 w-3.5" /> Descargar
+              </button>
+              <button onClick={() => setPaquete(null)} className="text-muted hover:text-fg" aria-label="Descartar el paquete">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           <p className="mt-2 text-[11px] text-muted">
             El montaje <strong>y sus archivos</strong> —imágenes, músicas, sonidos y las voces ya
             generadas— en un solo archivo. Al importarlo se colocan solos: no hay que reponer nada
@@ -2665,7 +3024,14 @@ export function StoryApp({
               {project.outro ? ` + cierre ${fmt(project.outro.dur)}` : ""}.
             </p>
           )}
-          <p className="mt-2 flex items-center gap-1 text-[11px] text-muted"><Film className="h-3 w-3" /> El video se genera en tu navegador y se descarga.</p>
+          <p className="mt-2 flex items-start gap-1 text-[11px] text-muted">
+            <Film className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>
+              Se genera en tu navegador grabándolo mientras se reproduce, así que
+              tarda lo que dura el vídeo (<strong className="tabular-nums text-fg">{fmt(durFinal)}</strong>)
+              {format === "webm" ? "" : " más la conversión"}. Mientras dure hay que dejar la pestaña a la vista.
+            </span>
+          </p>
         </div>
 
         {status && <p className="text-sm text-accent">{status}</p>}
@@ -2675,7 +3041,7 @@ export function StoryApp({
           a donde estás editando en vez de tener que subir al reproductor de arriba.
           Se mueve aquí el mismo lienzo del motor. */}
       {section && (
-        <div className="fixed inset-x-0 top-2 z-50 mx-auto w-[min(92vw,460px)] rounded-2xl border border-brand/60 bg-bg/95 p-2 shadow-2xl backdrop-blur">
+        <div className="fixed inset-x-0 top-2 z-50 mx-auto max-h-[calc(100vh-1rem)] w-[min(92vw,460px)] overflow-y-auto rounded-2xl border border-brand/60 bg-bg/95 p-2 shadow-2xl backdrop-blur">
           {/* En móvil el ancho es justo: la etiqueta se recorta y el botón de
               cerrar nunca se queda fuera del panel. */}
           <div className="flex items-center gap-2 px-1 pb-1">
@@ -2703,7 +3069,16 @@ export function StoryApp({
           <div
             ref={floatRef}
             className="relative mx-auto w-full overflow-hidden rounded-xl bg-black"
-            style={{ aspectRatio: `${forma.w} / ${forma.h}`, maxWidth: `calc(46vh * ${forma.ratio})` }}
+            style={{
+              aspectRatio: `${forma.w} / ${forma.h}`,
+              // Con el mando desplegado la imagen se encoge para que el panel
+              // entero quepa en pantalla: si no, en un portátil tapaba la toma
+              // que se está editando y había que cerrarlo para ver lo que hacía.
+              // Se limita por ALTO —convertido a ancho con la proporción—, que
+              // es lo que aprieta: por ancho ya topaba antes con el del panel y
+              // bajar los vh no cambiaba nada.
+              maxWidth: `calc(${mandoAbierto ? 20 : 46}vh * ${forma.ratio})`,
+            }}
           >
             {curVfx && colocando && (
               <VfxCanvas
@@ -2711,6 +3086,15 @@ export function StoryApp({
                 onChange={(nodes) => updVfxNodes(curVfx.id, nodes)}
                 onSettled={() => engineRef.current?.resetVfx()}
               />
+            )}
+            {/* La marca va sobre «marcado», que se busca por id en todo el
+                proyecto. Las guías de «Colocar sitios» solo saben pintar la capa
+                de la toma abierta en la lista, y la ventana puede estar
+                enseñando otra: con un efecto DE LA TOMA no se pintaba nada y no
+                había forma de saber cuál se estaba moviendo. Si esas guías ya
+                están dibujando esta misma capa, aquí va solo el nombre. */}
+            {marcado && (
+              <MarcaEfecto layer={marcado} soloEtiqueta={colocando && curVfx?.id === marcado.id} />
             )}
           </div>
           <div className="mt-2 flex items-center gap-2 px-1">
@@ -2738,6 +3122,42 @@ export function StoryApp({
               aria-label="Avanzar dentro de este tramo"
             />
           </div>
+
+          {/* Saltar de toma y abrir sus secciones sin bajar a la lista. */}
+          <MandoTramo
+            puesto={section.shotId ? flat.findIndex((x) => x.shot.id === section.shotId) + 1 : 0}
+            total={flat.length}
+            pestana={pestanaToma}
+            onSaltar={saltarToma}
+            onPestana={(p) => {
+              setPestanaToma(p);
+              if (!section.shotId) return;
+              // Abrir la sección desde aquí tiene que abrir también la toma y su
+              // escena; si no, se marcaba el botón y abajo no cambiaba nada.
+              const suya = project.scenes.find((s) => s.shots.some((h) => h.id === section.shotId));
+              if (suya) setOpenScene(suya.id);
+              setSelShot(section.shotId);
+              requestAnimationFrame(() =>
+                document.getElementById(`toma-${section.shotId}`)
+                  ?.scrollIntoView({ block: "center", behavior: "smooth" }));
+            }}
+          />
+
+          {/* El mando, aquí dentro. Es donde hace falta: esta ventana se queda
+              fija mientras editas, así que colocar un efecto ya no obliga a
+              subir al reproductor de arriba ni a bajar luego a donde estabas.
+              Lleva los efectos del tramo que se está viendo —los de la escena y
+              los de la toma—, no los de la toma marcada en la lista. */}
+          {!!capasDelTramo.length && (
+            <MoverEfectos
+              capas={capasDelTramo}
+              onMover={moverVfx}
+              onResaltar={(id) => { setSelVfx(id); if (id) irAlEfecto(id); }}
+              compacto
+              etiqueta="Mover efectos de este tramo"
+              onAbierto={setMandoAbierto}
+            />
+          )}
         </div>
       )}
     </div>

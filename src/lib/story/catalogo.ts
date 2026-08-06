@@ -1,4 +1,5 @@
 import { VFX, SHAPE_LABEL, GROUP_LABEL, vfxDefaults } from "./vfx";
+import { catalogoMusicaIA, catalogoSonidosIA } from "./musica";
 
 // El catálogo de efectos, en un sitio solo: lo sirve /api/story/efectos y viaja
 // también dentro de los JSON que se exportan.
@@ -167,7 +168,7 @@ export function reglasSitios() {
 // Lo que hay que saber para que el montaje cuadre, más allá de los efectos.
 export function reglasMontaje() {
   return {
-    duracion: "Con autoDuration la toma dura lo que dure su narración; hasta que no se genera la voz, dura el mínimo (2 s). Con autoDuration en falso manda durationSec.",
+    duracion: "Con autoDuration la toma dura lo que dure su narración; hasta que no se genera la voz, dura el mínimo (2 s). Con autoDuration en falso manda durationSec y la toma NO crece: úsalo SOLO en tomas sin diálogo, porque si no la voz se pisa con la de la toma siguiente.",
     pausa: "holdSec casi siempre 0. gapSec por defecto 0; solo un respiro corto si la trama lo pide. Prioridad: narración fluida.",
     ritmo: "No inventes silencios. Entre frases gapSec 0 salvo drama puntual (≤0.25). Entre tomas de la misma escena: cut. Voces distintas = voices{} con ids OpenAI, no effect high/deep.",
     tomas: "Una escena es una imagen; sus tomas son encuadres distintos sobre ella. Para un primer plano, baja preset.w (1 = imagen entera, 0.35 = primer plano).",
@@ -200,9 +201,9 @@ export function recetasDeTomas() {
     },
     {
       nombre: "Golpe de tensión",
-      cuando: "Un susto, un impacto, una revelación.",
-      como: "Toma corta, acercamiento rápido y corte seco al entrar.",
-      toma: { autoDuration: false, durationSec: 1.2, preset: { kind: "in", cx: 0.5, cy: 0.45, w: 0.6, distance: 0.35 }, transition: "cut" },
+      cuando: "Un susto, un impacto, una revelación. SIN diálogo: es un plano mudo.",
+      como: "Toma corta, acercamiento rápido y corte seco al entrar. Deja dialogues vacío: con duración fija la toma NO crece para que quepa la voz y la narración se pisaría con la de la toma siguiente.",
+      toma: { autoDuration: false, durationSec: 1.2, dialogues: [], preset: { kind: "in", cx: 0.5, cy: 0.45, w: 0.6, distance: 0.35 }, transition: "cut" },
     },
     {
       nombre: "Recorrido por la imagen",
@@ -276,6 +277,7 @@ export function ejemploDeEscena() {
 // delante. Van explícitos porque avisar sale más barato que corregir.
 export function fallosTipicos() {
   return [
+    "Poner autoDuration:false en una toma CON diálogo: la toma no crece para que quepa la voz, y esa voz sigue sonando cuando ya empezó la de la toma siguiente. Las dos a la vez no se entienden. Duración fija solo en planos mudos.",
     "Copiar portal/fuego en cada toma: van en scenes[].vfx una sola vez.",
     "Poner un efecto por cada antorcha en vez de UN efecto con tres nodos.",
     "Usar «polvo» esperando que caiga: no cae, flota donde nace.",
@@ -300,6 +302,14 @@ export function referenciaParaIA() {
     ejemploDeEscena: ejemploDeEscena(),
     fallosTipicos: fallosTipicos(),
     efectos: catalogoEfectos(),
+    musica: {
+      comoSeUsa: "PREFERENTE: música por escena, no global. Se pone como sonido de la PRIMERA toma de la escena, en shots[].sfx con loop:true y audioId «lib:…», y se corta al empezar la escena siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. Así cada escena tiene la suya y se mueve con las tomas. Global (audioLayers, kind:\"music\", loop:true, startSec 0) SOLO para una cama única de todo el video, y NUNCA más de una. volume 0.08-0.15: la música se aparta sola mientras se narra, ese número es el de los silencios.",
+      pistas: catalogoMusicaIA(),
+    },
+    sonidos: {
+      comoSeUsa: "Van DENTRO de la toma, en shot.sfx. Hay dos clases y no se usan igual. GOLPE (1-6 s): {id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}; ponle el sonido al efecto que dibujas — si hay un rayo, que truene. BUCLE (los marcados como tal, 20-30 s): ambiente que suena bajo toda la escena, con loop:true y volume 0.08-0.15 (no más) porque suena bajo la voz toda la escena; además se aparta sola al narrar; arranca en la PRIMERA toma de la escena y se corta al empezar la siguiente con audioOverrides:[{sfxId,stop:true,volume:null}].",
+      sonidos: catalogoSonidosIA(),
+    },
   };
 }
 
@@ -313,6 +323,14 @@ export function referenciaCompacta() {
     ejemploDeEscena: ejemploDeEscena(),
     fallosTipicos: fallosTipicos(),
     efectos: catalogoCompacto(),
+    musica: {
+      comoSeUsa: "PREFERENTE: música por ESCENA. Va en shots[].sfx de la primera toma de la escena, con loop:true, audioId «lib:…», volume 0.08-0.15, y se corta al empezar la escena siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. Global (audioLayers kind:\"music\", loop:true, startSec 0) solo para una cama única de todo el video y NUNCA más de una: dos suenan +3 dB y tapan la voz. El volumen es el de los silencios; bajo la narración la música se aparta sola. Los archivos ya están en la app.",
+      pistas: catalogoMusicaIA(),
+    },
+    sonidos: {
+      comoSeUsa: "Dentro de la toma, en shot.sfx. GOLPE (1-6 s): {id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}; úsalos para que suene lo que dibujas (rayo → trueno, portal → portal). BUCLE (los marcados, 20-30 s): ambiente de la escena entera, loop:true y volume 0.08-0.15 porque suena bajo la voz toda la escena; además se aparta sola al narrar; empieza en la primera toma de la escena y se corta al cambiar de escena con audioOverrides:[{sfxId,stop:true,volume:null}].",
+      sonidos: catalogoSonidosIA(),
+    },
     ejemploDeEfecto: ejemploDe("fuego", "punto", "#ff8a3d"),
   };
 }

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { estadoCupoHistorias } from "@/lib/story/cupo";
 import { StoryApp } from "@/components/story/story-app";
+import { ComoFunciona } from "@/components/story/como-funciona";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,7 @@ export default async function StoryPage({
           </p>
         </div>
       </div>
+      <ComoFunciona />
       <StoryApp
         initialProjects={projects}
         initialCupo={cupo}
