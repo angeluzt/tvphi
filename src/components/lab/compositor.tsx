@@ -9,7 +9,7 @@ import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
-  planificarCola, interpolarTramo, escalaPerspectiva,
+  planificarCola, interpolarTramo, escalaPerspectiva, visibilidadPorAvance,
   type AnimParalaje, type MovCola, type PasoSecuencia, type VistaCamara, type EstadoCamara,
   type DesdePaso, type FadeAccion, type FadeCapa, type Tramo,
 } from "@/lib/lab/anim-paralaje";
@@ -220,7 +220,8 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
       ox: e.ox, oy: e.oy, zoom: e.zoom,
       zoomCapa: (depth) => escalaPerspectiva(e.avance, depth),
       panCapa: (depth) => depth * escalaPerspectiva(e.avance, depth),
-      alphaCapa: (_d, id) => (id && typeof e.alpha[id] === "number" ? e.alpha[id] : 1),
+      alphaCapa: (d, id) =>
+        (id && typeof e.alpha[id] === "number" ? e.alpha[id] : 1) * visibilidadPorAvance(e.avance, d),
       t: 1, fin: true,
     };
   }
@@ -239,7 +240,9 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     c.fillStyle = "#05070d";
     c.fillRect(0, 0, w, h);
 
-    const k = (fuerzaRef.current / 100) * 0.08;
+    // Mismo orden de magnitud que el paneo de la cola: con 0,08 los presets
+    // sueltos se movían 40 px en cuatro segundos y parecían estropeados.
+    const k = (fuerzaRef.current / 100) * 0.32;
     let vista: VistaCamara = {
       ox: 0, oy: 0, zoom: 1,
       zoomCapa: () => 1, panCapa: (d) => d, alphaCapa: () => 1, t: 0, fin: false,
@@ -284,8 +287,10 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     } else if (moviendoRef.current) {
       if (encima.current) {
         vista = {
-          ox: raton.current.x * k,
-          oy: raton.current.y * k * 0.5,
+          // Con el ratón encima, la mitad: es para curiosear la escena, no un
+          // travelling, y a tamaño completo marea.
+          ox: raton.current.x * k * 0.5,
+          oy: raton.current.y * k * 0.25,
           zoom: 1, zoomCapa: () => 1, panCapa: (d) => d,
           alphaCapa: () => 1, t: 0, fin: false,
         };
@@ -301,12 +306,19 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
     for (const capa of capas) {
       if (!capa.visible) continue;
       let e = capa.escala * vista.zoom * vista.zoomCapa(capa.depth);
-      if (capa.id === idFondo) e = Math.max(1, e);
-      const dw = w * e, dh = h * e;
       // El paneo también va con la perspectiva: de cerca, el mismo movimiento
       // de cámara barre mucho más cuadro. Sin esto, al acercarse el paralaje se
       // queda corto y la escena vuelve a parecer plana.
       const pan = vista.panCapa(capa.depth);
+      if (capa.id === idFondo) {
+        // El fondo es el único opaco: si se desplaza o se queda por debajo del
+        // cuadro, asoma el negro por el canto. Se le da justo el margen que
+        // necesita para el paneo de este fotograma —(e−1)/2 tiene que cubrir el
+        // desplazamiento— así que ni se ve el negro ni se agranda de más.
+        const holgura = 1 + 2 * Math.max(Math.abs(vista.ox * pan), Math.abs(vista.oy * pan));
+        e = Math.max(e, holgura);
+      }
+      const dw = w * e, dh = h * e;
       c.save();
       c.globalAlpha = capa.opacidad * vista.alphaCapa(capa.depth, capa.id);
       c.drawImage(
@@ -579,30 +591,16 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                   ))}
                 </select>
               </label>
-              <label className="text-[11px] text-muted">
-                Segundos
-                <input
-                  type="number" min={0.8} max={30} step={0.5} value={segsBorrador}
-                  onChange={(e) => setBorrador((b) => ({
-                    ...b,
-                    durMs: Math.round(Math.max(0.8, Number(e.target.value) || 4) * 1000),
-                  }))}
-                  className="input mt-0.5 w-20 py-1 text-[11px] tabular-nums"
-                  disabled={enSecuencia}
-                />
-              </label>
-              <label className="text-[11px] text-muted">
-                Distancia
-                <input
-                  type="number" min={5} max={100} step={5} value={borrador.distancia}
-                  onChange={(e) => setBorrador((b) => ({
-                    ...b,
-                    distancia: Math.max(5, Math.min(100, Number(e.target.value) || 55)),
-                  }))}
-                  className="input mt-0.5 w-20 py-1 text-[11px] tabular-nums"
-                  disabled={enSecuencia}
-                />
-              </label>
+              <Num
+                etiqueta="Segundos" valor={segsBorrador} min={0.8} max={30} paso={0.5}
+                sufijo="s" disabled={enSecuencia}
+                onCambio={(v) => setBorrador((b) => ({ ...b, durMs: Math.round(v * 1000) }))}
+              />
+              <Num
+                etiqueta="Distancia" valor={borrador.distancia} min={5} max={100} paso={5}
+                sufijo="%" disabled={enSecuencia}
+                onCambio={(v) => setBorrador((b) => ({ ...b, distancia: Math.round(v) }))}
+              />
             </div>
             {pistaMov && <p className="text-[10px] text-muted">{pistaMov}</p>}
 
@@ -753,26 +751,16 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
                         >
                           {MOV_COLA.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                         </select>
-                        <label className="flex items-center gap-1 text-[10px]">
-                          Dist
-                          <input
-                            type="number" min={5} max={100} step={5} value={p.distancia}
-                            onChange={(e) => updPaso(p.id, {
-                              distancia: Math.max(5, Math.min(100, Number(e.target.value) || 55)),
-                            })}
-                            className="input w-14 py-0.5 text-[10px] tabular-nums"
-                          />
-                        </label>
-                        <label className="flex items-center gap-1 text-[10px]">
-                          s
-                          <input
-                            type="number" min={0.8} max={30} step={0.5} value={p.durMs / 1000}
-                            onChange={(e) => updPaso(p.id, {
-                              durMs: Math.round(Math.max(0.8, Number(e.target.value) || 4) * 1000),
-                            })}
-                            className="input w-14 py-0.5 text-[10px] tabular-nums"
-                          />
-                        </label>
+                        <Num
+                          etiqueta="Dist" valor={p.distancia} min={5} max={100} paso={5}
+                          sufijo="%" ancho="w-12"
+                          onCambio={(v) => updPaso(p.id, { distancia: Math.round(v) })}
+                        />
+                        <Num
+                          etiqueta="Dura" valor={p.durMs / 1000} min={0.8} max={30} paso={0.5}
+                          sufijo="s" ancho="w-12"
+                          onCambio={(v) => updPaso(p.id, { durMs: Math.round(v * 1000) })}
+                        />
                         <select
                           value={p.desde}
                           onChange={(e) => updPaso(p.id, { desde: e.target.value as DesdePaso })}
@@ -823,18 +811,63 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   );
 }
 
-function Num({ etiqueta, valor, min, max, paso, onCambio, disabled }: {
+/**
+ * Campo numérico que se deja escribir.
+ *
+ * El de antes recortaba al rango EN CADA TECLA sobre un valor controlado: al
+ * borrarlo saltaba solo a un número, escribir «12» pasaba por «1» y se comía el
+ * primer dígito, y no había manera de dejarlo vacío para teclear otra cosa.
+ * Aquí se guarda lo tecleado tal cual mientras se escribe y solo se recorta al
+ * salir del campo, que es cuando ya se sabe lo que quería poner. Y con ± para
+ * no tener que teclear.
+ */
+function Num({ etiqueta, valor, min, max, paso, onCambio, disabled, sufijo, ancho = "w-20" }: {
   etiqueta: string; valor: number; min: number; max: number; paso: number;
-  onCambio: (v: number) => void; disabled?: boolean;
+  onCambio: (v: number) => void; disabled?: boolean; sufijo?: string; ancho?: string;
 }) {
+  const [texto, setTexto] = useState<string | null>(null);
+  const acotar = (v: number) => Math.max(min, Math.min(max, v));
+  // Decimales según el paso, para que 0.5 no acabe en 4.300000000000001.
+  const limpio = (v: number) => String(Number(v.toFixed(paso < 1 ? 2 : 0)));
+  const empujar = (d: number) => { setTexto(null); onCambio(acotar(valor + d * paso)); };
+
   return (
-    <label className="text-[11px] text-muted">
+    <label className={`text-[11px] text-muted ${disabled ? "opacity-50" : ""}`}>
       {etiqueta}
-      <input
-        type="number" min={min} max={max} step={paso} value={valor} disabled={disabled}
-        onChange={(e) => onCambio(Number(e.target.value))}
-        className="input mt-0.5 w-24 py-1 text-[11px] tabular-nums"
-      />
+      <span className="mt-0.5 flex items-center gap-0.5">
+        <button
+          type="button" disabled={disabled || valor <= min} onClick={() => empujar(-1)}
+          className="rounded border border-border px-1.5 py-1 leading-none hover:bg-surface-2 disabled:opacity-30"
+          aria-label={`Bajar ${etiqueta}`}
+        >−</button>
+        <input
+          type="text" inputMode="decimal" disabled={disabled}
+          value={texto ?? limpio(valor)}
+          onChange={(e) => {
+            const t = e.target.value;
+            setTexto(t);
+            // Se avisa en cuanto lo escrito es un número válido, para que la
+            // vista previa responda mientras se teclea; lo que no vale se deja
+            // en pantalla sin tocar el valor.
+            const n = Number(t.replace(",", "."));
+            if (t.trim() !== "" && Number.isFinite(n)) onCambio(acotar(n));
+          }}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={() => setTexto(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { setTexto(null); e.currentTarget.blur(); }
+            if (e.key === "ArrowUp") { e.preventDefault(); empujar(1); }
+            if (e.key === "ArrowDown") { e.preventDefault(); empujar(-1); }
+          }}
+          className={`input ${ancho} py-1 text-center text-[11px] tabular-nums`}
+        />
+        <button
+          type="button" disabled={disabled || valor >= max} onClick={() => empujar(1)}
+          className="rounded border border-border px-1.5 py-1 leading-none hover:bg-surface-2 disabled:opacity-30"
+          aria-label={`Subir ${etiqueta}`}
+        >+</button>
+        {sufijo && <span className="ml-0.5 text-[10px] opacity-70">{sufijo}</span>}
+      </span>
     </label>
   );
 }
