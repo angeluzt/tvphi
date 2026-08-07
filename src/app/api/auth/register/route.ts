@@ -5,6 +5,33 @@ import { createSession, hashPassword } from "@/lib/auth";
 import { slugify } from "@/lib/utils";
 import { defaultScenes } from "@/lib/scene";
 import { enviarVerificacion } from "@/lib/email-verify";
+import { comprobarCaptcha } from "@/lib/captcha";
+import { pasarse, origen } from "@/lib/rate-limit";
+
+// Abrir cuenta.
+//
+// TRES CAPAS, y ninguna sirve sola:
+//
+// 1. Tope por IP. Es la única que no depende de nadie de fuera y la única que
+//    estaba faltando: sin ella un guion abría cuentas tan rápido como aguantara
+//    el servidor.
+// 2. Captcha (Turnstile), si está configurado. Convierte «gratis e infinito» en
+//    «cuesta algo por cuenta».
+// 3. Confirmar el correo, que ya estaba: hace falta un buzón de verdad para
+//    tocar la IA, que es lo único que gasta dinero.
+
+/**
+ * Cuántas cuentas puede abrir una misma salida a internet.
+ *
+ * Va holgado a propósito: una casa, una oficina, un colegio o una operadora
+ * móvil comparten IP, y apretarlo convierte la defensa en un bloqueo a gente
+ * que no ha hecho nada. Cinco en una hora no molesta a nadie normal y le rompe
+ * el ritmo a un guion, que es de lo que se trata.
+ */
+const TOPE_HORA = 5;
+const TOPE_DIA = 20;
+const HORA = 60 * 60 * 1000;
+const DIA = 24 * HORA;
 
 const schema = z.object({
   email: z.string().email("Ese email no parece válido."),
@@ -22,14 +49,33 @@ const schema = z.object({
   password: z.string()
     .min(6, "La contraseña necesita al menos 6 caracteres.")
     .max(100, "La contraseña es demasiado larga."),
+  /** El token de Turnstile. Si el captcha está apagado, no se mira. */
+  captcha: z.string().max(4000).optional(),
 });
 
 export async function POST(req: Request) {
+  // El tope va ANTES de leer el cuerpo y antes de tocar la base: lo que se
+  // quiere frenar es el volumen, y hacer trabajo por cada intento es
+  // exactamente lo que busca quien manda muchos.
+  const ip = origen(req);
+  if (pasarse(`reg:h:${ip}`, TOPE_HORA, HORA) || pasarse(`reg:d:${ip}`, TOPE_DIA, DIA)) {
+    return NextResponse.json(
+      { error: "Se han abierto varias cuentas desde aquí. Prueba dentro de un rato." },
+      { status: 429 },
+    );
+  }
+
   const body = await req.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, { status: 400 });
   }
+
+  const captcha = await comprobarCaptcha(parsed.data.captcha, ip);
+  if (!captcha.ok) {
+    return NextResponse.json({ error: captcha.error, captcha: true }, { status: 400 });
+  }
+
   const { email, username, password } = parsed.data;
   const displayName = parsed.data.displayName?.trim() || username;
   const slug = slugify(username);

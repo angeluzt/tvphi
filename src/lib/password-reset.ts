@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { env } from "@/lib/env";
 import { enviarCorreoReset } from "@/lib/email";
+import { pasarse } from "@/lib/rate-limit";
 
 const TTL_MS = 60 * 60 * 1000; // 1 hora
 const MSG_OK =
@@ -14,14 +15,9 @@ function hashToken(raw: string) {
 
 // ── Tope de peticiones ──────────────────────────────────────────────────────
 //
-// Se lleva EN MEMORIA y no en la base de datos a propósito. Contando los
-// tokens guardados solo se frenaría a las cuentas que existen, y entonces el
-// 429 diría «esta cuenta existe» a quien fuera probando direcciones. Aquí se
-// cuenta la dirección pedida, exista o no.
-//
-// Se pierde al reiniciar el servidor, y con varias instancias cada una lleva
-// la suya. Aun así frena lo que hay que frenar: llenarle el buzón a alguien a
-// base de pedir enlaces, y gastar el cupo de envíos.
+// Se cuenta la DIRECCIÓN PEDIDA, exista o no la cuenta. Contando los tokens
+// guardados solo se frenaría a las cuentas que existen, y entonces el 429
+// diría «esta cuenta existe» a quien fuera probando direcciones.
 
 const VENTANA_MS = 15 * 60 * 1000;
 // Tres por dirección: es el que de verdad protege el buzón de una persona.
@@ -31,30 +27,11 @@ const TOPE_POR_CORREO = 3;
 // convierte la protección en un bloqueo a gente que no ha hecho nada. Aquí solo
 // está para cortar una avalancha contra direcciones distintas.
 const TOPE_POR_ORIGEN = 60;
-const registro = new Map<string, number[]>();
-
-function apuntar(clave: string, tope: number, ahora: number) {
-  const previos = (registro.get(clave) ?? []).filter((t) => ahora - t < VENTANA_MS);
-  if (previos.length >= tope) {
-    registro.set(clave, previos);
-    return true;
-  }
-  previos.push(ahora);
-  registro.set(clave, previos);
-  return false;
-}
 
 /** true si hay que cortar. Cuenta por dirección y por quien la pide. */
 export async function demasiadasPeticiones(email: string, origen?: string | null) {
-  const ahora = Date.now();
-  // Limpieza perezosa, para que el mapa no crezca sin fin.
-  if (registro.size > 5000) {
-    for (const [k, v] of registro) {
-      if (!v.some((t) => ahora - t < VENTANA_MS)) registro.delete(k);
-    }
-  }
-  const porCorreo = apuntar(`c:${email.trim().toLowerCase()}`, TOPE_POR_CORREO, ahora);
-  const porOrigen = origen ? apuntar(`o:${origen}`, TOPE_POR_ORIGEN, ahora) : false;
+  const porCorreo = pasarse(`reset:c:${email.trim().toLowerCase()}`, TOPE_POR_CORREO, VENTANA_MS);
+  const porOrigen = origen ? pasarse(`reset:o:${origen}`, TOPE_POR_ORIGEN, VENTANA_MS) : false;
   return porCorreo || porOrigen;
 }
 
