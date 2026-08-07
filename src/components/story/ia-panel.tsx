@@ -45,6 +45,10 @@ export function IaPanel({
       .then((r) => r.json())
       .then((j) => {
         setEstado(j);
+        // El cupo de aquí es el de AHORA. El que llegó por propiedades se pintó
+        // al cargar la página, y si el admin sube el límite mientras tanto,
+        // quien estaba bloqueado se quedaba viendo el número viejo.
+        if (j?.cupo) onCupo?.(j.cupo);
         if (j?.models) {
           setMods((m) => ({
             ...m,
@@ -167,9 +171,21 @@ export function IaPanel({
               onChange={(e) => setEscenas(Number(e.target.value))} className="mt-1 w-full" />
           </label>
 
+          {/*
+            El botón NO se apaga por el cupo, a propósito.
+
+            Antes sí, y dejaba la pantalla muerta: al agotarlo no se podía ni
+            intentar, y como el cupo solo se refrescaba al responder una
+            petición, no había forma de enterarse de que el admin había subido
+            el límite. Solo se salía recargando la página entera, y nada lo
+            decía.
+
+            Quien manda es el servidor, que corta ANTES de llamar a OpenAI, así
+            que un intento de más no cuesta nada y además trae el número bueno.
+          */}
           <button
             onClick={generar}
-            disabled={!estado?.configurada || sinCupoIa || prompt.trim().length < 4 || ocupado}
+            disabled={!estado?.configurada || prompt.trim().length < 4 || ocupado}
             className="btn-brand w-full text-sm disabled:opacity-40"
           >
             {ocupado ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
