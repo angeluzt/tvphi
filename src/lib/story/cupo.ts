@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 
 const VENTANA_MS = 24 * 60 * 60 * 1000;
 const CLAVE_USOS = "usosIaCapitulo";
+const CLAVE_USOS_IMG = "usosIaImagen";
 const CLAVE_LIMITE = "story_daily_limit";
 const LIMITE_DEFECTO = 3;
 const LIMITE_MIN = 1;
@@ -146,4 +147,66 @@ export async function cupoAgotado(userId: string, email: string): Promise<string
   const cupo = await estadoCupoHistorias(userId, email);
   if (cupo.exento || cupo.quedan > 0) return null;
   return mensajeCupoAgotado(cupo);
+}
+
+
+// ── Cupo de IMÁGENES ────────────────────────────────────────────────────────
+//
+// Aparte del de historias porque se agotan a ritmos muy distintos: una historia
+// son varias imágenes, y las imágenes son el 80% de la factura. Mismo mecanismo
+// —ventana móvil de 24 h guardada en AiCredential— para no inventar otro.
+
+import { leerAjustes } from "@/lib/story/ajustes";
+
+function usosImagen(models: unknown): Date[] {
+  const raw = (models as Record<string, unknown> | null)?.[CLAVE_USOS_IMG];
+  if (!Array.isArray(raw)) return [];
+  const desde = Date.now() - VENTANA_MS;
+  return raw
+    .map((x) => new Date(String(x)))
+    .filter((d) => !Number.isNaN(d.getTime()) && d.getTime() >= desde)
+    .sort((a, b) => a.getTime() - b.getTime());
+}
+
+export async function estadoCupoImagenes(userId: string, email: string): Promise<CupoHistorias> {
+  const { imagenesPorDia: lim } = await leerAjustes();
+  if (exento(email)) {
+    return { exento: true, usadas: 0, limite: lim, quedan: lim, retryAt: null };
+  }
+  const cred = await prisma.aiCredential.findUnique({
+    where: { userId },
+    select: { models: true },
+  });
+  const recientes = usosImagen(cred?.models);
+  const usadas = recientes.length;
+  const quedan = Math.max(0, lim - usadas);
+  const retryAt =
+    usadas >= lim && recientes[0]
+      ? new Date(recientes[0].getTime() + VENTANA_MS).toISOString()
+      : null;
+  return { exento: false, usadas, limite: lim, quedan, retryAt };
+}
+
+/** Anota una imagen generada. Solo se llama si de verdad salió. */
+export async function registrarUsoIaImagen(userId: string) {
+  const cred = await prisma.aiCredential.findUnique({
+    where: { userId },
+    select: { models: true },
+  });
+  const models = { ...((cred?.models as object) ?? {}) } as Record<string, unknown>;
+  const vivos = usosImagen(models).map((d) => d.toISOString());
+  vivos.push(new Date().toISOString());
+  models[CLAVE_USOS_IMG] = vivos;
+  await prisma.aiCredential.upsert({
+    where: { userId },
+    create: { userId, provider: "openai", encrypted: "env", hint: "servidor", models: models as object },
+    update: { models: models as object },
+  });
+}
+
+export function mensajeCupoImagenes(c: CupoHistorias): string {
+  const cuando = c.retryAt
+    ? new Date(c.retryAt).toLocaleString("es", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })
+    : "más tarde";
+  return `Se acabaron tus ${c.limite} imágenes con IA de hoy. Vuelve ${cuando}.`;
 }

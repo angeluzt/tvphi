@@ -53,6 +53,8 @@ export interface ConceptoGasto {
 export interface Gasto {
   desde: string;
   hasta: string;
+  /** El huso con el que se han contado los días. */
+  huso: string;
   totalUsd: number;
   hoyUsd: number;
   mesUsd: number;
@@ -77,6 +79,22 @@ type Cubo = {
  * las esperadas, es preferible un número incompleto y avisado que un servidor
  * dando vueltas.
  */
+/**
+ * Huso con el que se cuentan los días. OpenAI agrupa en UTC; si se compara
+ * contra el «hoy» de UTC, alguien en México ve «Hoy: $0» toda la tarde porque
+ * allí aún es ayer. Con cubos de una hora se puede repartir a su día real.
+ */
+export function husoPanel(): string {
+  return (process.env["APP_TIMEZONE"] ?? "").trim() || "America/Mexico_City";
+}
+
+/** AAAA-MM-DD de un instante, en el huso del panel. */
+function diaLocal(ms: number, huso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: huso, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(ms));
+}
+
 export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
   const key = claveAdminOpenAi();
   if (!key) return { error: SIN_CLAVE_ADMIN };
@@ -87,11 +105,15 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
 
   const cubos: Cubo[] = [];
   let pagina: string | null = null;
-  for (let vuelta = 0; vuelta < 12; vuelta++) {
+  // Más vueltas: con cubos de una hora hay 24 veces más que con días.
+  for (let vuelta = 0; vuelta < 40; vuelta++) {
     const u = new URL(`${BASE()}/v1/organization/costs`);
     u.searchParams.set("start_time", String(inicio));
-    u.searchParams.set("bucket_width", "1d");
-    u.searchParams.set("limit", "31");
+    // Cubos de UNA HORA, no de un día: es lo único que permite repartir el
+    // gasto al día LOCAL. Con cubos diarios (UTC) el «hoy» de México siempre
+    // salía mal, que es justo el fallo que tenía este panel.
+    u.searchParams.set("bucket_width", "1h");
+    u.searchParams.set("limit", "168");
     u.searchParams.append("group_by", "line_item");
     if (pagina) u.searchParams.set("page", pagina);
 
@@ -128,8 +150,9 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
   let moneda = "usd";
   let total = 0;
 
+  const huso = husoPanel();
   for (const c of cubos) {
-    const dia = new Date(c.start_time * 1000).toISOString().slice(0, 10);
+    const dia = diaLocal(c.start_time * 1000, huso);
     for (const res of c.results ?? []) {
       const v = Number(res?.amount?.value ?? 0);
       if (!Number.isFinite(v) || v === 0) continue;
@@ -141,7 +164,7 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
     }
   }
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = diaLocal(Date.now(), huso);
   const mes = hoy.slice(0, 7);
   let hoyUsd = 0, mesUsd = 0;
   for (const [dia, v] of porDiaMap) {
@@ -151,8 +174,9 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
 
   const presupuesto = presupuestoMensual();
   return {
-    desde: desde.toISOString().slice(0, 10),
+    desde: diaLocal(desde.getTime(), huso),
     hasta: hoy,
+    huso,
     totalUsd: redondea(total),
     hoyUsd: redondea(hoyUsd),
     mesUsd: redondea(mesUsd),

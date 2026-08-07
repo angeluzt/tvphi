@@ -169,6 +169,8 @@ export function StoryApp({
   const [verModelosVoz, setVerModelosVoz] = useState(false);
   // Con clave y modelo de imagen se pueden dibujar las escenas que falten.
   const [iaImagen, setIaImagen] = useState(false);
+  /** Calidad con la que se pedirán las imágenes. Solo el admin puede moverla. */
+  const [calidadImg, setCalidadImg] = useState<"low" | "medium" | "high">("low");
   // Con clave puesta se puede pedir otra versión de una frase.
   const [iaTexto, setIaTexto] = useState(false);
   // Solo admin ve/elige modelos de IA.
@@ -194,12 +196,20 @@ export function StoryApp({
 
   // La clave/modelos se guardan en otro panel; si solo se leían al montar,
   // el editor se quedaba sin «Dibujar» aunque la DB ya tuviera gpt-image-2.
-  function aplicarCapacidadesIa(j: { configurada?: boolean; admin?: boolean; models?: { imagen?: string; voz?: string; texto?: string } } | null) {
+  function aplicarCapacidadesIa(j: {
+    configurada?: boolean; admin?: boolean;
+    models?: { imagen?: string; voz?: string; texto?: string };
+    puede?: { vozDePago?: boolean; imagenes?: boolean; elegirCalidad?: boolean };
+    calidadImagen?: "low" | "medium" | "high";
+  } | null) {
     setEsAdminIa(!!j?.admin);
     const ok = !!j?.configurada;
-    setVozOpenAi(ok);
-    setIaImagen(ok);
+    // «puede» ya viene cruzado con los ajustes del panel: si la voz de pago
+    // está apagada, ni se ofrece y se narra con la del navegador.
+    setVozOpenAi(j?.puede ? !!j.puede.vozDePago : ok);
+    setIaImagen(j?.puede ? !!j.puede.imagenes : ok);
     setIaTexto(ok);
+    if (j?.calidadImagen) setCalidadImg(j.calidadImagen);
   }
   async function refrescarCapacidadesIa() {
     try {
@@ -1146,6 +1156,9 @@ export function StoryApp({
         body: JSON.stringify({
           prompt: descripcion,
           formato: projRef.current.aspect,
+          // Solo se le hace caso al admin; al resto el servidor le pone la del
+          // panel pase lo que pase.
+          calidad: calidadImg,
           ...(referenciaVfx ? { referenciaVfx } : {}),
         }),
       });
@@ -2308,7 +2321,24 @@ export function StoryApp({
                           ),
                         }))}
                       />
-                      <div className="mt-2 flex flex-wrap gap-1.5">
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {/* La calidad solo la elige el admin: para el resto la
+                            pone el servidor y este selector no aparece. */}
+                        {iaImagen && esAdminIa && (
+                          <label className="flex items-center gap-1 text-[10px] text-muted">
+                            Calidad
+                            <select
+                              value={calidadImg}
+                              onChange={(e) => setCalidadImg(e.target.value as typeof calidadImg)}
+                              className="input py-0.5 text-[10px]"
+                              title="Baja $0.005 · Media $0.041 · Alta $0.165 por imagen"
+                            >
+                              <option value="low">baja · $0.005</option>
+                              <option value="medium">media · $0.041</option>
+                              <option value="high">alta · $0.165</option>
+                            </select>
+                          </label>
+                        )}
                         {iaImagen && (
                           <>
                             <button

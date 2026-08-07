@@ -10,7 +10,7 @@ import { DollarSign, Loader2, RefreshCw, Copy, Check, AlertTriangle, Info } from
 // que la referencia es ese presupuesto y no la cuenta de OpenAI.
 
 interface Gasto {
-  desde: string; hasta: string;
+  desde: string; hasta: string; huso: string;
   totalUsd: number; hoyUsd: number; mesUsd: number; moneda: string;
   porDia: { dia: string; usd: number }[];
   porConcepto: { concepto: string; usd: number }[];
@@ -85,7 +85,7 @@ export function GastoOpenAi() {
       {dato && (
         <>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Cifra etiqueta="Hoy" valor={usd(dato.hoyUsd)} />
+            <Cifra etiqueta={`Hoy (${(dato.huso ?? "").split("/").pop()?.replace("_", " ") || "local"})`} valor={usd(dato.hoyUsd)} />
             <Cifra etiqueta="Este mes" valor={usd(dato.mesUsd)} />
             <Cifra etiqueta={`Últimos ${dias} días`} valor={usd(dato.totalUsd)} />
             <Cifra

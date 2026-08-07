@@ -8,6 +8,8 @@ import { esAdminHistorias } from "@/lib/story/cupo";
 import { cargarAdminStats, type AdminStats } from "@/lib/admin/stats";
 import { CupoIaForm } from "@/components/admin/cupo-ia-form";
 import { GastoOpenAi } from "@/components/admin/gasto-openai";
+import { AjustesIaForm } from "@/components/admin/ajustes-ia";
+import { leerAjustes } from "@/lib/story/ajustes";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +62,8 @@ export default async function AdminPage() {
   if (!user) redirect("/auth/login");
   if (!esAdminHistorias(user.email)) redirect("/");
 
+  const ajustes = await leerAjustes();
+
   let stats: AdminStats;
   try {
     stats = await cargarAdminStats();
@@ -86,6 +90,10 @@ export default async function AdminPage() {
 
       <Seccion titulo="Lo que se está gastando">
         <GastoOpenAi />
+      </Seccion>
+
+      <Seccion titulo="Control del gasto">
+        <AjustesIaForm inicial={ajustes} />
       </Seccion>
 
       <Seccion titulo="Cupo IA (usuarios normales)">

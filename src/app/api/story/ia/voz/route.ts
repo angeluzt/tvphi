@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
 import { esAdminHistorias, cupoAgotado } from "@/lib/story/cupo";
+import { leerAjustes } from "@/lib/story/ajustes";
 
 // Narrar un texto con la voz de OpenAI.
 //
@@ -40,6 +41,18 @@ function aceptaInstrucciones(modelo: string) {
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+
+  // La voz de pago se enciende desde /admin. Apagada, el usuario normal narra
+  // con el modelo del navegador: suena peor pero no cuesta nada, y el editor
+  // sigue entero. Se contesta con «sinCupo» a propósito, que es la señal que el
+  // cliente ya sabe interpretar para caer solo a la voz gratis.
+  const ajustes = await leerAjustes();
+  if (!ajustes.vozDePago && !esAdminHistorias(user.email)) {
+    return NextResponse.json({
+      error: "La narración con voz de pago está apagada. Se usa la del navegador.",
+      sinCupo: true, vozApagada: true,
+    }, { status: 429 });
+  }
 
   // Sin cupo no se gasta ni un token del servidor. El editor sigue entero y la
   // voz del navegador, que es gratis, sigue funcionando.
