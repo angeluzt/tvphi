@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
-import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
+import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, motivoFallo } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
 import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { leerAjustes } from "@/lib/story/ajustes";
@@ -90,6 +90,7 @@ export async function POST(req: Request) {
   try {
     const r = deVoz
       ? await fetch(OPENAI("/v1/audio/speech"), {
+        signal: espera("voz"),
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
           body: JSON.stringify({
@@ -101,6 +102,7 @@ export async function POST(req: Request) {
           }),
         })
       : await fetch(OPENAI("/v1/chat/completions"), {
+        signal: espera("voz"),
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
           body: JSON.stringify({
@@ -172,6 +174,6 @@ export async function POST(req: Request) {
     // no añada nada de su cosecha.
     return NextResponse.json({ ok: true, formato: "wav", audio, via: "chat" });
   } catch (e: any) {
-    return NextResponse.json({ error: "No se pudo hablar con OpenAI: " + (e?.message ?? "") }, { status: 502 });
+    return NextResponse.json({ error: motivoFallo(e, "voz") }, { status: 502 });
   }
 }

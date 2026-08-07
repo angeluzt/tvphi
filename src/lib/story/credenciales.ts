@@ -107,3 +107,28 @@ export async function guardarModelos(
 
 export const OPENAI = (ruta: string) =>
   `${(process.env["OPENAI_BASE_URL"] || "https://api.openai.com").replace(/\/+$/, "")}${ruta}`;
+
+/**
+ * Cuánto se espera a OpenAI antes de rendirse.
+ *
+ * Existe para GANARLE la carrera al proxy. Sin límite, una petición lenta
+ * —dibujar una imagen tarda lo suyo— se alarga hasta que el borde de Railway
+ * corta por su cuenta, y lo que llega al navegador es una PÁGINA de error, no
+ * JSON. El editor entonces solo sabía decir «Unexpected token '<'», que no
+ * ayuda a nadie. Cortando aquí primero, siempre sale un mensaje que se entiende.
+ *
+ * Las imágenes van más holgadas porque de verdad tardan más.
+ */
+export const ESPERA_MS = { texto: 90_000, imagen: 100_000, voz: 90_000 } as const;
+
+/** El `signal` para un fetch a OpenAI, con su límite de tiempo. */
+export const espera = (tipo: keyof typeof ESPERA_MS) => AbortSignal.timeout(ESPERA_MS[tipo]);
+
+/** Traduce un fallo de red o un tiempo agotado a algo legible. */
+export function motivoFallo(e: any, tipo: keyof typeof ESPERA_MS): string {
+  if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+    return `OpenAI tardó más de ${Math.round(ESPERA_MS[tipo] / 1000)} s y se canceló. `
+      + "Suele ser un pico de carga suyo: vuelve a intentarlo.";
+  }
+  return "No se pudo hablar con OpenAI: " + (e?.message ?? "");
+}

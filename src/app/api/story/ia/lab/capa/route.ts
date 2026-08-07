@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
-import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
+import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, motivoFallo } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
 import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { CROMA } from "@/lib/lab/quitar-fondo";
@@ -173,6 +173,7 @@ export async function POST(req: Request) {
     return form;
   };
   const pedir = (croma: boolean) => fetch(OPENAI("/v1/images/edits"), {
+    signal: espera("imagen"),
     method: "POST",
     headers: { Authorization: `Bearer ${key}` },
     body: armar(croma),
@@ -215,6 +216,6 @@ export async function POST(req: Request) {
     // avisar de una vez en vez de dejarlo en un «se le quitó el color» suelto.
     return NextResponse.json({ ok: true, imagen: b64, croma: CROMA, porCroma });
   } catch (e: any) {
-    return NextResponse.json({ error: "No se pudo hablar con OpenAI: " + (e?.message ?? "") }, { status: 502 });
+    return NextResponse.json({ error: motivoFallo(e, "imagen") }, { status: 502 });
   }
 }

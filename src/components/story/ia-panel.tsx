@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Sparkles, Loader2, ChevronDown } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
+import { pedirJsonCrudo } from "@/lib/pedir-json";
 import { ASPECTS, type Aspect } from "@/lib/story/model";
 import type { CupoHistorias } from "./story-app";
 
@@ -66,7 +67,7 @@ export function IaPanel({
   async function generar() {
     setOcupado(true); setAviso(null);
     try {
-      const r = await fetch("/api/story/ia/capitulo", {
+      const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/capitulo", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
@@ -76,7 +77,6 @@ export function IaPanel({
           modelo: esAdmin ? (mods.texto.trim() || undefined) : undefined,
         }),
       });
-      const j = await r.json();
       if (j.cupo) onCupo?.(j.cupo);
       if (!r.ok) throw new Error(j.error || "Error");
       onGenerado(j.name, j.project);
