@@ -5,7 +5,16 @@
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
-  appUrl: process.env.APP_URL ?? "http://localhost:3000",
+  /**
+   * La URL pública. Va con corchetes y como getter por lo mismo que la clave de
+   * OpenAI: con `process.env.APP_URL` el valor se fija al compilar, así que si
+   * no estaba puesta en el build quedaba clavado `localhost:3000` — y el enlace
+   * de restablecer contraseña llegaba al correo apuntando a la máquina de
+   * quien lo abría, o sea a ninguna parte.
+   */
+  get appUrl() {
+    return (process.env["APP_URL"] ?? "").trim() || "http://localhost:3000";
+  },
   port: Number(process.env.PORT ?? 3000),
   authSecret: process.env.AUTH_SECRET ?? "dev-secret-change-me-please-0000000000000000",
   databaseUrl: process.env.DATABASE_URL ?? "",
