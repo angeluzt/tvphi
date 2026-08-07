@@ -7,6 +7,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { esAdminHistorias } from "@/lib/story/cupo";
 import { cargarAdminStats, type AdminStats } from "@/lib/admin/stats";
 import { CupoIaForm } from "@/components/admin/cupo-ia-form";
+import { GastoOpenAi } from "@/components/admin/gasto-openai";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +83,10 @@ export default async function AdminPage() {
           Números generales · actualizado {fmtFecha(stats.generadoEn)}.
         </p>
       </div>
+
+      <Seccion titulo="Lo que se está gastando">
+        <GastoOpenAi />
+      </Seccion>
 
       <Seccion titulo="Cupo IA (usuarios normales)">
         <CupoIaForm inicial={stats.cupoIa.limite24h} />
