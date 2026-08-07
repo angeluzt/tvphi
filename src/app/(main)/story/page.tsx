@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
-import { estadoCupoHistorias } from "@/lib/story/cupo";
+import { estadoCupoHistorias, esAdminHistorias } from "@/lib/story/cupo";
 import { StoryApp } from "@/components/story/story-app";
 import { AvisoVerificar } from "@/components/auth/aviso-verificar";
 
@@ -42,7 +42,12 @@ export default async function StoryPage({
           </p>
         </div>
       </div>
-      {!user.emailVerifiedAt && <AvisoVerificar email={user.email} />}
+      {/* Al admin no se le pide confirmar en ninguna de las rutas que gastan,
+          así que tampoco aquí: el cartel le decía que confirmara para poder
+          usar la IA que ya le funcionaba. */}
+      {!user.emailVerifiedAt && !esAdminHistorias(user.email) && (
+        <AvisoVerificar email={user.email} />
+      )}
       {/* «Cómo funciona» vive dentro de StoryHome, debajo de crear con IA: en
           el editor no pinta nada y aquí salía también mientras editabas. */}
       <StoryApp
