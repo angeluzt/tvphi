@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
-import { claveOpenAi, OPENAI, IA_NO_DISPONIBLE, preferenciasModelos } from "@/lib/story/credenciales";
+import { claveOpenAi, OPENAI, IA_NO_DISPONIBLE, preferenciasModelos, espera, motivoFallo } from "@/lib/story/credenciales";
 import { referenciaCompacta } from "@/lib/story/catalogo";
 import { migrateProject, quienesHablan } from "@/lib/story/model";
 import { prepararCapituloGenerado, ajustarMusicaCapitulo } from "@/lib/story/guion";
@@ -163,6 +163,7 @@ export async function POST(req: Request) {
   let bruto: string;
   try {
     const r = await fetch(OPENAI("/v1/chat/completions"), {
+        signal: espera("texto"),
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
@@ -203,7 +204,7 @@ export async function POST(req: Request) {
     }
     bruto = j?.choices?.[0]?.message?.content ?? "";
   } catch (e: any) {
-    return NextResponse.json({ error: "No se pudo hablar con OpenAI: " + (e?.message ?? "") }, { status: 502 });
+    return NextResponse.json({ error: motivoFallo(e, "texto") }, { status: 502 });
   }
 
   let crudo: any;

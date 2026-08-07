@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
-import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
+import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, motivoFallo } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
 import {
   esAdminHistorias, bloqueoDeGasto, respuestaBloqueo,
@@ -174,6 +174,7 @@ export async function POST(req: Request) {
         );
       }
       r = await fetch(OPENAI("/v1/images/edits"), {
+        signal: espera("imagen"),
         method: "POST",
         headers: { Authorization: `Bearer ${key}` },
         body: form,
@@ -183,6 +184,7 @@ export async function POST(req: Request) {
       // el cliente debe ver el error (la referencia importa).
     } else {
       r = await fetch(OPENAI("/v1/images/generations"), {
+        signal: espera("imagen"),
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
         body: JSON.stringify({
@@ -235,6 +237,6 @@ export async function POST(req: Request) {
         : { ...cupoImg, usadas: cupoImg.usadas + 1, quedan: Math.max(0, cupoImg.quedan - 1) },
     });
   } catch (e: any) {
-    return NextResponse.json({ error: "No se pudo hablar con OpenAI: " + (e?.message ?? "") }, { status: 502 });
+    return NextResponse.json({ error: motivoFallo(e, "imagen") }, { status: 502 });
   }
 }

@@ -33,6 +33,7 @@ import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
 import { NumberInput } from "./number-input";
 import { loadLocks, saveLocks, type Locks } from "@/lib/story/locks";
+import { pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
 import {
   emptyProject, newScene, newShot, newOverlay, newSfx, moveScene, reorderScene, moveShot, migrateProject,
   flatten, shotDur, totalDuration, sceneRange, inheritedLoops, projectAssets, duplicateShot,
@@ -213,7 +214,7 @@ export function StoryApp({
   }
   async function refrescarCapacidadesIa() {
     try {
-      const j = await fetch("/api/story/ia/clave").then((r) => r.json());
+      const j = await pedirJson("/api/story/ia/clave");
       aplicarCapacidadesIa(j);
       return j as { configurada?: boolean; models?: { imagen?: string; voz?: string } };
     } catch {
@@ -1150,7 +1151,7 @@ export function StoryApp({
       }
       if (referenciaVfx) setStatus(`Dibujando con ${referenciaVfx.resumen.split("\n").length} anclas VFX…`);
 
-      const r = await fetch("/api/story/ia/imagen", {
+      const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/imagen", {
         method: "POST", headers: { "Content-Type": "application/json" },
         // El formato del video manda: una escena apaisada pedida cuadrada se ve mal.
         body: JSON.stringify({
@@ -1162,7 +1163,6 @@ export function StoryApp({
           ...(referenciaVfx ? { referenciaVfx } : {}),
         }),
       });
-      const j = await r.json();
       if (esSinCupo(r, j)) { setStatus(j.error); return false; }
       if (!r.ok) throw new Error(j.error || "Error");
       const bin = atob(j.imagen);
@@ -1217,14 +1217,13 @@ export function StoryApp({
     setRehaciendo(d.id);
     try {
       const sc = projRef.current.scenes.find((x) => x.id === sceneId);
-      const r = await fetch("/api/story/ia/rehacer", {
+      const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/rehacer", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           que: "texto", actual: d.text,
           contexto: { titulo: name, escena: sc?.prompt, quien: d.quien, ...vecinos(d.id) },
         }),
       });
-      const j = await r.json();
       if (esSinCupo(r, j)) { setStatus(j.error); return; }
       if (!r.ok) throw new Error(j.error || "Error");
       if (j.igual) { setStatus("Ha devuelto lo mismo. Prueba otra vez o cámbialo a mano."); return; }
@@ -1241,11 +1240,10 @@ export function StoryApp({
   async function rehacerDescripcion(falta: Falta, texto: string) {
     setRehaciendo(falta.id);
     try {
-      const r = await fetch("/api/story/ia/rehacer", {
+      const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/rehacer", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ que: "imagen", actual: texto, contexto: { titulo: name } }),
       });
-      const j = await r.json();
       if (esSinCupo(r, j)) { setStatus(j.error); return; }
       if (!r.ok) throw new Error(j.error || "Error");
       setDibujo((v) => (v ? { ...v, texto: j.texto } : v));
@@ -1460,9 +1458,7 @@ export function StoryApp({
   async function exportSaga() {
     setBusy("saga");
     try {
-      const r = await fetch(`/api/story/saga${seriesId ? `?id=${seriesId}` : ""}`);
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "Error");
+      const j = await pedirJson(`/api/story/saga${seriesId ? `?id=${seriesId}` : ""}`);
       const nom = (j.serie?.name || "saga").replace(/[^\w\-]+/g, "-");
       download(new Blob([JSON.stringify(j, null, 2)], { type: "application/json" }), `${nom}-saga.json`);
       setStatus(`Saga exportada ✓ · ${j.capitulos.length} capítulos y ${j.personajes.length} personajes`);
@@ -2365,7 +2361,7 @@ export function StoryApp({
                                 const texto = sc.prompt ?? "";
                                 setRehaciendo(sc.imageId);
                                 try {
-                                  const r = await fetch("/api/story/ia/rehacer", {
+                                  const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/rehacer", {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify({
@@ -2374,7 +2370,6 @@ export function StoryApp({
                                       contexto: { titulo: name },
                                     }),
                                   });
-                                  const j = await r.json();
                                   if (!r.ok) throw new Error(j.error || "Error");
                                   mut((p) => ({
                                     ...p,

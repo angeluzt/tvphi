@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { pedirJsonCrudo } from "@/lib/pedir-json";
 import { Wand2, Loader2, AlertTriangle, Check, Sparkles } from "lucide-react";
 import type { Escena } from "@/lib/lab/escena";
 import { revisar, esGuia } from "@/lib/lab/escena";
@@ -44,11 +45,10 @@ export function GenerarIa({
   async function pedirMapa() {
     setError(null); setPaso("Escribiendo el mapa de la escena…");
     try {
-      const r = await fetch("/api/story/ia/lab/escena", {
+      const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/escena", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ idea, formato, capas: nCapas }),
       });
-      const j = await r.json();
       if (!r.ok) {
         // Con 422 viene también lo que contestó: se carga igual para poder
         // arreglarlo a mano en vez de perder la respuesta.
@@ -82,7 +82,7 @@ export function GenerarIa({
         // El mapa de ESTA capa, sin etiquetas de las demás y sin fondo: es lo
         // que se le da al modelo como referencia de dónde va cada cosa.
         const mapa = lienzoDeCapas(escena, [capa.id], i > 0, true).toDataURL("image/png");
-        const r = await fetch("/api/story/ia/lab/capa", {
+        const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/capa", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             mapa,
@@ -94,7 +94,6 @@ export function GenerarIa({
             formato,
           }),
         });
-        const j = await r.json();
         if (!r.ok) {
           fallos.push(`${capa.name}: ${j.error ?? "no se pudo"}`);
           continue;
