@@ -43,21 +43,60 @@ export async function enviarCorreoReset(opts: {
     `<p style="color:#666;font-size:13px">Si el botón no abre, copia y pega:<br>${escapeHtml(opts.resetUrl)}</p>` +
     `<p style="color:#666;font-size:13px">Si no pediste esto, ignora el mensaje.</p>`;
 
-  const api = resend();
-  if (!api) {
-    if (isProd) {
-      return { ok: false, error: "El correo no está configurado en el servidor." };
-    }
-    console.info("[email] RESEND_API_KEY ausente — enlace de reset:\n", opts.resetUrl);
-    return { ok: true };
-  }
-
-  const { error } = await api.emails.send({
-    from: env.emailFrom,
+  return enviar({
     to: opts.to,
     subject: asunto,
-    text: texto,
+    texto,
     html,
+    etiquetaDev: "enlace de reset",
+    enlaceDev: opts.resetUrl,
+  });
+}
+
+/**
+ * Envía el enlace para comprobar que el correo es de quien se registró.
+ * Sin RESEND_API_KEY en desarrollo: escribe el enlace en la consola.
+ */
+export async function enviarCorreoVerificacion(opts: {
+  to: string;
+  displayName: string;
+  verifyUrl: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const texto =
+    `Hola ${opts.displayName},\n\n` +
+    `Confirma que esta dirección es tuya abriendo este enlace (válido 2 días):\n\n` +
+    `${opts.verifyUrl}\n\n` +
+    `Si no te registraste en TVPHI, ignora este correo: sin confirmar, la cuenta no hace nada.\n`;
+  const html =
+    `<p>Hola ${escapeHtml(opts.displayName)},</p>` +
+    `<p>Confirma que esta dirección es tuya. El enlace caduca en <strong>2 días</strong>.</p>` +
+    `<p><a href="${escapeAttr(opts.verifyUrl)}">Confirmar mi correo</a></p>` +
+    `<p style="color:#666;font-size:13px">Si el botón no abre, copia y pega:<br>${escapeHtml(opts.verifyUrl)}</p>` +
+    `<p style="color:#666;font-size:13px">Si no te registraste en TVPHI, ignora el mensaje.</p>`;
+
+  return enviar({
+    to: opts.to,
+    subject: "Confirma tu correo en TVPHI",
+    texto,
+    html,
+    etiquetaDev: "enlace de verificación",
+    enlaceDev: opts.verifyUrl,
+  });
+}
+
+/** Lo común a los dos correos: cliente, modo desarrollo y traducción del error. */
+async function enviar(o: {
+  to: string; subject: string; texto: string; html: string;
+  etiquetaDev: string; enlaceDev: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const api = resend();
+  if (!api) {
+    if (isProd) return { ok: false, error: "El correo no está configurado en el servidor." };
+    console.info(`[email] RESEND_API_KEY ausente — ${o.etiquetaDev}:\n`, o.enlaceDev);
+    return { ok: true };
+  }
+  const { error } = await api.emails.send({
+    from: env.emailFrom, to: o.to, subject: o.subject, text: o.texto, html: o.html,
   });
   if (error) {
     console.error("[email] Resend:", error);

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
-import { esAdminHistorias, cupoAgotado } from "@/lib/story/cupo";
+import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { revisar } from "@/lib/lab/escena";
 
 // De una frase a un mapa de la escena por capas.
@@ -84,8 +84,8 @@ export async function POST(req: Request) {
   if (!esAdminHistorias(user.email)) {
     return NextResponse.json({ error: "Solo administradores" }, { status: 403 });
   }
-  const sinCupo = await cupoAgotado(user.id, user.email);
-  if (sinCupo) return NextResponse.json({ error: sinCupo, sinCupo: true }, { status: 429 });
+  const sinCupo = await bloqueoDeGasto(user);
+  if (sinCupo) return respuestaBloqueo(sinCupo);
 
   const parsed = cuerpo.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {

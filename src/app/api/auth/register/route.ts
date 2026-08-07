@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { createSession, hashPassword } from "@/lib/auth";
 import { slugify } from "@/lib/utils";
 import { defaultScenes } from "@/lib/scene";
+import { enviarVerificacion } from "@/lib/email-verify";
 
 const schema = z.object({
   email: z.string().email(),
@@ -53,5 +54,23 @@ export async function POST(req: Request) {
   });
 
   await createSession(user.id);
-  return NextResponse.json({ ok: true, username: user.username, slug });
+
+  // Se entra ya, con la cuenta sin confirmar. El editor funciona entero desde
+  // el primer momento; lo único que espera al correo es la IA, que es lo que
+  // cuesta dinero. Y si el envío falla, el registro NO se cae: la cuenta ya
+  // existe, y desde dentro puede pedir el enlace otra vez.
+  let correoEnviado = true;
+  try {
+    const envio = await enviarVerificacion(user);
+    correoEnviado = envio.ok;
+    if (!envio.ok) console.error("[register] verificación:", envio.error);
+  } catch (e) {
+    correoEnviado = false;
+    console.error("[register] verificación:", e);
+  }
+
+  return NextResponse.json({
+    ok: true, username: user.username, slug,
+    verificacion: { pendiente: true, correoEnviado, email: user.email },
+  });
 }

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { AVISO_SIN_VERIFICAR } from "@/lib/email-verify";
 
 // Cupo de historias CON IA (escribir capítulo), no de videos manuales.
 //
@@ -132,21 +133,61 @@ export function mensajeCupoAgotado(cupo: CupoHistorias): string {
 /**
  * Portero para TODA ruta que gaste tokens del servidor.
  *
- * Con el cupo agotado no se llama a OpenAI para NADA: ni escribir, ni dibujar,
- * ni narrar, ni rehacer una frase. Antes solo se miraba al escribir el
- * capítulo, así que quien se quedaba sin historias podía seguir pidiendo
- * imágenes —lo más caro de todo— sin límite ninguno, y lo pagaba el dueño de la
- * clave.
+ * Dos motivos para no dejar pasar, y los dos protegen lo mismo —la clave de
+ * OpenAI, que la paga el dueño del despliegue—:
  *
- * Lo que sigue funcionando sin cupo: el editor entero y la voz del navegador,
- * que es gratis y no toca el servidor.
+ * 1. El correo sin confirmar. Si no, cualquiera se apunta con una dirección de
+ *    usar y tirar, gasta el cupo del día, y vuelve a apuntarse con otra.
+ * 2. El cupo agotado. No se llama a OpenAI para NADA: ni escribir, ni dibujar,
+ *    ni narrar, ni rehacer una frase. Antes solo se miraba al escribir el
+ *    capítulo, así que quien se quedaba sin historias podía seguir pidiendo
+ *    imágenes —lo más caro de todo— sin límite ninguno.
+ *
+ * Lo que sigue funcionando en los dos casos: el editor entero y la voz del
+ * navegador, que es gratis y no toca el servidor. Registrarse y no poder hacer
+ * nada sería otra cosa; esto solo frena lo que cuesta dinero.
  *
  * Devuelve null si puede pasar, o el motivo si no.
  */
-export async function cupoAgotado(userId: string, email: string): Promise<string | null> {
-  const cupo = await estadoCupoHistorias(userId, email);
+export type Bloqueo = {
+  /** Para que la interfaz sepa qué ofrecer: confirmar el correo, o esperar. */
+  codigo: "sin_verificar" | "cupo_ia";
+  mensaje: string;
+};
+
+export async function bloqueoDeGasto(
+  user: { id: string; email: string; emailVerifiedAt: Date | null },
+): Promise<Bloqueo | null> {
+  if (!user.emailVerifiedAt && !exento(user.email)) {
+    return { codigo: "sin_verificar", mensaje: AVISO_SIN_VERIFICAR };
+  }
+  const cupo = await estadoCupoHistorias(user.id, user.email);
   if (cupo.exento || cupo.quedan > 0) return null;
-  return mensajeCupoAgotado(cupo);
+  return { codigo: "cupo_ia", mensaje: mensajeCupoAgotado(cupo) };
+}
+
+/**
+ * La respuesta del portero, igual en todas las rutas.
+ *
+ * Los dos casos NO son el mismo error y no pueden contestar lo mismo: al que
+ * no ha confirmado el correo hay que mandarlo a confirmarlo (403), y al que
+ * gastó su cupo, a esperar (429). Cuando los dos salían como «429 sin cupo»,
+ * a quien acababa de registrarse le decíamos que esperase 24 horas por algo
+ * que se arregla abriendo un correo.
+ */
+export function respuestaBloqueo(b: Bloqueo): Response {
+  const sinVerificar = b.codigo === "sin_verificar";
+  return Response.json(
+    {
+      error: b.mensaje,
+      codigo: b.codigo,
+      sinVerificar,
+      // `sinCupo` es lo que mira el editor para caer a la voz del navegador.
+      // Vale para los dos: en ninguno de los dos hay voz de pago disponible.
+      sinCupo: true,
+    },
+    { status: sinVerificar ? 403 : 429 },
+  );
 }
 
 

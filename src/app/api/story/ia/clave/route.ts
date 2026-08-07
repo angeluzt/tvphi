@@ -29,6 +29,9 @@ export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const admin = esAdminHistorias(user.email);
+  // Sin el correo confirmado no se ofrece nada que gaste: el servidor lo va a
+  // rechazar igual, y un botón que siempre falla es peor que no tenerlo.
+  const verificado = admin || !!user.emailVerifiedAt;
   const models = await preferenciasModelos(user.id, user.email);
   const ajustes = await leerAjustes();
   return NextResponse.json({
@@ -39,11 +42,12 @@ export async function GET() {
     // panel. El editor lo usa para no ofrecer botones que el servidor va a
     // rechazar, que es peor que no tenerlos.
     puede: {
-      vozDePago: hayOpenAi() && (admin || ajustes.vozDePago),
-      imagenes: hayOpenAi() && (admin || ajustes.imagenesIa),
+      vozDePago: verificado && hayOpenAi() && (admin || ajustes.vozDePago),
+      imagenes: verificado && hayOpenAi() && (admin || ajustes.imagenesIa),
       elegirCalidad: admin,
     },
     calidadImagen: ajustes.calidadImagen,
+    verificado,
   });
 }
 

@@ -6,11 +6,12 @@
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   /**
-   * La URL pública. Va con corchetes y como getter por lo mismo que la clave de
-   * OpenAI: con `process.env.APP_URL` el valor se fija al compilar, así que si
-   * no estaba puesta en el build quedaba clavado `localhost:3000` — y el enlace
-   * de restablecer contraseña llegaba al correo apuntando a la máquina de
-   * quien lo abría, o sea a ninguna parte.
+   * La URL pública. Con la que se arman los enlaces de los correos, así que si
+   * sale mal el correo llega pero no lleva a ninguna parte.
+   *
+   * Getter, y tratando la cadena vacía como ausente: con `APP_URL=""` puesta en
+   * el servidor, `?? "…"` la dejaba pasar y `new URL("")` reventaba en vez de
+   * caer al valor por defecto.
    */
   get appUrl() {
     return (process.env["APP_URL"] ?? "").trim() || "http://localhost:3000";

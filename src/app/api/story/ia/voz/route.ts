@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
-import { esAdminHistorias, cupoAgotado } from "@/lib/story/cupo";
+import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { leerAjustes } from "@/lib/story/ajustes";
 
 // Narrar un texto con la voz de OpenAI.
@@ -56,8 +56,8 @@ export async function POST(req: Request) {
 
   // Sin cupo no se gasta ni un token del servidor. El editor sigue entero y la
   // voz del navegador, que es gratis, sigue funcionando.
-  const sinCupo = await cupoAgotado(user.id, user.email);
-  if (sinCupo) return NextResponse.json({ error: sinCupo, sinCupo: true }, { status: 429 });
+  const sinCupo = await bloqueoDeGasto(user);
+  if (sinCupo) return respuestaBloqueo(sinCupo);
 
   const parsed = cuerpo.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });

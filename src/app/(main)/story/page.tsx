@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { estadoCupoHistorias } from "@/lib/story/cupo";
 import { StoryApp } from "@/components/story/story-app";
 import { ComoFunciona } from "@/components/story/como-funciona";
+import { AvisoVerificar } from "@/components/auth/aviso-verificar";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,7 @@ export default async function StoryPage({
           </p>
         </div>
       </div>
+      {!user.emailVerifiedAt && <AvisoVerificar email={user.email} />}
       <ComoFunciona />
       <StoryApp
         initialProjects={projects}

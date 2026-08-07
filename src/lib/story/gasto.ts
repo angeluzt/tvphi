@@ -53,7 +53,7 @@ export interface ConceptoGasto {
 export interface Gasto {
   desde: string;
   hasta: string;
-  /** El huso con el que se han contado los días. */
+  /** El huso con el que se han contado los días. Siempre UTC: ver `diaUtc`. */
   huso: string;
   totalUsd: number;
   hoyUsd: number;
@@ -80,19 +80,24 @@ type Cubo = {
  * dando vueltas.
  */
 /**
- * Huso con el que se cuentan los días. OpenAI agrupa en UTC; si se compara
- * contra el «hoy» de UTC, alguien en México ve «Hoy: $0» toda la tarde porque
- * allí aún es ayer. Con cubos de una hora se puede repartir a su día real.
+ * El día, en UTC, que es como agrupa OpenAI.
+ *
+ * Hubo un intento de contarlos en el huso de quien mira —para que a alguien en
+ * México no le saliera «Hoy: $0» toda la tarde— pidiendo cubos de una hora y
+ * repartiéndolos. No se puede: `/v1/organization/costs` solo acepta
+ * `bucket_width=1d`. Con `1h` la petición se va al garete, y como además se
+ * pedía `limit=168` la paginación daba las 40 vueltas del tope, tardaba lo
+ * suyo y el panel acababa recibiendo la página de error del servidor en vez de
+ * JSON («Unexpected token '<'»).
+ *
+ * Así que el dato viene por días UTC y no hay forma de afinarlo desde esta
+ * API. Lo que sí se puede es no mentir: la interfaz dice «(UTC)» al lado.
  */
-export function husoPanel(): string {
-  return (process.env["APP_TIMEZONE"] ?? "").trim() || "America/Mexico_City";
-}
+const DIA_UTC = "UTC";
 
-/** AAAA-MM-DD de un instante, en el huso del panel. */
-function diaLocal(ms: number, huso: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: huso, year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(ms));
+/** AAAA-MM-DD de un instante, en UTC. */
+function diaUtc(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
@@ -105,23 +110,30 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
 
   const cubos: Cubo[] = [];
   let pagina: string | null = null;
-  // Más vueltas: con cubos de una hora hay 24 veces más que con días.
-  for (let vuelta = 0; vuelta < 40; vuelta++) {
+  for (let vuelta = 0; vuelta < 12; vuelta++) {
     const u = new URL(`${BASE()}/v1/organization/costs`);
     u.searchParams.set("start_time", String(inicio));
-    // Cubos de UNA HORA, no de un día: es lo único que permite repartir el
-    // gasto al día LOCAL. Con cubos diarios (UTC) el «hoy» de México siempre
-    // salía mal, que es justo el fallo que tenía este panel.
-    u.searchParams.set("bucket_width", "1h");
-    u.searchParams.set("limit", "168");
+    // `1d` es el ÚNICO valor que acepta este endpoint, y 31 el tope de `limit`.
+    // No es una preferencia: con cualquier otra cosa la llamada no sirve.
+    u.searchParams.set("bucket_width", "1d");
+    u.searchParams.set("limit", "31");
     u.searchParams.append("group_by", "line_item");
     if (pagina) u.searchParams.set("page", pagina);
 
     let r: Response;
     try {
-      r = await fetch(u, { headers: { Authorization: `Bearer ${key}` } });
+      // Con límite de tiempo: si OpenAI se queda pensando, es mejor un error
+      // dicho a tiempo que un panel colgado hasta que el servidor corte por su
+      // cuenta y devuelva una página de error que aquí no se puede leer.
+      r = await fetch(u, {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(15_000),
+      });
     } catch (e: any) {
-      return { error: "No se pudo hablar con OpenAI: " + (e?.message ?? "") };
+      const msg = e?.name === "TimeoutError" || e?.name === "AbortError"
+        ? "OpenAI tardó demasiado en responder a los costes."
+        : "No se pudo hablar con OpenAI: " + (e?.message ?? "");
+      return { error: msg };
     }
     if (!r.ok) {
       const txt = await r.text().catch(() => "");
@@ -150,9 +162,8 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
   let moneda = "usd";
   let total = 0;
 
-  const huso = husoPanel();
   for (const c of cubos) {
-    const dia = diaLocal(c.start_time * 1000, huso);
+    const dia = diaUtc(c.start_time * 1000);
     for (const res of c.results ?? []) {
       const v = Number(res?.amount?.value ?? 0);
       if (!Number.isFinite(v) || v === 0) continue;
@@ -164,7 +175,7 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
     }
   }
 
-  const hoy = diaLocal(Date.now(), huso);
+  const hoy = diaUtc(Date.now());
   const mes = hoy.slice(0, 7);
   let hoyUsd = 0, mesUsd = 0;
   for (const [dia, v] of porDiaMap) {
@@ -174,9 +185,9 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
 
   const presupuesto = presupuestoMensual();
   return {
-    desde: diaLocal(desde.getTime(), huso),
+    desde: diaUtc(desde.getTime()),
     hasta: hoy,
-    huso,
+    huso: DIA_UTC,
     totalUsd: redondea(total),
     hoyUsd: redondea(hoyUsd),
     mesUsd: redondea(mesUsd),
@@ -189,11 +200,14 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
       .sort((a, b) => b.usd - a.usd),
     presupuestoUsd: presupuesto,
     quedaUsd: presupuesto === null ? null : redondea(presupuesto - mesUsd),
-    nota: presupuesto === null
+    nota: (presupuesto === null
       ? "OpenAI no publica el saldo restante: solo lo gastado. Para ver «cuánto queda», "
-        + "pon OPENAI_PRESUPUESTO_MENSUAL con lo que decidas gastarte al mes."
+        + "pon OPENAI_PRESUPUESTO_MENSUAL con lo que decidas gastarte al mes. "
       : "Lo que queda es respecto a TU presupuesto, no al saldo real de OpenAI: "
-        + "esa cifra no la publica su API.",
+        + "esa cifra no la publica su API. ")
+      + "Los días van en UTC porque es como los agrupa OpenAI; su API no da el "
+      + "detalle por horas, así que «hoy» empieza a las 18:00 del día anterior "
+      + "en el centro de México.",
   };
 }
 
