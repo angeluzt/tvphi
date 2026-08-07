@@ -3,25 +3,24 @@
 import { useEffect, useId, useState } from "react";
 import { Plus, Folder, FolderOpen, Film, ChevronLeft, Trash2, Loader2, Users, FileUp } from "lucide-react";
 import { IaPanel } from "./ia-panel";
+import { ComoFunciona } from "./como-funciona";
 import type { CupoHistorias } from "./story-app";
 
 // Pantalla de entrada: primero se elige DÓNDE se va a trabajar, y solo después
 // se abre el editor.
+//
+// Crear con IA va ARRIBA del todo, que es a lo que viene casi todo el mundo.
+// Estaba al final, debajo de las series y de los capítulos sueltos, así que
+// había que bajar hasta el fondo para encontrar lo principal.
+//
+// El aviso del cupo estaba aquí Y dentro del panel de IA, diciendo lo mismo dos
+// veces. Se queda solo el de dentro, que es donde importa.
 //
 // Asignar / mover / soltar un capítulo siempre pasa por una ventana: se elige
 // qué hacer y se confirma. Así no se mueve nada por un toque accidental.
 
 export interface SerieMeta { id: string; name: string; capitulos: number; personajes: number }
 export interface CapMeta { id: string; name: string; updatedAt: string; seriesId?: string | null }
-
-function textoCupo(cupo: CupoHistorias) {
-  if (cupo.exento) return null;
-  if (cupo.quedan > 0) {
-    return `Historias con IA: te quedan ${cupo.quedan} de ${cupo.limite} en 24 h. Crear a mano no tiene límite.`;
-  }
-  const cuando = cupo.retryAt ? new Date(cupo.retryAt).toLocaleString() : "más tarde";
-  return `Ya usaste tus ${cupo.limite} historias con IA de hoy. Podrás generar otra a partir de ${cuando}. Crear a mano sigue libre.`;
-}
 
 export function StoryHome({
   series, proyectos, cupo, busy,
@@ -49,7 +48,6 @@ export function StoryHome({
   // null = viendo las series; una cadena = dentro de esa serie.
   const [dentro, setDentro] = useState<string | null>(serieInicial ?? null);
   const sueltos = proyectos.filter((p) => !p.seriesId);
-  const avisoCupo = textoCupo(cupo);
 
   function irSerie(id: string | null) {
     setDentro(id);
@@ -59,11 +57,9 @@ export function StoryHome({
   if (dentro === null) {
     return (
       <div className="tool-ui space-y-4">
-        {avisoCupo && (
-          <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
-            {avisoCupo}
-          </p>
-        )}
+        <IaPanel onGenerado={onGenerado} cupo={cupo} onCupo={onCupo} />
+        <ComoFunciona />
+
         <div className="card p-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="label">Tus series</span>
@@ -72,8 +68,7 @@ export function StoryHome({
             </button>
           </div>
           <p className="mt-1 text-[11px] text-muted">
-            Una serie agrupa los capítulos de una misma historia y sus personajes. Un video suelto
-            no necesita ninguna. Si un capítulo está en el sitio equivocado, usa «Asignar» o «Cambiar serie».
+            Agrupa los capítulos de una misma historia y sus personajes. Un video suelto no la necesita.
           </p>
 
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -95,7 +90,7 @@ export function StoryHome({
             ))}
             {!series.length && (
               <p className="col-span-full py-2 text-[11px] text-muted">
-                Aún no tienes series. Puedes crear una, o trabajar con capítulos sueltos aquí abajo.
+                Ninguna todavía.
               </p>
             )}
           </div>
@@ -127,11 +122,9 @@ export function StoryHome({
             onAbrir={onAbrir}
             onBorrar={onBorrar}
             onMoverSerie={onMoverSerie}
-            vacio="Nada suelto. Todo lo tuyo está dentro de una serie."
+            vacio="Nada suelto: todo está dentro de una serie."
           />
         </div>
-
-        <IaPanel onGenerado={onGenerado} cupo={cupo} onCupo={onCupo} />
       </div>
     );
   }
@@ -140,11 +133,6 @@ export function StoryHome({
   const caps = proyectos.filter((p) => p.seriesId === dentro);
   return (
     <div className="tool-ui space-y-4">
-      {avisoCupo && (
-        <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
-          {avisoCupo}
-        </p>
-      )}
       <div className="card p-4">
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => irSerie(null)} className="btn-ghost text-xs">
@@ -170,7 +158,7 @@ export function StoryHome({
           onAbrir={onAbrir}
           onBorrar={onBorrar}
           onMoverSerie={onMoverSerie}
-          vacio="Esta serie aún no tiene capítulos. Crea el primero."
+          vacio="Sin capítulos todavía."
         />
       </div>
     </div>

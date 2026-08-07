@@ -83,8 +83,7 @@ export function PantallaRender({
 
         {seFue && (
           <p className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-2 text-[12.5px] text-danger">
-            Has salido de la pestaña durante la grabación. Es muy probable que el vídeo tenga la
-            imagen congelada en ese tramo. Cancela y vuelve a empezar.
+            Saliste de la pestaña: el video puede quedar congelado ahí. Cancela y empieza de nuevo.
           </p>
         )}
 

@@ -268,8 +268,7 @@ function Ficha({
           </p>
         )}
         <p className="mt-2 text-[11px] text-muted">
-          Aviso: las imágenes se guardan en este navegador, igual que las de los videos. La ficha
-          (textos y prompts) sí se guarda en tu cuenta y la verás desde cualquier equipo.
+          Las imágenes se quedan en este navegador. La ficha sí va en tu cuenta.
         </p>
       </div>
 

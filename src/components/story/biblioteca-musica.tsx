@@ -133,8 +133,7 @@ export function BibliotecaMusica({
       </div>
 
       <p className="mt-2 text-[10px] text-muted">
-        {total} pistas de unos 30 s. Van dentro de la app: no ocupan sitio en tu navegador y no
-        salen como «falta un archivo» al abrir el capítulo en otro equipo.
+        {total} pistas de unos 30 s. Van dentro de la app, así que nunca faltan.
       </p>
     </div>
   );

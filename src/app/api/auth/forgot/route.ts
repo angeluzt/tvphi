@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { correoConfigurado } from "@/lib/email";
 import { demasiadasPeticiones, solicitarResetPorEmail } from "@/lib/password-reset";
+import { origen } from "@/lib/rate-limit";
 
 const schema = z.object({
   email: z.string().email().max(200).optional(),
@@ -38,9 +39,7 @@ export async function POST(req: Request) {
 
   // Un tope por dirección: si no, cualquiera puede llenarle el buzón a otro
   // pidiendo enlaces sin parar, y de paso gastar el cupo de envíos.
-  const origen = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    ?? req.headers.get("x-real-ip");
-  if (await demasiadasPeticiones(email, origen)) {
+  if (await demasiadasPeticiones(email, origen(req))) {
     return NextResponse.json(
       { error: "Ya se pidieron varios enlaces para ese correo. Espera unos minutos." },
       { status: 429 },

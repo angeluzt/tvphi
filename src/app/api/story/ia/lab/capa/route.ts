@@ -5,6 +5,7 @@ import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/li
 import { anotarFallo } from "@/lib/story/fallidos";
 import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { CROMA } from "@/lib/lab/quitar-fondo";
+import { leerAjustes, calidadEfectiva } from "@/lib/story/ajustes";
 
 // Pintar UNA capa a partir de su trozo del mapa.
 //
@@ -39,6 +40,8 @@ const cuerpo = z.object({
   esFondo: z.boolean().default(false),
   formato: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
   modelo: z.string().max(80).optional(),
+  /** Si no se dice, manda la del panel. Esta ruta ya es solo de admin. */
+  calidad: z.enum(["low", "medium", "high"]).optional(),
   /**
    * Intentar primero la transparencia de verdad (alfa) y caer al croma si el
    * modelo la rechaza. Apagado por defecto A PROPÓSITO.
@@ -149,6 +152,11 @@ export async function POST(req: Request) {
     }, { status: 400 });
   }
 
+  // Esta ruta se saltaba el panel: tenía «medium» escrito a mano, así que una
+  // escena de 3 capas costaba 3 × $0.041 aunque los ajustes dijeran «baja». Es
+  // el sitio donde más se nota, porque aquí se paga por CAPA y no por escena.
+  const calidad = calidadEfectiva(await leerAjustes(), true, parsed.data.calidad);
+
   // El formulario se arma cada vez: un FormData ya enviado no se puede reusar.
   const armar = (croma: boolean) => {
     const form = new FormData();
@@ -156,7 +164,7 @@ export async function POST(req: Request) {
     form.set("prompt", instruccion(parsed.data, croma));
     form.set("size", TAMANOS[parsed.data.formato]);
     form.set("n", "1");
-    form.set("quality", "medium");
+    form.set("quality", calidad);
     form.set("output_format", "png");
     // Con croma NO se manda «background»: es justo el parámetro que el modelo
     // rechaza, y el fondo se pide por prompt.
