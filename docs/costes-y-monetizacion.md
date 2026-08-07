@@ -9,6 +9,69 @@ Fecha del análisis: agosto de 2026 · rama `main`
 
 ---
 
+## Medición real: 30 días de uso (agosto de 2026)
+
+Lo que sigue ya no es un modelo, es la factura leída de la API de costes.
+**Corrige el modelo en tres sitios**, así que manda esto.
+
+**$13.36 en 30 días**, de los cuales **$12.51 en los 6 primeros días de agosto**.
+
+| concepto | gasto | peso | lo que predije |
+|---|---:|---:|---:|
+| Imágenes (`gpt-image-2`) | $10.905 | **81,6%** | 91% |
+| Audio de chat (`gpt-audio-*`) | $0.986 | 7,4% | *no lo predije* |
+| Voz TTS (`gpt-4o-mini-tts`) | $0.938 | 7,0% | 7% |
+| Texto (`gpt-5.6-luna`) | $0.529 | 4,0% | 2% |
+| Otros (`gpt-4o-mini`) | $0.004 | 0,0% | — |
+
+### Las tres correcciones
+
+**1. Cada imagen cuesta un 30% más de lo previsto.** No por el precio, sino
+porque se manda una imagen de ENTRADA: el desglose trae
+`gpt-image-2 image, input` por **$2.17**, el 20% de todo el gasto en imágenes.
+Viene de la referencia VFX: cuando una escena lleva efectos anclados, la app
+llama a `/v1/images/edits` con un PNG y una máscara en vez de a
+`/v1/images/generations`. El coste real por imagen sale **$0.0534**, no $0.041.
+
+**2. El texto es el doble, y por el lado contrario al que suponía.** Yo contaba
+la entrada (el catálogo de efectos). Lo real es que la **salida** cuesta $0.464 y
+la entrada $0.065: **×7**. Se paga por lo que el modelo ESCRIBE, no por lo que se
+le manda — y encima el caché de OpenAI ya abarata la entrada (`cache writes`
+$0.032, `cached input` $0.004). Conclusión reforzada: recortar el catálogo sigue
+sin servir de nada.
+
+**3. Hay un 7,4% que no debería estar ahí.** `gpt-audio-mini` y `gpt-audio-1.5`
+suman **$0.99** y no están en el catálogo de modelos de la app: `modelos.ts` los
+descarta explícitamente con `DESCARTAR`. Llegan por el camino de respaldo de
+`/api/story/ia/voz`: si el modelo de voz elegido no lleva «tts» en el nombre, la
+ruta cae a `/v1/chat/completions` con `modalities:["text","audio"]`, que es más
+caro que `/v1/audio/speech`. Sale de una preferencia de admin guardada en su día.
+**Volver a `gpt-4o-mini-tts` se lleva ese 7,4% entero.**
+
+### El ritmo, que es lo urgente
+
+| dato | valor |
+|---|---:|
+| Media diaria en agosto | **$2.08/día** |
+| Proyección del mes entero | **$64.63** |
+| Presupuesto configurado | $25 |
+| Días que quedan a ese ritmo | **6** (≈ el 13 de agosto) |
+| Día más caro | 3 de agosto, $3.34 |
+| Imágenes generadas en 30 días | ~204 |
+
+A este ritmo el presupuesto se agota a mitad de mes.
+
+### Qué hacer, por orden de lo que se lleva
+
+| acción | se lleva | esfuerzo |
+|---|---:|---|
+| Volver el modelo de voz a `gpt-4o-mini-tts` | **−7,4%** | un clic en `/admin` |
+| Más tomas por escena (menos imágenes) | −30% aprox. | ninguno, ya se puede |
+| Revisar cuántas escenas llevan VFX anclado | hasta −16% | quitar efectos que no aporten |
+| API Batch | −40% del total | desarrollo |
+
+---
+
 ## Lo primero, porque cambia la pregunta
 
 La pregunta era cómo **reducir el gasto en tokens**. La respuesta medida es que

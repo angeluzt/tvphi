@@ -9,6 +9,7 @@ import {
   IA_NO_DISPONIBLE,
 } from "@/lib/story/credenciales";
 import { esAdminHistorias } from "@/lib/story/cupo";
+import { leerAjustes } from "@/lib/story/ajustes";
 
 // Estado de IA para la interfaz.
 // Modelos: el usuario normal usa los de por defecto; solo el admin los cambia.
@@ -29,10 +30,20 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const admin = esAdminHistorias(user.email);
   const models = await preferenciasModelos(user.id, user.email);
+  const ajustes = await leerAjustes();
   return NextResponse.json({
     configurada: hayOpenAi(),
     admin,
     models: { ...MODELOS_POR_DEFECTO, ...models },
+    // Lo que ESTE usuario puede hacer de verdad, ya cruzado con los ajustes del
+    // panel. El editor lo usa para no ofrecer botones que el servidor va a
+    // rechazar, que es peor que no tenerlos.
+    puede: {
+      vozDePago: hayOpenAi() && (admin || ajustes.vozDePago),
+      imagenes: hayOpenAi() && (admin || ajustes.imagenesIa),
+      elegirCalidad: admin,
+    },
+    calidadImagen: ajustes.calidadImagen,
   });
 }
 

@@ -3,7 +3,10 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
-import { esAdminHistorias, cupoAgotado } from "@/lib/story/cupo";
+import {
+  esAdminHistorias, cupoAgotado, estadoCupoImagenes, registrarUsoIaImagen, mensajeCupoImagenes,
+} from "@/lib/story/cupo";
+import { leerAjustes, calidadEfectiva, usaReferenciaVfx } from "@/lib/story/ajustes";
 
 // Generar la imagen de una escena.
 //
@@ -23,6 +26,12 @@ const cuerpo = z.object({
   modelo: z.string().max(80).optional(),
   // El formato del video manda: una escena apaisada pedida cuadrada se ve mal.
   formato: z.enum(["16:9", "9:16", "1:1"]).optional(),
+  /**
+   * Calidad pedida. SOLO se le hace caso al admin: si un usuario normal la
+   * mandara, un límite de gasto que se puede saltar tocando la petición no es
+   * un límite. Para él manda siempre la del panel.
+   */
+  calidad: z.enum(["low", "medium", "high"]).optional(),
   referenciaVfx: referencia.optional(),
 });
 
@@ -101,15 +110,39 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
   }
 
+  const admin = esAdminHistorias(user.email);
+  const ajustes = await leerAjustes();
+
+  // Interruptor general: con esto apagado, el usuario normal no gasta imágenes.
+  if (!ajustes.imagenesIa && !admin) {
+    return NextResponse.json({
+      error: "Ahora mismo no se pueden generar imágenes con IA. Sube la tuya desde el editor.",
+      imagenesApagadas: true,
+    }, { status: 403 });
+  }
+
+  // Cupo de imágenes, aparte del de historias: una historia son varias imágenes
+  // y son el 80% de la factura, así que se cuentan por su lado.
+  const cupoImg = await estadoCupoImagenes(user.id, user.email);
+  if (!cupoImg.exento && cupoImg.quedan <= 0) {
+    return NextResponse.json({
+      error: mensajeCupoImagenes(cupoImg), sinCupo: true, cupoImagenes: cupoImg,
+    }, { status: 429 });
+  }
+
   const guardados = await preferenciasModelos(user.id, user.email);
-  const modelo = esAdminHistorias(user.email) && parsed.data.modelo
+  const modelo = admin && parsed.data.modelo
     ? parsed.data.modelo
     : guardados.imagen;
   if (!modelo) {
     return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 400 });
   }
   const size = TAMANOS[parsed.data.formato ?? "16:9"] ?? TAMANOS["16:9"];
-  const ref = parsed.data.referenciaVfx;
+  const calidad = calidadEfectiva(ajustes, admin, parsed.data.calidad);
+  // En baja no se manda la referencia: su entrada se cobra a fidelidad alta
+  // pase lo que pase, así que pagarla para un borrador es tirar justo el dinero
+  // que se intentaba ahorrar.
+  const ref = usaReferenciaVfx(calidad) ? parsed.data.referenciaVfx : undefined;
   const imgBytes = ref ? pngBytes(ref.imagen) : null;
   const maskBytes = ref?.mascara ? pngBytes(ref.mascara) : null;
 
@@ -123,7 +156,7 @@ export async function POST(req: Request) {
       form.set("prompt", promptConVfx(parsed.data.prompt, ref?.resumen));
       form.set("size", size);
       form.set("n", "1");
-      form.set("quality", "medium");
+      form.set("quality", calidad);
       form.set("output_format", "png");
       form.set("background", "opaque");
       // Sin input_fidelity: gpt-image-2 lo rechaza; el HTML de prueba tampoco lo manda.
@@ -156,6 +189,10 @@ export async function POST(req: Request) {
           prompt: promptSoloTexto(parsed.data.prompt, ref?.resumen),
           size,
           n: 1,
+          // Este camino NO mandaba calidad: se quedaba con la de OpenAI, que es
+          // más cara que la baja. Con el ajuste apagado no se notaba porque
+          // casi todo iba por «edits»; al abaratar, esto era el agujero.
+          quality: calidad,
         }),
       });
     }
@@ -186,8 +223,15 @@ export async function POST(req: Request) {
         modeloMal: true, modelo,
       }, { status: 502 });
     }
+    // Se anota DESPUÉS de que haya salido: un fallo de OpenAI no debe gastarle
+    // una imagen del cupo a nadie.
+    if (!cupoImg.exento) await registrarUsoIaImagen(user.id);
     return NextResponse.json({
       ok: true, formato: "png", imagen: b64, size, referenciaVfxUsada,
+      calidad,
+      cupoImagenes: cupoImg.exento
+        ? null
+        : { ...cupoImg, usadas: cupoImg.usadas + 1, quedan: Math.max(0, cupoImg.quedan - 1) },
     });
   } catch (e: any) {
     return NextResponse.json({ error: "No se pudo hablar con OpenAI: " + (e?.message ?? "") }, { status: 502 });
