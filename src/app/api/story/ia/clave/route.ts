@@ -8,7 +8,7 @@ import {
   guardarModelos,
   IA_NO_DISPONIBLE,
 } from "@/lib/story/credenciales";
-import { esAdminHistorias } from "@/lib/story/cupo";
+import { esAdminHistorias, estadoCupoHistorias } from "@/lib/story/cupo";
 import { leerAjustes } from "@/lib/story/ajustes";
 
 // Estado de IA para la interfaz.
@@ -34,6 +34,9 @@ export async function GET() {
   const verificado = admin || !!user.emailVerifiedAt;
   const models = await preferenciasModelos(user.id, user.email);
   const ajustes = await leerAjustes();
+  // El cupo VIGENTE, no el que se pintó al cargar la página. Si el admin sube
+  // el límite, quien estaba bloqueado lo ve sin tener que recargar.
+  const cupo = await estadoCupoHistorias(user.id, user.email);
   return NextResponse.json({
     configurada: hayOpenAi(),
     admin,
@@ -48,6 +51,7 @@ export async function GET() {
     },
     calidadImagen: ajustes.calidadImagen,
     verificado,
+    cupo,
   });
 }
 
