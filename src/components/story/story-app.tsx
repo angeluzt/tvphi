@@ -159,6 +159,28 @@ export function StoryApp({
   // ¿La respuesta es un "se te acabó la IA de hoy"? Si lo es, se apunta el
   // motivo para enseñarlo una vez y se corta lo que estuviera en marcha: seguir
   // intentándolo son llamadas que ya se sabe que van a fallar.
+  // Cómo acabó el último dibujo. Se guarda aquí porque `dibujarUna` devuelve
+  // un sí/no y el lote necesita saber algo más: si vale la pena reintentar, y
+  // si tiene sentido seguir con las demás.
+  const ultimoDibujo = useRef<{ reintentable: boolean; pararTodo: boolean }>({
+    reintentable: false, pararTodo: false,
+  });
+
+  /**
+   * ¿Merece la pena volver a intentarlo?
+   *
+   * Solo lo pasajero: el servidor reiniciándose, un corte del proxy, un tiempo
+   * agotado, la red. Un rechazo por contenido o unos datos mal NO se arreglan
+   * repitiendo, y repetirlos es pagar dos veces por el mismo «no».
+   */
+  function esPasajero(status: number, mensaje: string): boolean {
+    if (status >= 500) return true;
+    if (status === 408) return true;
+    // Los mensajes que arma pedir-json cuando no llega JSON llevan el código.
+    if (/\(código (50\d|408|52\d)\)/.test(mensaje)) return true;
+    return /tardó demasiado|no se pudo conectar|tardó más de/i.test(mensaje);
+  }
+
   function esSinCupo(r: Response, j: any): boolean {
     if (r.status !== 429 || !j?.sinCupo) return false;
     setSinCupoIa(j.error || "Se acabaron tus historias con IA de hoy.");
@@ -183,7 +205,12 @@ export function StoryApp({
   } | null>(null);
   // Por dónde va el montaje automático, para poder enseñarlo.
   const [montaje, setMontaje] = useState<
-    { fase: "dibujando" | "narrando" | "listo" | "parado"; hechas: number; total: number; detalle: string } | null
+    {
+      fase: "dibujando" | "narrando" | "listo" | "parado";
+      hechas: number; total: number; detalle: string;
+      /** Escenas que se saltaron por un fallo suyo. Se enseñan al acabar. */
+      saltadas?: string[];
+    } | null
   >(null);
   const [montarAlEntrar, setMontarAlEntrar] = useState(false);
   // Qué pieza se está rehaciendo ahora mismo.
@@ -1129,8 +1156,10 @@ export function StoryApp({
     return sc?.prompt ?? "";
   }
 
-  // Devuelve si salió bien, para poder parar el lote al primer fallo.
+  // Devuelve si salió bien. El porqué queda en `ultimoDibujo`, que es lo que
+  // el lote mira para decidir si reintenta, si sigue o si para.
   async function dibujarUna(falta: Falta, texto: string): Promise<boolean> {
+    ultimoDibujo.current = { reintentable: false, pararTodo: false };
     const descripcion = texto.trim();
     if (descripcion.length < 4) {
       setStatus("Describe la imagen antes de dibujarla.");
@@ -1163,8 +1192,26 @@ export function StoryApp({
           ...(referenciaVfx ? { referenciaVfx } : {}),
         }),
       });
-      if (esSinCupo(r, j)) { setStatus(j.error); return false; }
-      if (!r.ok) throw new Error(j.error || "Error");
+      if (esSinCupo(r, j)) {
+        // Sin cupo, seguir con las demás es pedir el mismo «no» otras cinco veces.
+        ultimoDibujo.current = { reintentable: false, pararTodo: true };
+        setStatus(j.error);
+        return false;
+      }
+      if (!r.ok) {
+        // 401/403 (sin sesión, sin verificar, imágenes apagadas) tampoco se
+        // arreglan solos: parar. El resto —incluido un rechazo por contenido—
+        // es cosa de ESTA imagen, así que se salta y se sigue.
+        ultimoDibujo.current = {
+          // El servidor ya dice si merece la pena; si no lo dice (rutas más
+          // viejas), se deduce del código.
+          reintentable: typeof j?.reintentable === "boolean"
+            ? j.reintentable
+            : esPasajero(r.status, String(j?.error ?? "")),
+          pararTodo: r.status === 401 || r.status === 403,
+        };
+        throw new Error(j.error || "Error");
+      }
       const bin = atob(j.imagen);
       const arr = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
@@ -1188,7 +1235,13 @@ export function StoryApp({
       setStatus(`Imagen dibujada ✓${conRef} · ${falta.donde.join(" · ")}`);
       return true;
     } catch (err: any) {
-      setStatus("No se pudo dibujar: " + (err?.message ?? ""));
+      const msg = String(err?.message ?? "");
+      // Si el fallo vino de antes de la respuesta (red, tiempo agotado), aquí
+      // se clasifica; si vino del bloque de arriba, ya está clasificado.
+      if (!ultimoDibujo.current.pararTodo && !ultimoDibujo.current.reintentable) {
+        ultimoDibujo.current.reintentable = esPasajero(0, msg);
+      }
+      setStatus("No se pudo dibujar: " + msg);
       return false;
     } finally {
       setReponiendo(null);
@@ -1296,13 +1349,42 @@ export function StoryApp({
     let fs = await faltantes(projRef.current);
     setFaltas(fs);
 
+    // Un fallo suelto ya NO tumba el montaje entero.
+    //
+    // Antes se paraba en la primera imagen que fallaba, así que un corte de un
+    // segundo dejaba sin dibujar todas las siguientes: pedías seis escenas,
+    // salía una, y las cinco restantes ni se intentaban.
+    //
+    // Ahora: lo pasajero se reintenta UNA vez, lo que es cosa de esa imagen
+    // —un rechazo por contenido— se salta y se sigue, y solo se para de verdad
+    // cuando seguir no tiene sentido (sin cupo, sin sesión, sin verificar).
+    //
+    // El reintento puede pagar dos veces la misma imagen si OpenAI llegó a
+    // generarla y se cortó al devolverla. En calidad baja son $0.005: sale más
+    // caro dejar el capítulo a medias.
+    const saltadas: string[] = [];
     if (dibujos) {
       const pend = fs.filter((f) => f.tipo === "escena" && descripcionDe(f).trim().length >= 4);
       for (let i = 0; i < pend.length; i++) {
-        setMontaje({ fase: "dibujando", hechas: i, total: pend.length, detalle: pend[i].donde.join(" · ") });
-        if (!(await dibujarUna(pend[i], descripcionDe(pend[i])))) {
-          setMontaje({ fase: "parado", hechas: i, total: pend.length, detalle: "dibujando las imágenes" });
-          return;
+        const donde = pend[i].donde.join(" · ");
+        setMontaje({ fase: "dibujando", hechas: i, total: pend.length, detalle: donde });
+
+        let hecha = await dibujarUna(pend[i], descripcionDe(pend[i]));
+
+        if (!hecha && ultimoDibujo.current.reintentable && !ultimoDibujo.current.pararTodo) {
+          setMontaje({ fase: "dibujando", hechas: i, total: pend.length, detalle: `${donde} · reintentando…` });
+          // Un respiro: si fue un reinicio del servidor, repetir al instante
+          // se topa con el mismo servidor a medio levantar.
+          await new Promise((r) => setTimeout(r, 2000));
+          hecha = await dibujarUna(pend[i], descripcionDe(pend[i]));
+        }
+
+        if (!hecha) {
+          if (ultimoDibujo.current.pararTodo) {
+            setMontaje({ fase: "parado", hechas: i, total: pend.length, detalle: "dibujando las imágenes" });
+            return;
+          }
+          saltadas.push(donde);
         }
       }
     }
@@ -1326,7 +1408,10 @@ export function StoryApp({
       setProject(alineado);
       engineRef.current?.update(alineado);
     }
-    setMontaje({ fase: "listo", hechas: voces.length, total: voces.length, detalle: "" });
+    // Las que se quedaron fuera van en el PANEL del montaje, no en la línea de
+    // estado: esa la pisa el guardado automático a los pocos segundos, y un
+    // aviso que desaparece solo es peor que no darlo.
+    setMontaje({ fase: "listo", hechas: voces.length, total: voces.length, detalle: "", saltadas });
     setStatus("Capítulo montado ✓ · revísalo y guarda");
   }
 
@@ -2071,6 +2156,15 @@ export function StoryApp({
                   para no gastar de más.
                 </p>
               </>
+            )}
+            {!!montaje.saltadas?.length && (
+              <p className="mt-2 text-[11px] text-gold">
+                {montaje.saltadas.length === 1
+                  ? "Una escena se quedó sin imagen"
+                  : `${montaje.saltadas.length} escenas se quedaron sin imagen`}
+                {" "}({montaje.saltadas.join(" · ")}). El resto se montó. Puedes dibujarlas a mano
+                desde su escena.
+              </p>
             )}
             {montaje.fase === "parado" && (
               <button onClick={() => void montarTodo()} className="btn-ghost mt-2 w-full text-xs">
