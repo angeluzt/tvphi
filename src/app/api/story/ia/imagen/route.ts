@@ -210,12 +210,28 @@ export async function POST(req: Request) {
       const delModelo = /deprecat|does not exist|no longer|not found|must be verified/i.test(crudo)
         && !/parameter|input_fidelity|unsupported.*param/i.test(crudo);
       if (delModelo) await anotarFallo(user.id, modelo);
+
+      // NO todo fallo de OpenAI es un 502.
+      //
+      // Antes todos salían así, y el editor no podía distinguir un corte
+      // pasajero —que sí conviene reintentar— de un «no» de contenido, que
+      // repetido da exactamente el mismo «no» y encima se paga dos veces.
+      // Se conserva la familia del código que dio OpenAI: 4xx suyo es que algo
+      // de LA PETICIÓN no le vale (moderación, prompt, parámetros), y eso no
+      // se arregla insistiendo.
+      const culpaNuestra = r.status >= 400 && r.status < 500;
+      const contenido = r.status === 400
+        && /safety|moderation|content policy|rejected as a result/i.test(crudo);
+
       return NextResponse.json({
         error: delModelo
           ? `El modelo «${modelo}» no sirve para imágenes: ${crudo}. Elige otro.`
           : crudo,
         modeloMal: delModelo, modelo,
-      }, { status: 502 });
+        codigo: contenido ? "contenido" : culpaNuestra ? "peticion" : "openai",
+        /** Para el lote: si insistir tiene sentido o solo cuesta dinero. */
+        reintentable: !culpaNuestra,
+      }, { status: culpaNuestra ? 400 : 502 });
     }
 
     const b64 = await leerImagen(j);
