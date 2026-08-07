@@ -28,6 +28,11 @@ model User {
   /// de esta fecha dejan de valer: es lo que echa a quien tuviera la cuenta
   /// abierta. Nulo = nunca la ha cambiado, así que no invalida nada.
   passwordChangedAt DateTime?
+  /// Cuándo se comprobó que el correo es suyo. Nulo = sin comprobar, y
+  /// entonces no puede usar nada que gaste dinero. Se puede entrar y usar el
+  /// editor igual: verificar sirve para que nadie queme la clave de OpenAI con
+  /// direcciones de usar y tirar, no para cerrarle la puerta a quien se apunta.
+  emailVerifiedAt DateTime?
 
   channel        Channel?
   templates      Template[]
@@ -45,6 +50,7 @@ model User {
   issuedModActions ModerationAction[] @relation("ModActor")
   targetModActions ModerationAction[] @relation("ModTarget")
   passwordResets PasswordResetToken[]
+  emailVerifications EmailVerificationToken[]
 }
 
 model Channel {
@@ -499,6 +505,27 @@ model PasswordResetToken {
   id        String    @id @default(cuid())
   userId    String
   tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Igual que el de restablecer contraseña, y a propósito: mismo mecanismo, se
+/// guarda el hash y no el token, caduca, y se marca usado para que el enlace
+/// no valga dos veces. Va en su propia tabla para que caducar uno no toque al
+/// otro: los plazos son muy distintos (1 hora frente a 2 días).
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  /// El correo al que se mandó. Si para cuando vuelva el enlace la cuenta
+  /// tiene otra dirección, el token ya no prueba nada y no se acepta.
+  email     String
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())

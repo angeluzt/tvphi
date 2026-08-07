@@ -7,6 +7,7 @@ import { migrateProject, quienesHablan } from "@/lib/story/model";
 import { prepararCapituloGenerado, ajustarMusicaCapitulo } from "@/lib/story/guion";
 import { VOCES } from "@/lib/story/modelos";
 import { estadoCupoHistorias, mensajeCupoAgotado, registrarUsoIaCapitulo, esAdminHistorias } from "@/lib/story/cupo";
+import { AVISO_SIN_VERIFICAR } from "@/lib/email-verify";
 
 // Si la IA no rellenó project.voices, se asigna una voz distinta por hablante
 // para que Nora y Tomás no suenen iguales al narrar.
@@ -138,6 +139,14 @@ export async function POST(req: Request) {
 
   const formato = parsed.data.formato;
   const medida = MEDIDAS[formato];
+
+  // Sin el correo confirmado no se escribe nada: es la puerta por la que
+  // entraría quien se apunta con direcciones de usar y tirar a gastar la clave.
+  if (!user.emailVerifiedAt && !esAdminHistorias(user.email)) {
+    return NextResponse.json({
+      error: AVISO_SIN_VERIFICAR, sinVerificar: true, codigo: "sin_verificar",
+    }, { status: 403 });
+  }
 
   const cupo = await estadoCupoHistorias(user.id, user.email);
   if (!cupo.exento && cupo.quedan <= 0) {

@@ -5,7 +5,17 @@
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
-  appUrl: process.env.APP_URL ?? "http://localhost:3000",
+  /**
+   * La URL pública. Con la que se arman los enlaces de los correos, así que si
+   * sale mal el correo llega pero no lleva a ninguna parte.
+   *
+   * Getter, y tratando la cadena vacía como ausente: con `APP_URL=""` puesta en
+   * el servidor, `?? "…"` la dejaba pasar y `new URL("")` reventaba en vez de
+   * caer al valor por defecto.
+   */
+  get appUrl() {
+    return (process.env["APP_URL"] ?? "").trim() || "http://localhost:3000";
+  },
   port: Number(process.env.PORT ?? 3000),
   authSecret: process.env.AUTH_SECRET ?? "dev-secret-change-me-please-0000000000000000",
   databaseUrl: process.env.DATABASE_URL ?? "",

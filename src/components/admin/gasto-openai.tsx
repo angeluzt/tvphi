@@ -33,7 +33,21 @@ export function GastoOpenAi() {
     setCargando(true); setError(null);
     try {
       const r = await fetch(`/api/admin/gasto?dias=${d}`);
-      const j = await r.json();
+      // Se lee como texto y se intenta pasar a JSON, en vez de fiarse.
+      // Si algo por el camino contesta una página de error —el servidor, un
+      // proxy, un tiempo agotado—, `r.json()` reventaba con «Unexpected token
+      // '<'» y eso era todo lo que se llegaba a saber del fallo.
+      const txt = await r.text();
+      let j: any = null;
+      try { j = JSON.parse(txt); } catch { j = null; }
+      if (!j) {
+        throw new Error(
+          r.ok
+            ? "El servidor contestó algo que no es JSON."
+            : `El servidor contestó ${r.status}${r.statusText ? ` (${r.statusText})` : ""}`
+              + " con una página en vez de datos. Suele ser que la petición tardó demasiado.",
+        );
+      }
       if (!r.ok) throw new Error(j.error || "No se pudo leer el gasto");
       setDato(j);
     } catch (e) { setError((e as Error).message); setDato(null); }
@@ -85,7 +99,7 @@ export function GastoOpenAi() {
       {dato && (
         <>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Cifra etiqueta={`Hoy (${(dato.huso ?? "").split("/").pop()?.replace("_", " ") || "local"})`} valor={usd(dato.hoyUsd)} />
+            <Cifra etiqueta={`Hoy (${dato.huso || "UTC"})`} valor={usd(dato.hoyUsd)} />
             <Cifra etiqueta="Este mes" valor={usd(dato.mesUsd)} />
             <Cifra etiqueta={`Últimos ${dias} días`} valor={usd(dato.totalUsd)} />
             <Cifra

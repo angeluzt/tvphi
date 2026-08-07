@@ -22,7 +22,18 @@ export async function GET(req: Request) {
   const pedidos = Number(new URL(req.url).searchParams.get("dias"));
   const dias = Number.isFinite(pedidos) ? Math.max(1, Math.min(90, pedidos)) : 30;
 
-  const g = await leerGasto(dias);
-  if ("error" in g) return NextResponse.json({ error: g.error }, { status: 502 });
-  return NextResponse.json({ ok: true, ...g });
+  // Cualquier fallo sale como JSON. Sin esto, un error inesperado lo contesta
+  // Next con su página de error, y el panel —que espera JSON— solo sabía decir
+  // «Unexpected token '<'», que no ayuda a nadie a arreglar nada.
+  try {
+    const g = await leerGasto(dias);
+    if ("error" in g) return NextResponse.json({ error: g.error }, { status: 502 });
+    return NextResponse.json({ ok: true, ...g });
+  } catch (e: any) {
+    console.error("[gasto] ", e);
+    return NextResponse.json(
+      { error: "Falló al leer los costes: " + (e?.message ?? "error desconocido") },
+      { status: 500 },
+    );
+  }
 }
