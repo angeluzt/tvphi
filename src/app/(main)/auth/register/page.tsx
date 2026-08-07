@@ -40,7 +40,7 @@ export default function RegisterPage() {
         <p className="mt-1 text-sm text-muted">Empieza a transmitir en minutos, sin OBS.</p>
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div>
-            <label className="label">Nombre a mostrar</label>
+            <label className="label">Nombre a mostrar <span className="text-muted">(opcional)</span></label>
             <input name="displayName" className="input mt-1" placeholder="Tu nombre" />
           </div>
           <div>

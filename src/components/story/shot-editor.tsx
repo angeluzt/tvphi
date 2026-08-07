@@ -375,7 +375,7 @@ export function ShotEditor({
           </button>
         </div>
         <p className="mt-1 text-[11px] text-muted">
-          «Quién habla» es el nombre del personaje (opcional). Vacío = narrador; si pones un nombre, esa voz se reutiliza en sus otras frases.
+          «Quién habla»: vacío = narrador. Con nombre, esa voz se repite en sus otras frases.
         </p>
         <div className="mt-2 space-y-2">
           {shot.dialogues.map((d, i) => (

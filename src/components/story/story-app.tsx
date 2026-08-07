@@ -2037,9 +2037,7 @@ export function StoryApp({
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-gold">{sinCupoIa}</p>
                 <p className="mt-1 text-[11px] text-muted">
-                  Mientras tanto puedes seguir montando el capítulo entero a mano: encuadres,
-                  tiempos, efectos, música y stickers. La voz sigue funcionando con el modelo
-                  del navegador, que es gratis.
+                  El editor sigue entero, y la voz del navegador es gratis.
                 </p>
               </div>
               <button onClick={() => setSinCupoIa(null)} className="shrink-0 text-muted hover:text-fg">
@@ -2915,9 +2913,8 @@ export function StoryApp({
             </label>
           </div>
           <p className="mt-2 text-[11px] text-muted">
-            Guarda el montaje entero —escenas, encuadres, tiempos, voces, stickers y efectos— en un
-            JSON, con el catálogo de efectos dentro. Las imágenes y los audios no caben ahí, así que
-            al importarlo en otro equipo salen como faltantes y se reponen una a una con «Buscar».
+            Solo el montaje, en un JSON. Las imágenes y los audios no van dentro: en otro equipo
+            salen como faltantes.
           </p>
           {/* Con los archivos dentro: es el respaldo de verdad. */}
           <div className="mt-3 flex gap-2 border-t border-border pt-3">
@@ -2983,8 +2980,8 @@ export function StoryApp({
             </label>
           </div>
           <p className="mt-2 text-[11px] text-muted">
-            Saca todos los diálogos en un JSON para corregirlos fuera (por ejemplo con una IA) y
-            vuelve a meterlos. Los que cambien se marcan y luego se regenera solo su voz.
+            Saca los diálogos, corrígelos fuera y vuelve a meterlos. Solo se regenera la voz de
+            los que cambien.
           </p>
         </div>
 

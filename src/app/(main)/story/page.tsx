@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { estadoCupoHistorias } from "@/lib/story/cupo";
 import { StoryApp } from "@/components/story/story-app";
-import { ComoFunciona } from "@/components/story/como-funciona";
 import { AvisoVerificar } from "@/components/auth/aviso-verificar";
 
 export const dynamic = "force-dynamic";
@@ -39,13 +38,13 @@ export default async function StoryPage({
         <div className="min-w-0 flex-1">
           <h1 className="text-xl font-bold">Historias narradas</h1>
           <p className="text-sm text-muted">
-            Crea videos tipo YouTube sin cámara: sube imágenes, escribe el texto que se narra con
-            voz IA, dale movimiento y transiciones, añade música y stickers, y descarga el video.
+            Videos narrados a partir de imágenes. Sin cámara y sin instalar nada.
           </p>
         </div>
       </div>
       {!user.emailVerifiedAt && <AvisoVerificar email={user.email} />}
-      <ComoFunciona />
+      {/* «Cómo funciona» vive dentro de StoryHome, debajo de crear con IA: en
+          el editor no pinta nada y aquí salía también mientras editabas. */}
       <StoryApp
         initialProjects={projects}
         initialCupo={cupo}

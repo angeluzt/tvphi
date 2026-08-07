@@ -7,10 +7,21 @@ import { defaultScenes } from "@/lib/scene";
 import { enviarVerificacion } from "@/lib/email-verify";
 
 const schema = z.object({
-  email: z.string().email(),
-  username: z.string().min(3).max(24).regex(/^[a-zA-Z0-9_]+$/, "Solo letras, números y _"),
-  displayName: z.string().min(1).max(40).optional(),
-  password: z.string().min(6).max(100),
+  email: z.string().email("Ese email no parece válido."),
+  username: z.string()
+    .min(3, "El usuario necesita al menos 3 letras.")
+    .max(24, "El usuario no puede pasar de 24 letras.")
+    .regex(/^[a-zA-Z0-9_]+$/, "El usuario solo admite letras, números y _"),
+  /**
+   * El formulario NO lo pide como obligatorio y siempre manda algo, aunque sea
+   * "". Con `min(1)` eso fallaba, así que dejar el campo en blanco —lo normal,
+   * porque pone «opcional»— impedía registrarse, y encima con el mensaje de zod
+   * en inglés: «String must contain at least 1 character(s)».
+   */
+  displayName: z.string().max(40, "El nombre no puede pasar de 40 letras.").optional(),
+  password: z.string()
+    .min(6, "La contraseña necesita al menos 6 caracteres.")
+    .max(100, "La contraseña es demasiado larga."),
 });
 
 export async function POST(req: Request) {
@@ -20,7 +31,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, { status: 400 });
   }
   const { email, username, password } = parsed.data;
-  const displayName = parsed.data.displayName || username;
+  const displayName = parsed.data.displayName?.trim() || username;
   const slug = slugify(username);
 
   const exists = await prisma.user.findFirst({

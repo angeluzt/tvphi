@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, ChevronDown } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
 import { ASPECTS, type Aspect } from "@/lib/story/model";
 import type { CupoHistorias } from "./story-app";
 
-// Escribir un capítulo con IA.
+// Crear una historia con IA.
+//
+// Es lo primero de la pantalla y viene ABIERTO: es a lo que entra casi todo el
+// mundo, y estaba plegado al final de la página. Un panel plegado abajo del
+// todo no lo encuentra nadie.
+//
 // El usuario normal no ve claves ni modelos: solo el encargo.
 // El admin (STORY_QUOTA_EXEMPT_EMAILS) sí puede elegir modelos.
 
@@ -29,7 +34,7 @@ export function IaPanel({
   const [formato, setFormato] = useState<Aspect>("16:9");
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
-  const [abierto, setAbierto] = useState(false);
+  const [abierto, setAbierto] = useState(true);
   const [recargar, setRecargar] = useState(0);
 
   const sinCupoIa = !!cupo && !cupo.exento && cupo.quedan <= 0;
@@ -74,12 +79,10 @@ export function IaPanel({
       // Si se ha enderezado la música, se dice: el usuario tiene que poder
       // entender por qué su capítulo no suena como el JSON que pidió.
       const arreglos: string[] = [];
-      if (j.musica?.bajadas) arreglos.push(`música bajada al 12% (venía muy alta y tapaba la voz)`);
-      if (j.musica?.movidas) {
-        arreglos.push(`${j.musica.movidas} música${j.musica.movidas > 1 ? "s" : ""} de más movida${j.musica.movidas > 1 ? "s" : ""} a su escena`);
-      }
-      setAviso(`Capítulo escrito ✓ · ${j.imagenes} escenas.` +
-        (arreglos.length ? ` · ${arreglos.join(" · ")}` : ""));
+      if (j.musica?.bajadas) arreglos.push("música bajada, tapaba la voz");
+      if (j.musica?.movidas) arreglos.push(`${j.musica.movidas} música a su escena`);
+      setAviso(`Listo · ${j.imagenes} escenas`
+        + (arreglos.length ? ` · ${arreglos.join(" · ")}` : ""));
     } catch (e: any) { setAviso(e?.message ?? "No se pudo generar"); }
     setOcupado(false);
   }
@@ -89,12 +92,19 @@ export function IaPanel({
       <button
         onClick={() => setAbierto((v) => !v)}
         className="flex w-full items-center gap-2 text-left"
+        aria-expanded={abierto}
       >
         <Sparkles className="h-4 w-4 shrink-0 text-accent" />
-        <span className="label flex-1">Escribir un capítulo con IA</span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-fg">Crear historia con IA</span>
+          <span className="block text-[11px] text-muted">
+            Cuéntale la idea y monta las escenas, la narración y los efectos.
+          </span>
+        </span>
         {estado?.configurada
           ? <span className="chip bg-accent/15 text-accent">listo</span>
           : estado && <span className="chip bg-danger/15 text-danger">no disponible</span>}
+        <ChevronDown className={`h-4 w-4 shrink-0 text-muted transition-transform ${abierto ? "rotate-180" : ""}`} />
       </button>
 
       {abierto && (
@@ -102,18 +112,18 @@ export function IaPanel({
           {cupo && !cupo.exento && (
             <p className={`text-[11px] ${sinCupoIa ? "text-danger" : "text-muted"}`}>
               {sinCupoIa
-                ? `Has usado tus ${cupo.limite} historias con IA de hoy. Vuelve ${cupo.retryAt ? new Date(cupo.retryAt).toLocaleString() : "más tarde"}.`
-                : `Te quedan ${cupo.quedan} de ${cupo.limite} historias con IA en 24 h.`}
+                ? `Sin historias por hoy. Vuelve ${cupo.retryAt ? new Date(cupo.retryAt).toLocaleString() : "más tarde"}.`
+                : `Te quedan ${cupo.quedan} de ${cupo.limite} hoy.`}
             </p>
           )}
 
           <div>
-            <span className="text-xs text-muted">De qué va el capítulo</span>
+            <span className="text-xs text-muted">De qué va</span>
             <textarea
               className="input mt-1 h-24 w-full text-sm"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              aria-label="De qué va el capítulo"
+              aria-label="De qué va"
               placeholder="Un pueblo que quedó bajo un embalse y reaparece con la sequía. Tono documental, inquietante, sin música alegre."
             />
           </div>
@@ -123,7 +133,7 @@ export function IaPanel({
           )}
 
           <div>
-            <span className="text-xs text-muted">¿Dónde se va a ver?</span>
+            <span className="text-xs text-muted">Dónde se va a ver</span>
             <div className="mt-1 grid grid-cols-3 gap-1">
               {ASPECTS.map((a) => (
                 <button
@@ -147,7 +157,7 @@ export function IaPanel({
               ))}
             </div>
             <p className="mt-1 text-[10px] text-muted">
-              Se decide ahora: los encuadres y las imágenes se hacen para esta forma.
+              Se decide ahora: los encuadres se hacen para esta forma.
             </p>
           </div>
 
@@ -163,12 +173,11 @@ export function IaPanel({
             className="btn-brand w-full text-sm disabled:opacity-40"
           >
             {ocupado ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {ocupado ? "Escribiendo…" : "Escribir el capítulo"}
+            {ocupado ? "Escribiendo…" : "Crear historia"}
           </button>
 
           <p className="text-[11px] text-muted">
-            La IA monta escenas, narración y efectos. Al abrirlo puede dibujar las
-            imágenes y narrar solo; si falta algo, lo repones después.
+            Se abre en el editor y se puede cambiar todo.
           </p>
 
           {aviso && <p className="text-sm text-accent">{aviso}</p>}

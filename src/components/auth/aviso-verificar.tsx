@@ -16,10 +16,8 @@ export function AvisoVerificar({ email }: { email: string }) {
         <div className="min-w-0 space-y-2">
           <p className="text-sm font-medium text-fg">Confirma tu correo para usar la IA</p>
           <p className="text-xs text-muted">
-            Te mandamos un enlace a <b className="text-fg">{email}</b>. Mientras tanto puedes
-            usar el editor entero: subir imágenes, montar el video, la voz del navegador y
-            descargarlo. Lo que espera al enlace es escribir con IA, generar imágenes y la voz
-            de pago.
+            Te mandamos un enlace a <b className="text-fg">{email}</b>. El editor funciona igual;
+            lo que espera es la IA.
           </p>
           <ReenviarVerificacion compacto />
         </div>
