@@ -1,6 +1,7 @@
 import "server-only";
 import { Resend } from "resend";
 import { env, isProd } from "@/lib/env";
+import { correoHtml } from "@/lib/email-plantilla";
 
 let client: Resend | null = null;
 function resend() {
@@ -30,24 +31,30 @@ export async function enviarCorreoReset(opts: {
   displayName: string;
   resetUrl: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const asunto = "Restablecer tu contraseña en TVPHI";
   const texto =
     `Hola ${opts.displayName},\n\n` +
-    `Pediste restablecer tu contraseña. Abre este enlace (válido 1 hora):\n\n` +
+    `Pediste restablecer tu contraseña en TVPHI. Abre este enlace (válido 1 hora):\n\n` +
     `${opts.resetUrl}\n\n` +
-    `Si no fuiste tú, ignora este correo. Tu contraseña no cambiará.\n`;
-  const html =
-    `<p>Hola ${escapeHtml(opts.displayName)},</p>` +
-    `<p>Pediste restablecer tu contraseña. El enlace caduca en <strong>1 hora</strong>.</p>` +
-    `<p><a href="${escapeAttr(opts.resetUrl)}">Elegir nueva contraseña</a></p>` +
-    `<p style="color:#666;font-size:13px">Si el botón no abre, copia y pega:<br>${escapeHtml(opts.resetUrl)}</p>` +
-    `<p style="color:#666;font-size:13px">Si no pediste esto, ignora el mensaje.</p>`;
+    `Si no fuiste tú, ignora este correo. Tu contraseña no cambiará.\n\n` +
+    `— TVPHI · ${env.appUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}\n`;
 
   return enviar({
     to: opts.to,
-    subject: asunto,
+    subject: "Restablecer tu contraseña en TVPHI",
     texto,
-    html,
+    html: correoHtml({
+      avance: "Elige una contraseña nueva. El enlace vale 1 hora.",
+      titulo: "Restablecer tu contraseña",
+      saludo: `Hola ${opts.displayName},`,
+      parrafos: [
+        "Pediste elegir una contraseña nueva. Pulsa el botón y te dejamos ponerla.",
+        "El enlace caduca en <b>1 hora</b> y solo se puede usar una vez.",
+      ],
+      boton: { texto: "Elegir nueva contraseña", url: opts.resetUrl },
+      coletilla:
+        "Si no pediste esto, ignora el correo: tu contraseña sigue siendo la misma "
+        + "y nadie ha entrado en tu cuenta.",
+    }),
     etiquetaDev: "enlace de reset",
     enlaceDev: opts.resetUrl,
   });
@@ -64,21 +71,35 @@ export async function enviarCorreoVerificacion(opts: {
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const texto =
     `Hola ${opts.displayName},\n\n` +
-    `Confirma que esta dirección es tuya abriendo este enlace (válido 2 días):\n\n` +
+    `Te damos la bienvenida a TVPHI. Confirma que esta dirección es tuya abriendo ` +
+    `este enlace (válido 2 días):\n\n` +
     `${opts.verifyUrl}\n\n` +
-    `Si no te registraste en TVPHI, ignora este correo: sin confirmar, la cuenta no hace nada.\n`;
-  const html =
-    `<p>Hola ${escapeHtml(opts.displayName)},</p>` +
-    `<p>Confirma que esta dirección es tuya. El enlace caduca en <strong>2 días</strong>.</p>` +
-    `<p><a href="${escapeAttr(opts.verifyUrl)}">Confirmar mi correo</a></p>` +
-    `<p style="color:#666;font-size:13px">Si el botón no abre, copia y pega:<br>${escapeHtml(opts.verifyUrl)}</p>` +
-    `<p style="color:#666;font-size:13px">Si no te registraste en TVPHI, ignora el mensaje.</p>`;
+    `Mientras tanto ya puedes usar el editor entero. Al confirmar se activan las ` +
+    `funciones con IA: escribir capítulos, generar imágenes y la narración.\n\n` +
+    `Si no te registraste en TVPHI, ignora este correo.\n\n` +
+    `— TVPHI · ${env.appUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}\n`;
 
   return enviar({
     to: opts.to,
     subject: "Confirma tu correo en TVPHI",
     texto,
-    html,
+    html: correoHtml({
+      avance: "Confirma tu correo y se activan las funciones con IA.",
+      titulo: "Confirma tu correo",
+      saludo: `Hola ${opts.displayName},`,
+      parrafos: [
+        "Te damos la bienvenida a TVPHI. Solo falta comprobar que esta dirección es tuya.",
+        "Mientras tanto <b>ya puedes usar el editor entero</b>: subir imágenes, montar el "
+        + "video, narrarlo con la voz del navegador y descargarlo.",
+        "Al confirmar se activan además las funciones con IA — escribir capítulos, "
+        + "generar imágenes y la narración de calidad.",
+        "El enlace caduca en <b>2 días</b>.",
+      ],
+      boton: { texto: "Confirmar mi correo", url: opts.verifyUrl },
+      coletilla:
+        "Si no te registraste en TVPHI, ignora este correo y no pasará nada: "
+        + "sin confirmar, la cuenta no puede usar la IA.",
+    }),
     etiquetaDev: "enlace de verificación",
     enlaceDev: opts.verifyUrl,
   });
@@ -103,15 +124,4 @@ async function enviar(o: {
     return { ok: false, error: "No se pudo enviar el correo. Inténtalo más tarde." };
   }
   return { ok: true };
-}
-
-function escapeHtml(s: string) {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-function escapeAttr(s: string) {
-  return escapeHtml(s).replace(/'/g, "&#39;");
 }
