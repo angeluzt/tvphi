@@ -22,6 +22,8 @@ export interface CapaGenerada {
   via: Recorte["via"];
   vacio: number;
   color?: string;
+  /** El movimiento propio que la IA le puso a esta capa, si le puso alguno. */
+  mov?: unknown;
 }
 
 export function GenerarIa({
@@ -125,7 +127,12 @@ export function GenerarIa({
           // esquinas (capa delantera), el cliente cree que no hay fondo que quitar.
           j.porCroma ? (j.croma ?? undefined) : undefined,
         );
-        out.push({ id: capa.id, nombre: capa.name, url: rec.url, via: rec.via, vacio: rec.vacio, color: rec.color });
+        out.push({
+          id: capa.id, nombre: capa.name, url: rec.url, via: rec.via, vacio: rec.vacio, color: rec.color,
+          // El movimiento propio viaja con la capa hasta el montaje: si se
+          // quedara en el mapa, el pájaro llegaría al compositor quieto.
+          mov: capa.mov,
+        });
         setHechas([...out]);
       }
       const cromadas = out.filter((c) => c.via === "croma").length;

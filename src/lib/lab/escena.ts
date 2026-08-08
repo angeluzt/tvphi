@@ -15,6 +15,8 @@
 // LAS COORDENADAS VAN DE 0 A 1, siempre, sobre el ancho y el alto de la escena.
 // Así el mismo mapa sirve para 1920×1080 y para vertical sin tocar un número.
 
+import { normalizarMov, type MovCapa } from "@/lib/lab/movimiento-capa";
+
 export type Semantico =
   | "sky" | "terrain" | "wall" | "floor" | "door" | "window" | "column" | "arch"
   | "stairs" | "vegetation" | "water" | "subject" | "prop" | "light_anchor"
@@ -142,6 +144,12 @@ export interface Capa {
   guia?: boolean;
   /** Desenfoque sugerido a la IA para esta capa, de 0 a 1. */
   blur?: number;
+  /**
+   * Movimiento PROPIO de la capa, además del de la cámara. Es lo que hace que
+   * un pájaro cruce el cuadro o que una barca flote, en vez de tener una
+   * escena con profundidad pero completamente quieta.
+   */
+  mov?: MovCapa;
   ai?: { prompt?: string; exclude?: string };
   objects: Objeto[];
 }
@@ -235,7 +243,14 @@ export function normalizar(d: Escena): Escena {
     palette: { ...PALETA, ...(d.palette ?? {}) },
     layers: d.layers
       .map((c) => {
-        const capa = { ...c, visible: c.visible !== false, objects: c.objects ?? [] };
+        const capa = {
+          ...c,
+          visible: c.visible !== false,
+          objects: c.objects ?? [],
+          // Se acota aquí y no al pintar: un número disparatado saca la capa
+          // del cuadro en el primer fotograma y parece que ha desaparecido.
+          mov: normalizarMov((c as any).mov),
+        };
         // La marca se deja puesta aquí y no en cada sitio que la necesite: así
         // el editor la enseña y el que dibuja la salta, mirando lo mismo.
         return { ...capa, guia: esGuia(capa) };

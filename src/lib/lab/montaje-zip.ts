@@ -23,6 +23,8 @@ export type CapaMontajeMeta = {
   archivo: string;
   via?: "transparente" | "croma" | "opaca";
   vacio?: number;
+  /** Movimiento propio de la capa, si lo tiene. */
+  mov?: unknown;
 };
 
 export type MontajePack = {
@@ -71,6 +73,7 @@ export async function bajarMontajeZip(opts: {
     opacidad: number;
     via?: CapaMontajeMeta["via"];
     vacio?: number;
+    mov?: unknown;
     img: HTMLImageElement;
   }[];
 }) {
@@ -89,6 +92,7 @@ export async function bajarMontajeZip(opts: {
       archivo,
       via: c.via,
       vacio: c.vacio,
+      mov: c.mov,
     });
   }
 
@@ -129,6 +133,7 @@ export type CapaImportada = {
   opacidad: number;
   via?: CapaMontajeMeta["via"];
   vacio?: number;
+  mov?: unknown;
   url: string;
 };
 
@@ -175,6 +180,7 @@ export async function leerMontajeZip(file: Blob): Promise<{
         opacidad: m.opacidad ?? 1,
         via: m.via,
         vacio: m.vacio,
+        mov: m.mov,
         url,
       });
     }

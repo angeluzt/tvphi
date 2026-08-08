@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
+import { desplazamientoCapa, normalizarMov, type MovCapa } from "@/lib/lab/movimiento-capa";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
   planificarCola, interpolarTramo, escalaPerspectiva, visibilidadPorAvance,
@@ -34,6 +35,8 @@ interface CapaImg {
   opacidad: number;
   via?: "transparente" | "croma" | "opaca";
   vacio?: number;
+  /** Movimiento propio, además del de la cámara. */
+  mov?: MovCapa;
 }
 
 export interface Semilla {
@@ -41,6 +44,7 @@ export interface Semilla {
   url: string;
   via?: CapaImg["via"];
   vacio?: number;
+  mov?: MovCapa;
 }
 
 let contador = 0;
@@ -62,6 +66,7 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
   // Borrador del paso a añadir a la cola
   const [borrador, setBorrador] = useState(() => pasoPorDefecto({ id: "borrador", mov: "der", durMs: 4000, distancia: 55 }));
   const [cola, setCola] = useState<PasoSecuencia[]>([]);
+  const relojRef = useRef(typeof performance !== "undefined" ? performance.now() : 0);
   // La cola de la IA se copia UNA vez y ya es tuya: si se volviera a copiar en
   // cada render, cualquier retoque a mano se perdería al respirar.
   const colaIaRef = useRef<PasoSecuencia[] | null>(null);
@@ -230,7 +235,7 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
         cola,
         capas: capas.map((c) => ({
           nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
-          via: c.via, vacio: c.vacio, img: c.img,
+          via: c.via, vacio: c.vacio, mov: c.mov, img: c.img,
         })),
       });
       setAviso(
@@ -257,6 +262,7 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
         nuevas.push({
           ...hacerCapa(c.nombre, img),
           depth: c.depth, escala: c.escala, opacidad: c.opacidad, via: c.via, vacio: c.vacio,
+          mov: normalizarMov(c.mov),
         });
       }
       if (!nuevas.length) throw new Error("El ZIP no trae capas.");
@@ -425,6 +431,10 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
     // El fondo es el único opaco: si se queda por debajo del cuadro, asoma el
     // negro por los bordes. Se le pone suelo en 1 y así «alejar» no rompe nada.
     const idFondo = capas.find((x) => x.visible)?.id;
+    // Reloj propio: el movimiento de las capas NO depende de la cola. Un
+    // pájaro sigue volando mientras la cámara está parada, que es justo lo que
+    // hace que la escena parezca viva.
+    const reloj = (performance.now() - relojRef.current) / 1000;
     for (const capa of capas) {
       if (!capa.visible) continue;
       let e = capa.escala * vista.zoom * vista.zoomCapa(capa.depth);
@@ -440,15 +450,23 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
         const holgura = 1 + 2 * Math.max(Math.abs(vista.ox * pan), Math.abs(vista.oy * pan));
         e = Math.max(e, holgura);
       }
+      // Movimiento PROPIO de la capa, encima del de la cámara: es lo que hace
+      // que un pájaro cruce o una barca flote en una escena por lo demás
+      // quieta. Va en anchos de pantalla, así que aguanta cualquier tamaño.
+      const propio = desplazamientoCapa(capa.mov, reloj);
+      e *= propio.escala;
       const dw = w * e, dh = h * e;
+      const x0 = -(dw - w) / 2 + vista.ox * pan * w + propio.dx * w;
+      const y0 = -(dh - h) / 2 + vista.oy * pan * h + propio.dy * h;
       c.save();
       c.globalAlpha = capa.opacidad * vista.alphaCapa(capa.depth, capa.id);
-      c.drawImage(
-        capa.img,
-        -(dw - w) / 2 + vista.ox * pan * w,
-        -(dh - h) / 2 + vista.oy * pan * h,
-        dw, dh,
-      );
+      c.drawImage(capa.img, x0, y0, dw, dh);
+      // Con bucle se pinta una segunda copia a un cuadro de distancia: es lo
+      // que evita el hueco negro mientras la primera termina de salir.
+      if (propio.repetir) {
+        if (capa.mov?.x) c.drawImage(capa.img, x0 - Math.sign(capa.mov.x) * 2 * w, y0, dw, dh);
+        if (capa.mov?.y) c.drawImage(capa.img, x0, y0 - Math.sign(capa.mov.y) * 2 * h, dw, dh);
+      }
       c.restore();
     }
   }
