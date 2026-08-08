@@ -8,7 +8,10 @@ import {
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
-import { desplazamientoCapa, normalizarMov, type MovCapa } from "@/lib/lab/movimiento-capa";
+import { desplazamientoCapa, normalizarMov, MOVS_CAPA, type MovCapa } from "@/lib/lab/movimiento-capa";
+import {
+  cajaSprite, fotogramaEn, normalizarSprite, pintarSprite, type SpriteEnCapa,
+} from "@/lib/lab/sprite-capa";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
   planificarCola, interpolarTramo, escalaPerspectiva, visibilidadPorAvance,
@@ -37,6 +40,11 @@ interface CapaImg {
   vacio?: number;
   /** Movimiento propio, además del de la cámara. */
   mov?: MovCapa;
+  /**
+   * Si la capa es un sprite: `img` es la TIRA entera y esto dice cómo leerla.
+   * Sin esto, la imagen se pinta a pantalla completa, como siempre.
+   */
+  spr?: SpriteEnCapa;
 }
 
 export interface Semilla {
@@ -45,13 +53,22 @@ export interface Semilla {
   via?: CapaImg["via"];
   vacio?: number;
   mov?: MovCapa;
+  spr?: SpriteEnCapa;
 }
 
 let contador = 0;
 let pasoSeq = 0;
 
-export function Compositor({ semilla, colaInicial, escena, onEscena }: {
+export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   semilla?: Semilla[];
+  /**
+   * Un sprite de la biblioteca para AÑADIR, no para reemplazar.
+   *
+   * Va aparte de `semilla` a propósito: la semilla es «este es el montaje»,
+   * y un sprite es «mete además este pájaro». Si compartieran camino, elegir
+   * un pájaro borraría el decorado.
+   */
+  sprite?: (Semilla & { spr: SpriteEnCapa }) | null;
   /** Cola escrita por la IA. Se carga una vez, y a partir de ahí se edita. */
   colaInicial?: PasoSecuencia[];
   /** El mapa de formas, para que viaje dentro del ZIP del proyecto. */
@@ -235,7 +252,7 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
         cola,
         capas: capas.map((c) => ({
           nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
-          via: c.via, vacio: c.vacio, mov: c.mov, img: c.img,
+          via: c.via, vacio: c.vacio, mov: c.mov, spr: c.spr, img: c.img,
         })),
       });
       setAviso(
@@ -263,6 +280,7 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
           ...hacerCapa(c.nombre, img),
           depth: c.depth, escala: c.escala, opacidad: c.opacidad, via: c.via, vacio: c.vacio,
           mov: normalizarMov(c.mov),
+          spr: normalizarSprite(c.spr),
         });
       }
       if (!nuevas.length) throw new Error("El ZIP no trae capas.");
@@ -300,7 +318,10 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
       const nuevas: CapaImg[] = [];
       for (const s of semilla) {
         try {
-          nuevas.push({ ...hacerCapa(s.nombre, await cargar(s.url)), via: s.via, vacio: s.vacio });
+          nuevas.push({
+            ...hacerCapa(s.nombre, await cargar(s.url)),
+            via: s.via, vacio: s.vacio, mov: s.mov, spr: s.spr,
+          });
         } catch {}
       }
       if (!vivo || !nuevas.length) return;
@@ -310,6 +331,33 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
     })();
     return () => { vivo = false; };
   }, [semilla]);
+
+  // Un sprite de la biblioteca se AÑADE encima de lo que ya hay.
+  //
+  // Y NO se reparten las profundidades: `repartirProfundidad` las recalcula
+  // todas según el orden, así que meter un pájaro movería el fondo y el primer
+  // plano que ya estaban puestos. El pájaro entra a media distancia y se ajusta
+  // a mano, que es lo único que no rompe el montaje de nadie.
+  useEffect(() => {
+    if (!sprite) return;
+    let vivo = true;
+    (async () => {
+      try {
+        const img = await cargar(sprite.url);
+        if (!vivo) return;
+        setCapas((prev) => [...prev, {
+          ...hacerCapa(sprite.nombre, img),
+          depth: prev.length ? 0.5 : 0,
+          mov: sprite.mov,
+          spr: sprite.spr,
+        }]);
+        setAviso(`«${sprite.nombre}» añadido. Colócalo con los mandos de su capa.`);
+      } catch {
+        if (vivo) setAviso(`No se pudo cargar «${sprite.nombre}».`);
+      }
+    })();
+    return () => { vivo = false; };
+  }, [sprite]);
 
   // UNA sola vez, y con [] a propósito.
   //
@@ -430,7 +478,10 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
 
     // El fondo es el único opaco: si se queda por debajo del cuadro, asoma el
     // negro por los bordes. Se le pone suelo en 1 y así «alejar» no rompe nada.
-    const idFondo = capas.find((x) => x.visible)?.id;
+    // Un sprite nunca puede hacer de fondo: es un bicho recortado con casi todo
+    // transparente, y darle el trato de fondo opaco solo consigue que se estire
+    // buscando tapar un cuadro que no puede tapar.
+    const idFondo = capas.find((x) => x.visible && !x.spr)?.id;
     // Reloj propio: el movimiento de las capas NO depende de la cola. Un
     // pájaro sigue volando mientras la cámara está parada, que es justo lo que
     // hace que la escena parezca viva.
@@ -460,6 +511,31 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
       const y0 = -(dh - h) / 2 + vista.oy * pan * h + propio.dy * h;
       c.save();
       c.globalAlpha = capa.opacidad * vista.alphaCapa(capa.depth, capa.id);
+
+      if (capa.spr) {
+        // El sprite se pinta DENTRO del plano de su capa: por eso hereda el
+        // paralaje, el zoom y el desplazamiento sin una sola línea de más. El
+        // plano es el rectángulo que acabamos de calcular; el bicho va en su
+        // sitio de ese rectángulo, y se agranda con él.
+        const af = capa.img.naturalWidth / capa.spr.fotogramas;
+        const hf = capa.img.naturalHeight;
+        const i = fotogramaEn(capa.spr, reloj);
+        const plano = { x0, y0, w: dw, h: dh };
+        pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, plano));
+        if (propio.repetir) {
+          if (capa.mov?.x) {
+            const p2 = { ...plano, x0: x0 - Math.sign(capa.mov.x) * 2 * w };
+            pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, p2));
+          }
+          if (capa.mov?.y) {
+            const p2 = { ...plano, y0: y0 - Math.sign(capa.mov.y) * 2 * h };
+            pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, p2));
+          }
+        }
+        c.restore();
+        continue;
+      }
+
       c.drawImage(capa.img, x0, y0, dw, dh);
       // Con bucle se pinta una segunda copia a un cuadro de distancia: es lo
       // que evita el hueco negro mientras la primera termina de salir.
@@ -481,8 +557,17 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
       if (!capa.visible) continue;
       const e = capa.escala;
       const dw = out.width * e, dh = out.height * e;
+      const x0 = -(dw - out.width) / 2, y0 = -(dh - out.height) / 2;
       c.globalAlpha = capa.opacidad;
-      c.drawImage(capa.img, -(dw - out.width) / 2, -(dh - out.height) / 2, dw, dh);
+      if (capa.spr) {
+        // Un PNG es un instante, así que del sprite se congela el primero.
+        const af = capa.img.naturalWidth / capa.spr.fotogramas;
+        const hf = capa.img.naturalHeight;
+        const plano = { x0, y0, w: dw, h: dh };
+        pintarSprite(c, capa.img, capa.spr, af, hf, 0, cajaSprite(capa.spr, af, hf, plano));
+        continue;
+      }
+      c.drawImage(capa.img, x0, y0, dw, dh);
     }
     const b = await new Promise<Blob | null>((r) => out.toBlob(r, "image/png"));
     if (b) bajar(b, "montaje.png");
@@ -632,6 +717,14 @@ export function Compositor({ semilla, colaInicial, escena, onEscena }: {
                 onCambio={(v) => upd(c.id, { escala: v })} formato={(v) => `${Math.round((v - 1) * 100)}%`} />
               <Barra etiqueta="Opacidad" valor={c.opacidad} max={1} paso={0.01}
                 onCambio={(v) => upd(c.id, { opacidad: v })} formato={(v) => `${Math.round(v * 100)}%`} />
+              {c.spr && (
+                <MandosSprite
+                  spr={c.spr}
+                  mov={c.mov}
+                  onSpr={(p) => upd(c.id, { spr: { ...c.spr!, ...p } })}
+                  onMov={(m) => upd(c.id, { mov: m })}
+                />
+              )}
             </div>
           ))}
         </div>
@@ -1327,6 +1420,78 @@ function Barra({ etiqueta, valor, min = 0, max, paso, onCambio, formato }: {
         onChange={(e) => onCambio(Number(e.target.value))} className="min-w-0 flex-1" />
       <span className="w-9 shrink-0 text-right tabular-nums">{formato(valor)}</span>
     </label>
+  );
+}
+
+/**
+ * Los mandos de una capa que es un sprite.
+ *
+ * Un sprite recién metido cae en el centro y a un quinto de alto, que casi
+ * nunca es donde va. Sin sitio, tamaño y sentido de la marcha, la biblioteca
+ * serviría para mirar los bichos y para nada más.
+ *
+ * Lo de «cruza» está aquí y no en un panel de movimiento aparte porque es lo
+ * que se quiere el 90% de las veces: un pájaro entra por un lado y sale por el
+ * otro. Los demás movimientos se afinan luego, con el resto de la escena.
+ */
+function MandosSprite({ spr, mov, onSpr, onMov }: {
+  spr: SpriteEnCapa;
+  mov?: MovCapa;
+  onSpr: (p: Partial<SpriteEnCapa>) => void;
+  onMov: (m: MovCapa | undefined) => void;
+}) {
+  return (
+    <div className="space-y-1 rounded-md border border-accent/25 bg-accent/5 p-1.5">
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] font-medium text-accent">
+          Sprite · {spr.fotogramas} fotogramas
+        </span>
+        <button
+          type="button"
+          onClick={() => onSpr({ espejo: !spr.espejo })}
+          className={`ml-auto rounded border px-1 py-0.5 text-[9px] ${
+            spr.espejo ? "border-accent text-accent" : "border-border text-muted hover:text-fg"
+          }`}
+          title="Mirar al otro lado"
+        >
+          ⇄ espejo
+        </button>
+      </div>
+      <Barra etiqueta="Izq · der" valor={spr.x} min={-0.5} max={1.5} paso={0.01}
+        onCambio={(v) => onSpr({ x: v })} formato={(v) => v.toFixed(2)} />
+      <Barra etiqueta="Arr · abj" valor={spr.y} min={-0.5} max={1.5} paso={0.01}
+        onCambio={(v) => onSpr({ y: v })} formato={(v) => v.toFixed(2)} />
+      <Barra etiqueta="Tamaño" valor={spr.alto} min={0.02} max={1} paso={0.01}
+        onCambio={(v) => onSpr({ alto: v })} formato={(v) => `${Math.round(v * 100)}%`} />
+      <Barra etiqueta="Velocidad" valor={spr.fps} min={1} max={30} paso={1}
+        onCambio={(v) => onSpr({ fps: Math.round(v) })} formato={(v) => `${v}/s`} />
+      <label className="flex items-center gap-1.5 text-[10px] text-muted">
+        <span className="w-16 shrink-0">Se mueve</span>
+        <select
+          className="input min-w-0 flex-1 py-0.5 text-[10px]"
+          value={mov?.tipo ?? ""}
+          onChange={(e) => {
+            const t = e.target.value;
+            if (!t) return onMov(undefined);
+            // Valores de salida que ya se ven bien: un pájaro que cruza en unos
+            // ocho segundos, un balanceo corto. Se afinan después, pero elegir
+            // «cruza» y que no pase nada visible sería lo peor.
+            if (t === "deriva") return onMov({ tipo: "deriva", x: 0.12, y: 0, bucle: true });
+            onMov({ tipo: t as MovCapa["tipo"], amplitud: 0.04, segundos: 3.5 });
+          }}
+        >
+          <option value="">— quieto en su sitio —</option>
+          {MOVS_CAPA.map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+      </label>
+      {mov?.tipo === "deriva" && (
+        <Barra etiqueta="Rumbo" valor={mov.x ?? 0} min={-1} max={1} paso={0.02}
+          onCambio={(v) => onMov({ ...mov, x: v })}
+          formato={(v) => (v === 0 ? "—" : `${v > 0 ? "→" : "←"}${Math.abs(v).toFixed(2)}`)} />
+      )}
+    </div>
   );
 }
 

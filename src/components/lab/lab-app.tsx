@@ -7,7 +7,9 @@ import { Compositor, type Semilla } from "./compositor";
 import { revisar } from "@/lib/lab/escena";
 import { GenerarIa } from "./generar-ia";
 import { GenerarSprite } from "./generar-sprite";
+import { BibliotecaSprites } from "./biblioteca-sprites";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
+import { urlSprite, type SpriteMeta } from "@/lib/lab/biblioteca";
 import type { Escena } from "@/lib/lab/escena";
 
 export function LabApp({ hayIa }: { hayIa: boolean }) {
@@ -17,6 +19,10 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
   const [escena, setEscena] = useState<Escena | null>(null);
   // La cámara que escribió la IA, esperando a que se monte el compositor.
   const [colaIa, setColaIa] = useState<any[] | null>(null);
+  // El sprite que se acaba de elegir en la biblioteca, de camino al montaje.
+  const [sprite, setSprite] = useState<any>(null);
+  // Sube cada vez que se guarda uno nuevo, para que la biblioteca se relea.
+  const [tandaSprites, setTandaSprites] = useState(0);
   // Lo que se le pasa al editor cuando la IA escribe un mapa nuevo.
   const [impuesta, setImpuesta] = useState<Escena | null>(null);
   // Qué salió y qué se pagó. Vive aquí y no en la tarjeta de la IA porque esa
@@ -86,13 +92,36 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
       </div>
 
       {pestana === "sprites" && (
-        hayIa
-          ? <GenerarSprite />
-          : (
+        <div className="space-y-4">
+          {hayIa ? (
+            <GenerarSprite onGuardado={() => setTandaSprites((v) => v + 1)} />
+          ) : (
             <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
-              Hace falta la clave de OpenAI en el servidor para fabricar sprites.
+              Hace falta la clave de OpenAI en el servidor para fabricar sprites nuevos. Los que ya
+              están guardados se pueden usar igual.
             </p>
-          )
+          )}
+          {/* La biblioteca se ve HAYA O NO clave: lo guardado no depende de que
+              la IA esté disponible hoy, y esa es justo la gracia de guardarlo. */}
+          <BibliotecaSprites
+            recargar={tandaSprites}
+            onUsar={(s: SpriteMeta) => {
+              // Se manda al montaje con su velocidad y con un tamaño y un sitio
+              // de salida razonables: cae a media altura y ocupa una quinta
+              // parte del alto, que es de donde se coloca a gusto en dos
+              // arrastres. Aparecer en (0,0) y minúsculo sería peor.
+              setSprite({
+                nombre: s.nombre,
+                url: urlSprite(s.id),
+                spr: {
+                  id: s.id, fotogramas: s.fotogramas, fps: s.fps,
+                  x: 0.5, y: 0.45, alto: 0.2,
+                },
+              });
+              setPestana("compositor");
+            }}
+          />
+        </div>
       )}
 
       {hayIa && pestana === "mapa" && (
@@ -117,21 +146,33 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
         </p>
       )}
 
-      {pestana === "sprites" ? null : pestana === "mapa"
-        ? <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} />
-        : (
-          <Compositor
-            semilla={semilla}
-            colaInicial={colaIa ?? undefined}
-            escena={escena ?? undefined}
-            // Un ZIP con mapa dentro repone también la pestaña 1: si no, se
-            // recuperaba el montaje y el mapa se quedaba en blanco.
-            onEscena={(e) => {
-              const rev = revisar(e);
-              if ("escena" in rev) { setEscena(rev.escena); setImpuesta(rev.escena); }
-            }}
-          />
-        )}
+      {pestana === "mapa" && (
+        <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} />
+      )}
+
+      {/*
+        El compositor se ESCONDE, no se desmonta.
+        Antes se quitaba del árbol al cambiar de pestaña, y con él se iban las
+        capas, la cola y la cámara: ir a buscar un sprite a la biblioteca y
+        volver dejaba el montaje en blanco. Con la biblioteca eso pasa a ser el
+        camino normal —fabricas, eliges, vuelves—, así que desmontarlo era
+        garantizar que el trabajo se pierde. Escondido no cuesta nada: el bucle
+        de dibujo se apoya en el ancho de su caja, que oculta vale 320.
+      */}
+      <div className={pestana === "compositor" ? undefined : "hidden"}>
+        <Compositor
+          semilla={semilla}
+          sprite={sprite}
+          colaInicial={colaIa ?? undefined}
+          escena={escena ?? undefined}
+          // Un ZIP con mapa dentro repone también la pestaña 1: si no, se
+          // recuperaba el montaje y el mapa se quedaba en blanco.
+          onEscena={(e) => {
+            const rev = revisar(e);
+            if ("escena" in rev) { setEscena(rev.escena); setImpuesta(rev.escena); }
+          }}
+        />
+      </div>
     </div>
   );
 }

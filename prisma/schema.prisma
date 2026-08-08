@@ -535,3 +535,42 @@ model EmailVerificationToken {
   @@index([userId])
   @@index([expiresAt])
 }
+
+/// Un sprite ya fabricado, guardado para volver a usarlo.
+///
+/// POR QUÉ EN LA BASE DE DATOS Y NO EN DISCO. El disco del servidor es
+/// temporal: se borra en cada despliegue. Un sprite guardado ahí duraría hasta
+/// el siguiente arreglo de otra cosa. Y meterlos en el repositorio obligaría a
+/// desplegar la aplicación entera cada vez que se fabrica un pájaro.
+///
+/// QUÉ SE GUARDA: la TIRA, no la hoja original. Los fotogramas ya vienen
+/// recortados con la misma caja, alineados y con transparencia; pegarlos en
+/// fila deja un solo PNG que se pinta por trozos sin volver a procesar nada.
+/// Guardar la hoja cruda obligaría a repetir el recorte en cada carga, y el
+/// recorte depende de un umbral: la misma hoja podría salir distinta mañana.
+model Sprite {
+  id         String   @id @default(cuid())
+  /// Cómo se llama en la biblioteca.
+  nombre     String
+  /// Lo que se le pidió al modelo, en inglés. Se guarda porque es lo que
+  /// tendrá que leer la IA el día que elija sprites en vez de generarlos.
+  que        String
+  fotogramas Int
+  /// A cuántos por segundo se ve bien. Se decide al fabricarlo, mirándolo.
+  fps        Int
+  /// Tamaño de UN fotograma, no de la tira.
+  ancho      Int
+  alto       Int
+  /// Los fotogramas en fila, en un PNG con transparencia.
+  tira       Bytes
+  /// Lo que ocupa. Está aquí para poder listar la biblioteca sin traerse los
+  /// bytes de todos los sprites solo para contarlos.
+  bytes      Int
+  /// Quién lo fabricó. Sin relación a propósito: la biblioteca es común, y
+  /// borrar una cuenta no debe llevarse por delante sprites que usa todo el
+  /// mundo.
+  creadoPor  String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
