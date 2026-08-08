@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Map, Layers3, FlaskConical, Clapperboard } from "lucide-react";
 import { MapaEditor } from "./mapa-editor";
 import { Compositor, type Semilla } from "./compositor";
+import { revisar } from "@/lib/lab/escena";
 import { GenerarIa } from "./generar-ia";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import type { Escena } from "@/lib/lab/escena";
@@ -104,7 +105,19 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
 
       {pestana === "mapa"
         ? <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} />
-        : <Compositor semilla={semilla} colaInicial={colaIa ?? undefined} />}
+        : (
+          <Compositor
+            semilla={semilla}
+            colaInicial={colaIa ?? undefined}
+            escena={escena ?? undefined}
+            // Un ZIP con mapa dentro repone también la pestaña 1: si no, se
+            // recuperaba el montaje y el mapa se quedaba en blanco.
+            onEscena={(e) => {
+              const rev = revisar(e);
+              if ("escena" in rev) { setEscena(rev.escena); setImpuesta(rev.escena); }
+            }}
+          />
+        )}
     </div>
   );
 }
