@@ -5,6 +5,8 @@ import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, mot
 import { anotarFallo } from "@/lib/story/fallidos";
 import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { revisar } from "@/lib/lab/escena";
+import { leerAnimacion } from "@/lib/lab/animacion-ia";
+import { referenciaAnimacion } from "@/lib/lab/referencia-camara";
 
 // De una frase a un mapa de la escena por capas.
 //
@@ -39,7 +41,15 @@ Estructura:
 {"scene":{"id":"kebab-case","title":"...","width":N,"height":N,"description":"qué se ve, en una frase","style":"estilo visual en inglés, sin texto ni letras"},
  "layers":[{"id":"kebab","name":"01 Nombre","depth":0.05,"blur":0.3,
    "ai":{"prompt":"lo que hay que DIBUJAR en esta capa, en inglés","exclude":"lo que NO, en inglés"},
-   "objects":[{"id":"x","shape":"rect","semantic":"sky","x":0,"y":0,"w":1,"h":1,"label":"CIELO"}]}]}
+   "objects":[{"id":"x","shape":"rect","semantic":"sky","x":0,"y":0,"w":1,"h":1,"label":"CIELO"}]}],
+ "animacion":{"pasos":[{"mov":"acercar","segundos":3,"intensidad":45,"nota":"para qué es este tramo"}]},
+ "efectos":[{"id":"humo","espacio":"imagen","x":0.5,"y":0.7,"escala":0.4}]}
+
+LA ANIMACIÓN Y LOS EFECTOS
+- Además del mapa, escribes la ANIMACIÓN de cámara en «animacion.pasos» y los EFECTOS del motor en «efectos».
+- Los movimientos válidos, con qué hace cada uno y con cuáles se combinan, van en la referencia que se te pasa aparte. NO inventes ninguno.
+- Tú dices QUÉ pasa —«acércate», «cruza el arco»—; los números de cámara los pone la aplicación. No escribas coordenadas de cámara.
+- La animación tiene que aprovechar las capas que acabas de crear: si haces una puerta en primer plano, atraviésala.
 
 REGLAS DE LAS CAPAS
 - De atrás hacia delante. La PRIMERA es el fondo: cubre el cuadro entero y es opaca.
@@ -114,6 +124,12 @@ export async function POST(req: Request) {
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: INSTRUCCION },
+          // La referencia se genera desde las mismas listas que usa el motor:
+          // sin ella el modelo inventa movimientos y efectos que la aplicación
+          // no sabe reproducir, y el fallo solo se ve al darle a reproducir.
+          { role: "system", content:
+            "REFERENCIA DE CÁMARA Y EFECTOS (no inventes nada fuera de esto):\n"
+            + JSON.stringify(referenciaAnimacion()) },
           { role: "user", content:
             `Escena: ${parsed.data.idea}\n\n`
             + `Lienzo: ${w}x${h}. Haz exactamente ${parsed.data.capas} capas que se DIBUJEN. `
@@ -160,7 +176,18 @@ export async function POST(req: Request) {
         { status: 422 },
       );
     }
-    return NextResponse.json({ ok: true, escena: revisado.escena });
+    // La animación se traduce AQUÍ a la cola del motor: el modelo escribe
+    // intenciones y los números de cámara los pone quien los sabe.
+    const anim = leerAnimacion(d, revisado.escena);
+    return NextResponse.json({
+      ok: true,
+      escena: revisado.escena,
+      animacion: anim.pasos,
+      notas: anim.notas,
+      // Lo que se ha tenido que enderezar se dice, no se hace a escondidas.
+      avisos: anim.avisos,
+      efectos: Array.isArray(d?.efectos) ? d.efectos : [],
+    });
   } catch (e: any) {
     return NextResponse.json({ error: motivoFallo(e, "texto") }, { status: 502 });
   }
