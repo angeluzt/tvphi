@@ -7,6 +7,8 @@ import type { Escena } from "@/lib/lab/escena";
 import { revisar, esGuia } from "@/lib/lab/escena";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { prepararCapa, type Recorte } from "@/lib/lab/quitar-fondo";
+import type { SpritePlaneado } from "@/lib/lab/plan-escena-viva";
+import { resolverSpritePlaneado, type SpriteMontado } from "@/lib/lab/sprite-automatico";
 
 // Del texto a la escena montada, sin salir de aquí.
 //
@@ -24,6 +26,8 @@ export interface CapaGenerada {
   color?: string;
   /** El movimiento propio que la IA le puso a esta capa, si le puso alguno. */
   mov?: unknown;
+  /** Profundidad decidida en el mapa; no debe perderse al montar. */
+  depth: number;
 }
 
 export function GenerarIa({
@@ -42,7 +46,7 @@ export function GenerarIa({
    */
   onAnimacion?: (pasos: any[], avisos: string[]) => void;
   /** El resumen viaja con las capas: esta tarjeta se cierra al montarlas. */
-  onCapas: (c: CapaGenerada[], resumen: string) => void;
+  onCapas: (c: CapaGenerada[], resumen: string, sprites: SpriteMontado[]) => void;
 }) {
   const [idea, setIdea] = useState("");
   const [formato, setFormato] = useState<"16:9" | "9:16" | "1:1">("16:9");
@@ -50,13 +54,16 @@ export function GenerarIa({
   const [paso, setPaso] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hechas, setHechas] = useState<CapaGenerada[]>([]);
+  const [sprites, setSprites] = useState<SpritePlaneado[]>([]);
+  const [trabajando, setTrabajando] = useState(false);
 
   async function pedirMapa() {
-    setError(null); setPaso("Escribiendo el mapa de la escena…");
+    setError(null); setSprites([]); setTrabajando(true);
+    setPaso("Dirigiendo el mapa, los actores y sus rutas…");
     try {
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/escena", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea, formato, capas: nCapas }),
+        body: JSON.stringify({ idea, formato, capas: nCapas, viva: true }),
       });
       if (!r.ok) {
         // Con 422 viene también lo que contestó: se carga igual para poder
@@ -68,23 +75,29 @@ export function GenerarIa({
         throw new Error(j.error ?? "No se pudo");
       }
       onEscena(j.escena);
+      const planeados = Array.isArray(j.sprites) ? j.sprites as SpritePlaneado[] : [];
+      setSprites(planeados);
       if (Array.isArray(j.animacion) && j.animacion.length) {
         onAnimacion?.(j.animacion, Array.isArray(j.avisos) ? j.avisos : []);
       }
       const conAnim = Array.isArray(j.animacion) && j.animacion.length
         ? ` y ${j.animacion.length} ${j.animacion.length === 1 ? "paso de cámara" : "pasos de cámara"}`
         : "";
-      setPaso(`Mapa listo: ${j.escena.layers.length} capas${conAnim}. Revísalo y dale a dibujar.`);
+      const conSprites = planeados.length
+        ? `, ${planeados.length} ${planeados.length === 1 ? "actor animado" : "actores animados"}`
+        : ", sin actores animados";
+      setPaso(`Mapa listo: ${j.escena.layers.length} capas${conSprites}${conAnim}. Revísalo y genera el montaje.`);
       // Lo que se tuvo que enderezar se enseña: si la IA pidió algo imposible
       // —dos movimientos del mismo eje, una capa que no existe— hay que poder
       // corregir el encargo en vez de preguntarse por qué se ve raro.
       if (Array.isArray(j.avisos) && j.avisos.length) setError(j.avisos.join(" · "));
     } catch (e) { setError((e as Error).message); setPaso(null); }
+    finally { setTrabajando(false); }
   }
 
   async function dibujar() {
     if (!escena) return;
-    setError(null); setHechas([]);
+    setError(null); setHechas([]); setTrabajando(true);
     // Las capas de reserva NO se mandan: son una guía de dónde va el personaje
     // y los efectos, y el modelo devolvería un PNG vacío que se paga igual.
     const visibles = escena.layers.filter((c) => c.visible !== false && !esGuia(c));
@@ -94,6 +107,8 @@ export function GenerarIa({
     // siguientes ni se intentaban: pagabas media escena y te quedabas sin nada
     // que montar. Ahora se sigue y al final se dice cuáles fallaron.
     const fallos: string[] = [];
+    const actores: SpriteMontado[] = [];
+    const avisosActores: string[] = [];
     try {
       for (let i = 0; i < visibles.length; i++) {
         const capa = visibles[i];
@@ -132,38 +147,65 @@ export function GenerarIa({
           // El movimiento propio viaja con la capa hasta el montaje: si se
           // quedara en el mapa, el pájaro llegaría al compositor quieto.
           mov: capa.mov,
+          depth: capa.depth,
         });
         setHechas([...out]);
       }
+      // Sin fondo no hay montaje al que incorporar actores. Además de ser más
+      // claro, esto evita pagar hojas de sprites para una escena inutilizable.
+      if (out.some((c) => c.id === visibles[0]?.id)) {
+        for (let i = 0; i < sprites.length; i++) {
+          const actor = sprites[i];
+          setPaso(
+            `${actor.biblioteca ? "Reutilizando" : "Generando"} actor ${i + 1} de ${sprites.length}: ${actor.nombre}…`,
+          );
+          try {
+            const resuelto = await resolverSpritePlaneado(actor);
+            actores.push(resuelto);
+            if (resuelto.aviso) avisosActores.push(resuelto.aviso);
+          } catch (e) {
+            fallos.push(`${actor.nombre}: ${(e as Error).message || "no se pudo"}`);
+          }
+        }
+      } else if (sprites.length) {
+        fallos.push("Actores: no se generaron porque falta la capa de fondo.");
+      }
+
       const cromadas = out.filter((c) => c.via === "croma").length;
       const opacas = out.filter((c, i) => i > 0 && c.via === "opaca").length;
+      const reutilizados = actores.filter((s) => s.fuente === "biblioteca").length;
+      const generados = actores.filter((s) => s.fuente === "generado").length;
       const resumen =
         `${out.length} de ${visibles.length} capas.`
+        + (actores.length
+          ? ` ${actores.length} actores montados (${reutilizados} reutilizados, ${generados} nuevos y guardados).`
+          : sprites.length ? " No se pudo montar ningún actor." : " La escena no necesitó actores animados.")
         + (guias ? ` ${guias} de reserva no se mandó a dibujar —es una guía— así que no se ha pagado.` : "")
         + (cromadas ? ` A ${cromadas} hubo que quitarles el fondo de color: este modelo no devuelve transparencia.` : "")
-        + (opacas ? ` OJO: ${opacas} salieron opacas y sin fondo plano que quitar; taparán a las de atrás.` : "");
+        + (opacas ? ` OJO: ${opacas} salieron opacas y sin fondo plano que quitar; taparán a las de atrás.` : "")
+        + (avisosActores.length ? ` ${avisosActores.join(" ")}` : "")
+        + (fallos.length ? ` No salieron ${fallos.length}: ${fallos.join(" · ")}` : "");
       setPaso(resumen);
       // El resumen sube con las capas porque al montarlas esta tarjeta
       // desaparece: si se quedara aquí, lo que costó y lo que no no lo leería
       // nadie.
-      if (out.length) onCapas(out, resumen);
+      if (out.length) onCapas(out, resumen, actores);
       // Los fallos se cuentan al final y por separado, sin borrar lo que sí salió.
       if (fallos.length) setError(`No salieron ${fallos.length}: ${fallos.join(" · ")}`);
     } catch (e) { setError((e as Error).message); setPaso(null); }
+    finally { setTrabajando(false); }
   }
-
-  const trabajando = !!paso && !paso.startsWith("Mapa listo") && !paso.startsWith("Listo");
 
   return (
     <div className="card space-y-2 border-brand/40 p-3">
       <div className="flex items-center gap-2">
         <Sparkles className="h-4 w-4 text-brand" />
-        <span className="label">Que lo haga la IA</span>
+        <span className="label">Director de escena viva</span>
       </div>
       <textarea
         value={idea}
         onChange={(e) => setIdea(e.target.value)}
-        placeholder="Un faro en un acantilado al atardecer, con el mar rompiendo abajo y una figura pequeña mirando al horizonte."
+        placeholder="Un taller ferroviario steampunk inundado; un ratón mecánico cruza el suelo, se detiene, gira y vuelve mientras la cámara avanza entre tuberías."
         className="input h-20 w-full resize-y text-xs"
         aria-label="Descripción de la escena"
       />
@@ -187,16 +229,26 @@ export function GenerarIa({
           1 · Escribir el mapa
         </button>
         <button onClick={() => void dibujar()} disabled={!escena || trabajando} className="btn-ghost text-xs">
-          <Wand2 className="h-3.5 w-3.5 text-accent" /> 2 · Dibujar las capas
+          <Wand2 className="h-3.5 w-3.5 text-accent" /> 2 · Generar y montar todo
         </button>
       </div>
 
       <p className="text-[10px] text-muted">
-        El mapa es una llamada de texto, barata: mírala y corrígela antes de dibujar. Dibujar
-        cuesta <b className="text-fg">una imagen por capa</b>, ni una más. El fondo se pide opaco;
-        las de delante, sobre un magenta plano que se les quita aquí mismo, porque este modelo no
-        sabe devolver transparencia.
+        Un solo prompt dirige composición, cámara, actores, tamaño, capas y rutas. El mapa es una
+        llamada de texto barata: revísalo antes de generar. El segundo paso dibuja una imagen por
+        capa, reutiliza los sprites compatibles de la biblioteca y solo fabrica los que falten.
       </p>
+
+      {!!sprites.length && (
+        <div className="flex flex-wrap gap-1.5 rounded-lg border border-border bg-surface-2/40 p-2">
+          {sprites.map((s) => (
+            <span key={s.id} className="rounded-full border border-border px-2 py-1 text-[10px] text-muted">
+              <b className="text-fg">{s.nombre}</b> · {s.biblioteca ? "reutilizar" : "generar"}
+              {s.spr.ruta?.pasos.length ? ` · ${s.spr.ruta.pasos.length} pasos` : " · quieto"}
+            </span>
+          ))}
+        </div>
+      )}
 
       {paso && !error && (
         <p className="flex items-start gap-1.5 text-[11px] text-accent">

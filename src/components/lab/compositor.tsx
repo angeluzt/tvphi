@@ -54,6 +54,10 @@ interface CapaImg {
 export interface Semilla {
   nombre: string;
   url: string;
+  /** Ajustes decididos por el mapa/director; ausentes conservan el reparto clásico. */
+  depth?: number;
+  escala?: number;
+  opacidad?: number;
   via?: CapaImg["via"];
   vacio?: number;
   mov?: MovCapa;
@@ -390,20 +394,36 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
     let vivo = true;
     (async () => {
       const nuevas: CapaImg[] = [];
+      const ajustes: Semilla[] = [];
       for (const s of semilla) {
         try {
           nuevas.push({
             ...hacerCapa(s.nombre, await cargar(s.url)),
             via: s.via, vacio: s.vacio, mov: s.mov, spr: s.spr, bloqueada: s.bloqueada,
           });
+          ajustes.push(s);
         } catch {}
       }
       if (!vivo || !nuevas.length) return;
       relojesSpriteRef.current.clear();
       tam.current = { w: nuevas[0].img.naturalWidth, h: nuevas[0].img.naturalHeight };
-      setCapas(repartirProfundidad(nuevas));
-      setCapaActivaId(nuevas[nuevas.length - 1].id);
-      setAviso("Capas del mapa cargadas. Es el mapa, no la imagen final: sirve para ver el movimiento.");
+      const finales = repartirProfundidad(nuevas).map((c, i) => ({
+        ...c,
+        ...(Number.isFinite(ajustes[i]?.depth) ? { depth: Math.max(0, Math.min(1, ajustes[i].depth!)) } : {}),
+        ...(Number.isFinite(ajustes[i]?.escala) ? { escala: Math.max(0.05, Math.min(4, ajustes[i].escala!)) } : {}),
+        ...(Number.isFinite(ajustes[i]?.opacidad) ? { opacidad: Math.max(0, Math.min(1, ajustes[i].opacidad!)) } : {}),
+      }));
+      const ahora = performance.now();
+      finales.forEach((c) => { if (c.spr) relojesSpriteRef.current.set(c.id, { inicio: ahora }); });
+      setCapas(finales);
+      const actorActivo = [...finales].reverse().find((c) => c.spr);
+      const activa = actorActivo ?? finales[finales.length - 1];
+      setCapaActivaId(activa.id);
+      setRutaVisibleId(actorActivo?.spr?.ruta?.pasos.length ? actorActivo.id : null);
+      setAviso(
+        `Montaje cargado: ${finales.length} capas`
+        + (finales.some((c) => c.spr) ? ` y ${finales.filter((c) => c.spr).length} actores animados.` : "."),
+      );
     })();
     return () => { vivo = false; };
   }, [semilla]);

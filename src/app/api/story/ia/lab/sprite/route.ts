@@ -32,6 +32,8 @@ const cuerpo = z.object({
   fotogramas: z.number().int().min(2).max(12).default(6),
   /** Apaisada para lo que camina o vuela; alta para lo que cae. */
   forma: z.enum(["tira", "columna"]).default("tira"),
+  /** Ángulo coherente con la ruta que el director escribió. */
+  vista: z.enum(["lateral", "frontal", "trasera", "superior", "libre"]).default("lateral"),
   calidad: z.enum(["low", "medium", "high"]).optional(),
   modelo: z.string().max(80).optional(),
 });
@@ -46,10 +48,22 @@ const TAMANOS = { tira: "1536x1024", columna: "1024x1536" } as const;
  * animación da saltos, y sin prohibir sombras y suelo aparece un decorado que
  * luego no se puede recortar.
  */
-function prompt(que: string, n: number, columna: boolean) {
+function prompt(
+  que: string,
+  n: number,
+  columna: boolean,
+  vista: "lateral" | "frontal" | "trasera" | "superior" | "libre",
+) {
   const rejilla = columna
     ? `Arrange them in ONE VERTICAL COLUMN of exactly ${n} equal cells, top to bottom.`
     : `Arrange them in ONE HORIZONTAL ROW of exactly ${n} equal cells, left to right.`;
+  const angulo = {
+    lateral: "Strict side view; the subject faces horizontally.",
+    frontal: "Strict front view; the subject faces the viewer.",
+    trasera: "Strict back view; the subject faces away from the viewer.",
+    superior: "Strict top-down view, seen vertically from above.",
+    libre: "Keep the viewing angle requested in the subject description exactly consistent across every frame.",
+  }[vista];
   return [
     `SPRITE SHEET for 2D animation: ${n} frames of one single ${que}, in motion.`,
     rejilla,
@@ -57,7 +71,7 @@ function prompt(que: string, n: number, columna: boolean) {
     `BACKGROUND: every pixel that is not the subject must be flat pure magenta ${CROMA} (R255 G0 B255), perfectly uniform.`,
     "No gradient, no shading, no vignette, no glow, no reflection of the magenta on the subject.",
     "No ground, no shadow, no scenery, no frame borders, no grid lines, no numbers, no text, no watermark.",
-    "Side view, clean silhouette, even lighting, no motion blur.",
+    `${angulo} Clean silhouette, even lighting, no motion blur.`,
     `Remember: background = flat ${CROMA} magenta, subject = the ${que}. Nothing else.`,
   ].join("\n");
 }
@@ -89,7 +103,7 @@ export async function POST(req: Request) {
   // Esta ruta es solo de admin, así que se le respeta la calidad que pida; si
   // no dice ninguna, manda la del panel, que en pruebas es la barata.
   const calidad = calidadEfectiva(await leerAjustes(), true, parsed.data.calidad);
-  const { que, fotogramas, forma } = parsed.data;
+  const { que, fotogramas, forma, vista } = parsed.data;
 
   try {
     const r = await fetch(OPENAI("/v1/images/generations"), {
@@ -98,7 +112,7 @@ export async function POST(req: Request) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model: modelo,
-        prompt: prompt(que, fotogramas, forma === "columna"),
+        prompt: prompt(que, fotogramas, forma === "columna", vista),
         size: TAMANOS[forma],
         n: 1,
         quality: calidad,
@@ -128,6 +142,7 @@ export async function POST(req: Request) {
       imagen: b64,
       fotogramas,
       forma,
+      vista,
       calidad,
       croma: CROMA,
       size: TAMANOS[forma],

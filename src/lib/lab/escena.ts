@@ -15,7 +15,7 @@
 // LAS COORDENADAS VAN DE 0 A 1, siempre, sobre el ancho y el alto de la escena.
 // Así el mismo mapa sirve para 1920×1080 y para vertical sin tocar un número.
 
-import { normalizarMov, type MovCapa } from "@/lib/lab/movimiento-capa";
+import { normalizarMov, type MovCapa } from "./movimiento-capa";
 
 export type Semantico =
   | "sky" | "terrain" | "wall" | "floor" | "door" | "window" | "column" | "arch"
