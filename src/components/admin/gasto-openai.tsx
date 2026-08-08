@@ -63,6 +63,8 @@ export function GastoOpenAi() {
   }
 
   const tope = Math.max(...(dato?.porDia.map((d) => d.usd) ?? [0]), 0.000001);
+  // El día más reciente con gasto apuntado. `porDia` viene en orden.
+  const ultimoConDatos = dato?.porDia.filter((d) => d.usd > 0).at(-1)?.dia ?? null;
 
   return (
     <div className="card p-4">
@@ -99,7 +101,16 @@ export function GastoOpenAi() {
       {dato && (
         <>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Cifra etiqueta={`Hoy (${dato.huso || "UTC"})`} valor={usd(dato.hoyUsd)} />
+            <Cifra
+              etiqueta={`Hoy (${dato.huso || "UTC"})`}
+              valor={usd(dato.hoyUsd)}
+              // «Hoy: $0» no dice si es que no has gastado o si OpenAI aún no
+              // lo ha publicado —tarda—. Enseñando hasta cuándo hay datos, se
+              // distingue de un vistazo y se deja de parecer un fallo.
+              pista={dato.hoyUsd === 0 && ultimoConDatos
+                ? `último dato: ${fecha(ultimoConDatos)}`
+                : undefined}
+            />
             <Cifra etiqueta="Este mes" valor={usd(dato.mesUsd)} />
             <Cifra etiqueta={`Últimos ${dias} días`} valor={usd(dato.totalUsd)} />
             <Cifra
@@ -170,11 +181,22 @@ export function GastoOpenAi() {
   );
 }
 
-function Cifra({ etiqueta, valor, flojo }: { etiqueta: string; valor: string; flojo?: boolean }) {
+/** AAAA-MM-DD → «7 ago», que es como se lee una fecha. */
+function fecha(iso: string): string {
+  const [a, m, d] = iso.split("-").map(Number);
+  if (!a || !m || !d) return iso;
+  return new Date(Date.UTC(a, m - 1, d))
+    .toLocaleDateString("es", { day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+function Cifra({ etiqueta, valor, flojo, pista }: {
+  etiqueta: string; valor: string; flojo?: boolean; pista?: string;
+}) {
   return (
     <div className="rounded-lg border border-border bg-surface-2/50 p-2">
       <div className="text-[10px] text-muted">{etiqueta}</div>
       <div className={`text-base font-semibold tabular-nums ${flojo ? "text-muted" : "text-fg"}`}>{valor}</div>
+      {pista && <div className="text-[9px] leading-tight text-muted">{pista}</div>}
     </div>
   );
 }
