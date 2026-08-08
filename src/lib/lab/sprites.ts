@@ -28,6 +28,16 @@ export interface HojaCortada {
   descartados: number;
   /** El color que se quitó, para poder decirlo. */
   color?: string;
+  /** Rectángulos de la hoja original que se usaron, en el mismo orden. */
+  celdas: CeldaSprite[];
+}
+
+/** Un recorte sobre la hoja ORIGINAL, antes de quitar el fondo o centrar. */
+export interface CeldaSprite {
+  x: number;
+  y: number;
+  ancho: number;
+  alto: number;
 }
 
 export interface CajaContenido {
@@ -82,6 +92,66 @@ export function limitesCelda(total: number, n: number, i: number) {
   return { inicio, tam: Math.max(1, fin - inicio) };
 }
 
+/** Rejilla inicial: cubre la hoja entera sin perder ni repetir un píxel. */
+export function celdasSpritePorDefecto(
+  ancho: number,
+  alto: number,
+  fotogramas: number,
+  forma: "tira" | "columna",
+): CeldaSprite[] {
+  const n = Math.max(1, Math.round(fotogramas));
+  return Array.from({ length: n }, (_, i) => {
+    const lx = forma === "columna"
+      ? { inicio: 0, tam: ancho }
+      : limitesCelda(ancho, n, i);
+    const ly = forma === "columna"
+      ? limitesCelda(alto, n, i)
+      : { inicio: 0, tam: alto };
+    return { x: lx.inicio, y: ly.inicio, ancho: lx.tam, alto: ly.tam };
+  });
+}
+
+/** Acota recortes importados o movidos para que nunca lean fuera de la hoja. */
+export function normalizarCeldasSprite(
+  celdas: CeldaSprite[],
+  anchoHoja: number,
+  altoHoja: number,
+): CeldaSprite[] {
+  const aw = Math.max(1, Math.round(anchoHoja));
+  const ah = Math.max(1, Math.round(altoHoja));
+  return celdas.slice(0, 24).map((c) => {
+    // Primero manda el tamaño y después se acota la posición. Así arrastrar
+    // una celda contra el borde la DETIENE, no la encoge silenciosamente.
+    const ancho = Math.max(1, Math.min(aw, Math.round(Number(c?.ancho) || 1)));
+    const alto = Math.max(1, Math.min(ah, Math.round(Number(c?.alto) || 1)));
+    const x = Math.max(0, Math.min(aw - ancho, Math.round(Number(c?.x) || 0)));
+    const y = Math.max(0, Math.min(ah - alto, Math.round(Number(c?.y) || 0)));
+    return { x, y, ancho, alto };
+  });
+}
+
+/**
+ * Cambia el tamaño de TODOS los recortes a la vez y conserva sus posiciones.
+ * Cada posición se acota por separado para que ninguna celda salga de la hoja.
+ */
+export function tamanoComunCeldasSprite(
+  celdas: CeldaSprite[],
+  anchoHoja: number,
+  altoHoja: number,
+  ancho: number,
+  alto: number,
+): CeldaSprite[] {
+  const aw = Math.max(1, Math.round(anchoHoja));
+  const ah = Math.max(1, Math.round(altoHoja));
+  const comunAncho = Math.max(1, Math.min(aw, Math.round(ancho)));
+  const comunAlto = Math.max(1, Math.min(ah, Math.round(alto)));
+  return normalizarCeldasSprite(
+    celdas.map((c) => ({ ...c, ancho: comunAncho, alto: comunAlto })),
+    aw,
+    ah,
+  );
+}
+
 /** Cuanto hay que mover una silueta para que su caja quede en el centro. */
 export function desplazamientoParaCentrar(
   caja: CajaContenido,
@@ -117,37 +187,37 @@ export async function cortarHoja(opts: {
   fotogramas: number;
   forma: "tira" | "columna";
   croma?: string;
+  /** Si viene, reemplaza la rejilla igual: son recortes sobre la hoja original. */
+  celdas?: CeldaSprite[];
   /** Margen a dejar alrededor del recorte, en tanto por uno. */
   aire?: number;
 }): Promise<HojaCortada> {
   const img = await cargarImagen(opts.dataUrl);
-  const n = Math.max(1, opts.fotogramas);
-  const columna = opts.forma === "columna";
+  const propuestas = opts.celdas?.length
+    ? opts.celdas
+    : celdasSpritePorDefecto(img.naturalWidth, img.naturalHeight, opts.fotogramas, opts.forma);
+  const celdasFuente = normalizarCeldasSprite(propuestas, img.naturalWidth, img.naturalHeight);
+  const n = celdasFuente.length;
+  if (!n) return { fotogramas: [], descartados: 0, celdas: [] };
   // Todas las celdas se llevan al mismo lienzo sin escalar. Cuando la division
-  // deja un pixel de diferencia, se centra ese pixel: no se roba contenido al
-  // fotograma contiguo y tampoco se deforma el dibujo.
-  const cw = columna ? img.naturalWidth : Math.ceil(img.naturalWidth / n);
-  const ch = columna ? Math.ceil(img.naturalHeight / n) : img.naturalHeight;
+  // o el ajuste manual dejan un pixel de diferencia, se centra ese pixel: no
+  // se roba contenido al fotograma contiguo y tampoco se deforma el dibujo.
+  const cw = Math.max(...celdasFuente.map((c) => c.ancho));
+  const ch = Math.max(...celdasFuente.map((c) => c.alto));
 
   // 1 · Cortar y limpiar cada celda.
   const celdas: { cv: HTMLCanvasElement; datos: Uint8ClampedArray }[] = [];
   let color: string | undefined;
 
-  for (let i = 0; i < n; i++) {
-    const lx = columna
-      ? { inicio: 0, tam: img.naturalWidth }
-      : limitesCelda(img.naturalWidth, n, i);
-    const ly = columna
-      ? limitesCelda(img.naturalHeight, n, i)
-      : { inicio: 0, tam: img.naturalHeight };
+  for (const celda of celdasFuente) {
     const cv = lienzo(cw, ch);
     const c = cv.getContext("2d")!;
     c.drawImage(
       img,
-      lx.inicio, ly.inicio, lx.tam, ly.tam,
-      Math.floor((cv.width - lx.tam) / 2),
-      Math.floor((cv.height - ly.tam) / 2),
-      lx.tam, ly.tam,
+      celda.x, celda.y, celda.ancho, celda.alto,
+      Math.floor((cv.width - celda.ancho) / 2),
+      Math.floor((cv.height - celda.alto) / 2),
+      celda.ancho, celda.alto,
     );
     const d0 = c.getImageData(0, 0, cv.width, cv.height).data;
     // El croma se busca celda a celda: el modelo a veces vira el tono de un
@@ -179,7 +249,7 @@ export async function cortarHoja(opts: {
       : c;
   });
 
-  if (!caja) return { fotogramas: [], descartados: n, color };
+  if (!caja) return { fotogramas: [], descartados: n, color, celdas: celdasFuente };
 
   const c0 = caja as { x0: number; y0: number; x1: number; y1: number };
   const aire = Math.max(0, Math.min(0.2, opts.aire ?? 0.04));
@@ -207,7 +277,7 @@ export async function cortarHoja(opts: {
     });
   });
 
-  return { fotogramas, descartados, color };
+  return { fotogramas, descartados, color, celdas: celdasFuente };
 }
 
 /**
@@ -248,6 +318,22 @@ export async function tiraDeFotogramas(fotos: Fotograma[]): Promise<{
   const blob = await new Promise<Blob | null>((r) => cv.toBlob(r, "image/png"));
   if (!blob) throw new Error("No se pudo componer la tira.");
   return { blob, ancho, alto, fotogramas: imgs.length };
+}
+
+/** Abre una tira guardada y recupera sus cuadros editables sin guardarlos sueltos. */
+export async function fotogramasDeTira(dataUrl: string, fotogramas: number): Promise<Fotograma[]> {
+  const img = await cargarImagen(dataUrl);
+  const n = Math.max(1, Math.round(fotogramas));
+  if (img.naturalWidth % n !== 0) {
+    throw new Error("La tira del ZIP no se puede dividir en fotogramas iguales.");
+  }
+  const ancho = img.naturalWidth / n;
+  const alto = img.naturalHeight;
+  return Array.from({ length: n }, (_, i) => {
+    const cv = lienzo(ancho, alto);
+    cv.getContext("2d")!.drawImage(img, i * ancho, 0, ancho, alto, 0, 0, ancho, alto);
+    return fotogramaDeLienzo(cv);
+  });
 }
 
 /** Nombre de archivo para un sprite, a partir de lo que se pidió. */
