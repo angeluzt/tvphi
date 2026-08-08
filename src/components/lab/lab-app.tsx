@@ -93,12 +93,14 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
 
       {pestana === "sprites" && (
         <div className="space-y-4">
-          {hayIa ? (
-            <GenerarSprite onGuardado={() => setTandaSprites((v) => v + 1)} />
-          ) : (
+          <GenerarSprite
+            puedeGenerar={hayIa}
+            onGuardado={() => setTandaSprites((v) => v + 1)}
+          />
+          {!hayIa && (
             <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
               Hace falta la clave de OpenAI en el servidor para fabricar sprites nuevos. Los que ya
-              están guardados se pueden usar igual.
+              están guardados y los proyectos ZIP se pueden usar y editar igual.
             </p>
           )}
           {/* La biblioteca se ve HAYA O NO clave: lo guardado no depende de que

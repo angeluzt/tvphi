@@ -2,14 +2,24 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check,
+  Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check, FolderOpen,
 } from "lucide-react";
 import { pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
-import { cortarHoja, nombreSprite, tiraDeFotogramas, type Fotograma } from "@/lib/lab/sprites";
+import {
+  celdasSpritePorDefecto, cortarHoja, fotogramasDeTira, nombreSprite, tiraDeFotogramas,
+  type CeldaSprite, type Fotograma,
+} from "@/lib/lab/sprites";
+import { cargarImagen } from "@/lib/lab/quitar-fondo";
 import { zip, bajar } from "@/lib/lab/exportar";
+import { leerZip } from "@/lib/story/zip";
 import { VistaSprite } from "./vista-sprite";
 import { EditorSprite } from "./editor-sprite";
-import { pesoLegible, type SpriteMeta } from "@/lib/lab/biblioteca";
+import { EditorCortesSprite } from "./editor-cortes-sprite";
+import { esPng, pesoLegible, type SpriteMeta } from "@/lib/lab/biblioteca";
+import {
+  ARCHIVO_HOJA_SPRITE, ARCHIVO_META_SPRITE, ARCHIVO_TIRA_SPRITE,
+  archivosProyectoSprite, crearProyectoSprite, normalizarProyectoSprite,
+} from "@/lib/lab/sprite-proyecto";
 
 // Fabricar un sprite animado: un bicho, varios fotogramas, fondo fuera.
 //
@@ -46,9 +56,23 @@ interface Hecho {
   ancho: number;
   alto: number;
   descartados: number;
+  /** La llamada original, intacta, y cómo se divide antes de limpiar. */
+  hoja: {
+    url: string;
+    blob: Blob;
+    ancho: number;
+    alto: number;
+    forma: "tira" | "columna";
+    croma: string;
+    celdas: CeldaSprite[];
+  };
 }
 
-export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => void }) {
+export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
+  onGuardado?: (s: SpriteMeta) => void;
+  /** Importar y editar un ZIP no necesita IA y debe seguir disponible sin clave. */
+  puedeGenerar?: boolean;
+}) {
   const [que, setQue] = useState("");
   const [n, setN] = useState(6);
   const [forma, setForma] = useState<"tira" | "columna">("tira");
@@ -63,6 +87,7 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
   const [actualizando, setActualizando] = useState(false);
+  const [cortesPendientes, setCortesPendientes] = useState(false);
   const revisionTira = useRef(0);
 
   // Cada correccion crea una URL nueva para la vista previa. La anterior deja
@@ -72,8 +97,15 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
     return () => { if (url?.startsWith("blob:")) URL.revokeObjectURL(url); };
   }, [hecho?.url]);
 
+  // La hoja vive mientras el proyecto esté abierto. Solo se libera al generar
+  // o importar otra, nunca al aplicar un corte: esa es la fuente recuperable.
+  useEffect(() => {
+    const url = hecho?.hoja.url;
+    return () => { if (url?.startsWith("blob:")) URL.revokeObjectURL(url); };
+  }, [hecho?.hoja.url]);
+
   async function generar() {
-    if (que.trim().length < 3) return;
+    if (!puedeGenerar || que.trim().length < 3) return;
     setError(null); setAviso(null); setHecho(null); setGuardado(false);
     setPaso("Dibujando la hoja…");
     try {
@@ -83,12 +115,23 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
       });
       if (!r.ok) throw new Error(j.error || "No se pudo");
 
+      setPaso("Preparando la hoja original…");
+      const dataUrl = `data:image/png;base64,${j.imagen}`;
+      const blobHoja = await (await fetch(dataUrl)).blob();
+      const imagenHoja = await cargarImagen(dataUrl);
+      const formaHoja = (j.forma ?? forma) as "tira" | "columna";
+      const cuantos = j.fotogramas ?? n;
+      const celdas = celdasSpritePorDefecto(
+        imagenHoja.naturalWidth, imagenHoja.naturalHeight, cuantos, formaHoja,
+      );
+
       setPaso("Recortando los fotogramas…");
       const hoja = await cortarHoja({
-        dataUrl: `data:image/png;base64,${j.imagen}`,
-        fotogramas: j.fotogramas ?? n,
-        forma: j.forma ?? forma,
+        dataUrl,
+        fotogramas: cuantos,
+        forma: formaHoja,
         croma: j.croma,
+        celdas,
       });
       if (!hoja.fotogramas.length) {
         throw new Error(
@@ -109,7 +152,17 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
         ancho: tira.ancho,
         alto: tira.alto,
         descartados: hoja.descartados,
+        hoja: {
+          url: URL.createObjectURL(blobHoja),
+          blob: blobHoja,
+          ancho: imagenHoja.naturalWidth,
+          alto: imagenHoja.naturalHeight,
+          forma: formaHoja,
+          croma: j.croma || "#FF00FF",
+          celdas: hoja.celdas,
+        },
       });
+      setCortesPendientes(false);
       setNombre(nombreSprite(que));
       setPaso(null);
       setAviso(
@@ -120,6 +173,51 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
     } catch (e) {
       setError((e as Error).message);
       setPaso(null);
+    }
+  }
+
+  /** Vuelve a cortar desde la hoja pagada, antes de cualquier edición fina. */
+  async function aplicarCortes(celdas: CeldaSprite[]) {
+    if (!hecho || actualizando) return;
+    const revision = ++revisionTira.current;
+    setActualizando(true);
+    setError(null);
+    try {
+      const cortada = await cortarHoja({
+        dataUrl: hecho.hoja.url,
+        fotogramas: celdas.length,
+        forma: hecho.hoja.forma,
+        croma: hecho.hoja.croma,
+        celdas,
+      });
+      if (!cortada.fotogramas.length) {
+        throw new Error("Esos cortes no contienen ningún fotograma visible.");
+      }
+      const tira = await tiraDeFotogramas(cortada.fotogramas);
+      if (revision !== revisionTira.current) return;
+      setHecho((prev) => prev ? {
+        ...prev,
+        // Remonta el editor fino: sus borrados pertenecían a los cortes viejos.
+        edicionId: Date.now(),
+        fotos: cortada.fotogramas,
+        url: URL.createObjectURL(tira.blob),
+        blob: tira.blob,
+        ancho: tira.ancho,
+        alto: tira.alto,
+        descartados: cortada.descartados,
+        hoja: { ...prev.hoja, celdas: cortada.celdas },
+      } : prev);
+      setGuardado(false);
+      setCortesPendientes(false);
+      setAviso(
+        `${cortada.fotogramas.length} fotogramas recortados desde la hoja original`
+        + (cortada.descartados ? ` · ${cortada.descartados} celdas vacías` : ""),
+      );
+    } catch (e) {
+      setError((e as Error).message || "No se pudieron aplicar los cortes.");
+      throw e;
+    } finally {
+      if (revision === revisionTira.current) setActualizando(false);
     }
   }
 
@@ -150,7 +248,7 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
   }
 
   async function guardar() {
-    if (!hecho || guardando) return;
+    if (!hecho || guardando || cortesPendientes) return;
     setGuardando(true);
     setError(null);
     try {
@@ -183,38 +281,115 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
   }
 
   async function descargar() {
-    if (!hecho) return;
+    if (!hecho || cortesPendientes) return;
     const base = nombreSprite(nombre || que);
-    const fotos = hecho.fotos;
-    const archivos: { nombre: string; datos: Uint8Array<ArrayBuffer> }[] = [];
-    for (let i = 0; i < fotos.length; i++) {
-      const b = await (await fetch(fotos[i].url)).arrayBuffer();
-      archivos.push({
-        nombre: `${String(i + 1).padStart(2, "0")}-${base}.png`,
-        datos: new Uint8Array(b),
-      });
-    }
-    archivos.push({
-      nombre: `tira-${base}.png`,
-      datos: new Uint8Array(await hecho.blob.arrayBuffer()),
+    const proyecto = crearProyectoSprite({
+      nombre: nombre.trim() || base,
+      que: que.trim() || base,
+      fps,
+      forma: hecho.hoja.forma,
+      croma: hecho.hoja.croma,
+      anchoHoja: hecho.hoja.ancho,
+      altoHoja: hecho.hoja.alto,
+      fotogramas: hecho.fotos.length,
+      anchoFotograma: hecho.ancho,
+      altoFotograma: hecho.alto,
+      celdas: hecho.hoja.celdas,
     });
-    archivos.push({
-      nombre: "sprite.json",
-      datos: new TextEncoder().encode(JSON.stringify({
-        version: 1, nombre: base, que, fotogramas: fotos.length, fps,
-        ancho: hecho.ancho, alto: hecho.alto,
-      }, null, 2)),
-    });
-    archivos.push({
-      nombre: "leeme.txt",
-      datos: new TextEncoder().encode(
-        `Sprite «${base}» (${fotos.length} fotogramas, ${fps} por segundo).\n`
-        + "PNG con transparencia, todos del mismo tamaño y alineados entre sí.\n"
-        + "«tira-…png» los lleva a todos en fila, que es como los guarda la app.\n"
-        + "Hechos con el laboratorio de TVPHI en una sola llamada, para poder reutilizarlos.\n",
-      ),
-    });
+    const archivos = archivosProyectoSprite(
+      proyecto,
+      new Uint8Array(await hecho.hoja.blob.arrayBuffer()),
+      new Uint8Array(await hecho.blob.arrayBuffer()),
+    );
     bajar(zip(archivos), `sprite-${base}.zip`);
+  }
+
+  async function importarProyecto(file: File | null) {
+    if (!file || paso) return;
+    if (file.size > 40 * 1024 * 1024) {
+      setError("Ese proyecto pesa más de 40 MB y no es seguro abrirlo en el navegador.");
+      return;
+    }
+    setPaso("Abriendo el proyecto del sprite…");
+    setError(null);
+    setAviso(null);
+    let urlHoja: string | null = null;
+    let urlTira: string | null = null;
+    try {
+      const entradas = await leerZip(file);
+      const porNombre = (nombre: string) => {
+        const base = nombre.replace(/^.*\//, "");
+        return entradas.find((e) => e.nombre === nombre || e.nombre.replace(/^.*\//, "") === base);
+      };
+      const metaEnt = porNombre(ARCHIVO_META_SPRITE);
+      if (!metaEnt) throw new Error("El ZIP no contiene sprite.json.");
+      let crudo: unknown;
+      try { crudo = JSON.parse(new TextDecoder().decode(metaEnt.datos)); }
+      catch { throw new Error("sprite.json está dañado."); }
+      const proyecto = normalizarProyectoSprite(crudo);
+      const hojaEnt = porNombre(proyecto.hoja.archivo);
+      const tiraEnt = porNombre(proyecto.tira.archivo);
+      if (!hojaEnt) throw new Error(`Falta ${proyecto.hoja.archivo} en el ZIP.`);
+      if (!tiraEnt) throw new Error(`Falta ${proyecto.tira.archivo} en el ZIP.`);
+      if (!esPng(hojaEnt.datos) || !esPng(tiraEnt.datos)) {
+        throw new Error("La hoja original o la tira final no son PNG válidos.");
+      }
+
+      const blobHoja = new Blob([hojaEnt.datos.slice()], { type: "image/png" });
+      const blobTira = new Blob([tiraEnt.datos.slice()], { type: "image/png" });
+      urlHoja = URL.createObjectURL(blobHoja);
+      urlTira = URL.createObjectURL(blobTira);
+      const [imHoja, imTira, fotos] = await Promise.all([
+        cargarImagen(urlHoja),
+        cargarImagen(urlTira),
+        fotogramasDeTira(urlTira, proyecto.tira.fotogramas),
+      ]);
+      if (imHoja.naturalWidth !== proyecto.hoja.ancho || imHoja.naturalHeight !== proyecto.hoja.alto) {
+        throw new Error("El tamaño de la hoja original no coincide con sprite.json.");
+      }
+      if (
+        imTira.naturalWidth !== proyecto.tira.anchoFotograma * proyecto.tira.fotogramas
+        || imTira.naturalHeight !== proyecto.tira.altoFotograma
+      ) {
+        throw new Error("El tamaño de sprite.png no coincide con sprite.json.");
+      }
+
+      setHecho({
+        edicionId: Date.now(),
+        fotos,
+        url: urlTira,
+        blob: blobTira,
+        ancho: proyecto.tira.anchoFotograma,
+        alto: proyecto.tira.altoFotograma,
+        descartados: Math.max(0, proyecto.celdas.length - fotos.length),
+        hoja: {
+          url: urlHoja,
+          blob: blobHoja,
+          ancho: proyecto.hoja.ancho,
+          alto: proyecto.hoja.alto,
+          forma: proyecto.forma,
+          croma: proyecto.croma,
+          celdas: proyecto.celdas,
+        },
+      });
+      // Las URL ya pertenecen al estado; el efecto las liberará al reemplazarlo.
+      urlHoja = null;
+      urlTira = null;
+      setQue(proyecto.que);
+      setNombre(proyecto.nombre);
+      setFps(proyecto.fps);
+      setForma(proyecto.forma);
+      setN(proyecto.celdas.length);
+      setGuardado(false);
+      setCortesPendientes(false);
+      setAviso(`Proyecto importado · ${fotos.length} fotogramas · hoja y cortes recuperados.`);
+    } catch (e) {
+      if (urlHoja) URL.revokeObjectURL(urlHoja);
+      if (urlTira) URL.revokeObjectURL(urlTira);
+      setError((e as Error).message || "No se pudo importar el proyecto.");
+    } finally {
+      setPaso(null);
+    }
   }
 
   return (
@@ -278,11 +453,18 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
         </label>
       </div>
 
-      <button onClick={() => void generar()} disabled={!!paso || que.trim().length < 3}
-        className="btn-brand w-full text-sm disabled:opacity-40">
-        {paso ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-        {paso ?? "Fabricar el sprite"}
-      </button>
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <button onClick={() => void generar()} disabled={!puedeGenerar || !!paso || que.trim().length < 3}
+          className="btn-brand w-full text-sm disabled:opacity-40">
+          {paso ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {paso ?? (puedeGenerar ? "Fabricar el sprite" : "Fabricar · falta clave de IA")}
+        </button>
+        <label className={`btn-ghost cursor-pointer text-xs ${paso ? "pointer-events-none opacity-40" : ""}`}>
+          <FolderOpen className="h-3.5 w-3.5 text-accent" /> Importar proyecto ZIP
+          <input type="file" accept=".zip,application/zip" className="hidden"
+            onChange={(e) => { void importarProyecto(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+        </label>
+      </div>
 
       {error && (
         <p className="flex items-start gap-1.5 rounded-lg border border-danger/40 bg-danger/5 p-2 text-[11px] text-danger">
@@ -293,6 +475,17 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
 
       {hecho && (
         <>
+          <EditorCortesSprite
+            hojaUrl={hecho.hoja.url}
+            anchoHoja={hecho.hoja.ancho}
+            altoHoja={hecho.hoja.alto}
+            forma={hecho.hoja.forma}
+            celdas={hecho.hoja.celdas}
+            procesando={actualizando}
+            onAplicar={aplicarCortes}
+            onPendiente={setCortesPendientes}
+          />
+
           <div className="flex flex-wrap items-center gap-3">
             <VistaSprite tira={hecho.url} fotogramas={hecho.fotos.length} fps={fps} andando={andando} />
             <div className="min-w-0 flex-1 space-y-2">
@@ -306,8 +499,8 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
                   {andando ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 text-accent" />}
                   {andando ? "Parar" : "Animar"}
                 </button>
-                <button onClick={() => void descargar()} disabled={actualizando} className="btn-ghost text-xs">
-                  <Download className="h-3.5 w-3.5 text-accent" /> Descargar · ZIP
+                <button onClick={() => void descargar()} disabled={actualizando || cortesPendientes} className="btn-ghost text-xs">
+                  <Download className="h-3.5 w-3.5 text-accent" /> Descargar proyecto · ZIP
                 </button>
               </div>
             </div>
@@ -335,7 +528,7 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
             </label>
             <button
               onClick={() => void guardar()}
-              disabled={guardando || guardado || actualizando || !nombre.trim()}
+              disabled={guardando || guardado || actualizando || cortesPendientes || !nombre.trim()}
               className="btn-brand text-xs disabled:opacity-40"
             >
               {guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" />

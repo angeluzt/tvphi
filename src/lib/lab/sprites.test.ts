@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { desplazamientoParaCentrar, limitesCelda } from "./sprites";
+import {
+  celdasSpritePorDefecto, desplazamientoParaCentrar, limitesCelda, normalizarCeldasSprite,
+  tamanoComunCeldasSprite,
+} from "./sprites";
 
 describe("limitesCelda", () => {
   it("reparte todos los pixeles sin huecos ni solapamientos", () => {
@@ -21,5 +24,35 @@ describe("desplazamientoParaCentrar", () => {
       100,
       80,
     )).toEqual({ x: 10, y: 20 });
+  });
+});
+
+describe("celdas de la hoja original", () => {
+  it("guarda la ubicación exacta de una tira aunque no divida parejo", () => {
+    expect(celdasSpritePorDefecto(1536, 1024, 5, "tira")).toEqual([
+      { x: 0, y: 0, ancho: 307, alto: 1024 },
+      { x: 307, y: 0, ancho: 307, alto: 1024 },
+      { x: 614, y: 0, ancho: 308, alto: 1024 },
+      { x: 922, y: 0, ancho: 307, alto: 1024 },
+      { x: 1229, y: 0, ancho: 307, alto: 1024 },
+    ]);
+  });
+
+  it("acota una celda movida para que nunca lea fuera de la hoja", () => {
+    expect(normalizarCeldasSprite([
+      { x: -20, y: 900, ancho: 2000, alto: 300 },
+    ], 1536, 1024)).toEqual([
+      { x: 0, y: 724, ancho: 1536, alto: 300 },
+    ]);
+  });
+
+  it("cambia el tamaño de todos los cuadros juntos y respeta los bordes", () => {
+    expect(tamanoComunCeldasSprite([
+      { x: 10, y: 10, ancho: 100, alto: 80 },
+      { x: 250, y: 150, ancho: 120, alto: 90 },
+    ], 300, 200, 140, 100)).toEqual([
+      { x: 10, y: 10, ancho: 140, alto: 100 },
+      { x: 160, y: 100, ancho: 140, alto: 100 },
+    ]);
   });
 });

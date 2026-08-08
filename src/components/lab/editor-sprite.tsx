@@ -349,9 +349,9 @@ export function EditorSprite({
     <div className="space-y-3 rounded-xl border border-brand/30 bg-brand/5 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <span>
-          <span className="block text-xs font-semibold text-fg">Corregir y alinear fotogramas</span>
+          <span className="block text-xs font-semibold text-fg">2 · Corregir y alinear fotogramas</span>
           <span className="block text-[10px] text-muted">
-            Arrastra para centrar. En «Borrar», pinta solamente sobre lo que sobra del cuadro elegido.
+            Arrastra para centrar. En «Borrar», pinta sobre lo que sobra. Si falta una pata, vuelve al paso 1.
           </span>
         </span>
         <span className="flex items-center gap-1 text-[10px] text-muted">
