@@ -20,6 +20,8 @@ export type CapaMontajeMeta = {
   depth: number;
   escala: number;
   opacidad: number;
+  /** Impide cambios accidentales hasta que el usuario desbloquee la capa. */
+  bloqueada?: boolean;
   archivo: string;
   via?: "transparente" | "croma" | "opaca";
   vacio?: number;
@@ -79,6 +81,7 @@ export async function bajarMontajeZip(opts: {
     depth: number;
     escala: number;
     opacidad: number;
+    bloqueada?: boolean;
     via?: CapaMontajeMeta["via"];
     vacio?: number;
     mov?: unknown;
@@ -98,6 +101,7 @@ export async function bajarMontajeZip(opts: {
       depth: c.depth,
       escala: c.escala,
       opacidad: c.opacidad,
+      bloqueada: c.bloqueada ? true : undefined,
       archivo,
       via: c.via,
       vacio: c.vacio,
@@ -127,7 +131,8 @@ export async function bajarMontajeZip(opts: {
       + "Lleva dentro TODO lo necesario para volver a donde lo dejaste:\n"
       + "  · las imágenes de cada capa, con su profundidad\n"
       + "  · el mapa de formas que las originó\n"
-      + "  · la animación de cámara\n\n"
+      + "  · la animación de cámara\n"
+      + "  · las secuencias de sprites y qué capas dejaste bloqueadas\n\n"
       + "Para recuperarlo: laboratorio → Montaje y paralaje → «Importar todo».\n"
       + "La primera imagen es el fondo; el resto deberían ser PNG con transparencia.\n",
     ),
@@ -141,6 +146,7 @@ export type CapaImportada = {
   depth: number;
   escala: number;
   opacidad: number;
+  bloqueada?: boolean;
   via?: CapaMontajeMeta["via"];
   vacio?: number;
   mov?: unknown;
@@ -189,6 +195,7 @@ export async function leerMontajeZip(file: Blob): Promise<{
         depth: m.depth,
         escala: m.escala ?? 1,
         opacidad: m.opacidad ?? 1,
+        bloqueada: m.bloqueada === true,
         via: m.via,
         vacio: m.vacio,
         mov: m.mov,
