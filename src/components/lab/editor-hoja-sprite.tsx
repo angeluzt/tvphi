@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Copy, Crosshair, Loader2,
-  Hand, PenTool, RotateCcw, SquareDashed, Trash2, Undo2, ZoomIn, ZoomOut,
+  Hand, Minimize2, Paintbrush, PenTool, RotateCcw, SquareDashed, Trash2, Undo2,
+  ZoomIn, ZoomOut,
 } from "lucide-react";
 import { cargarImagen, colorDelFondo, huecoDe, parseHex } from "@/lib/lab/quitar-fondo";
 import {
@@ -12,7 +13,7 @@ import {
 } from "@/lib/lab/seleccion-hoja-sprite";
 import type { CeldaSprite } from "@/lib/lab/sprites";
 
-type Modo = "navegar" | "automatico" | "rectangulo" | "lazo";
+type Modo = "navegar" | "automatico" | "rectangulo" | "lazo" | "pincel";
 
 interface SeleccionVisual extends MascaraHoja {
   lienzo: HTMLCanvasElement;
@@ -21,7 +22,8 @@ interface SeleccionVisual extends MascaraHoja {
 type Gesto =
   | { tipo: "mover"; puntero: number; inicio: PuntoHoja; dx: number; dy: number }
   | { tipo: "rectangulo"; puntero: number; inicio: PuntoHoja; fin: PuntoHoja }
-  | { tipo: "lazo"; puntero: number; puntos: PuntoHoja[] };
+  | { tipo: "lazo"; puntero: number; puntos: PuntoHoja[] }
+  | { tipo: "pincel"; puntero: number; puntos: PuntoHoja[] };
 
 interface PasoHistoria {
   x: number;
@@ -39,6 +41,59 @@ const crearLienzo = (ancho: number, alto: number) => {
 const blobDeLienzo = (cv: HTMLCanvasElement) => new Promise<Blob>((res, rej) => {
   cv.toBlob((blob) => blob ? res(blob) : rej(new Error("No se pudo guardar la hoja corregida.")), "image/png");
 });
+
+function cubrirSeleccionConFondo(
+  c: CanvasRenderingContext2D,
+  s: MascaraHoja,
+  margen: number,
+  fondo: [number, number, number],
+  usarCroma: boolean,
+) {
+  const x0 = Math.max(0, s.x - margen), y0 = Math.max(0, s.y - margen);
+  const x1 = Math.min(c.canvas.width, s.x + s.ancho + margen);
+  const y1 = Math.min(c.canvas.height, s.y + s.alto + margen);
+  const ancho = x1 - x0, alto = y1 - y0;
+  if (ancho < 1 || alto < 1) return;
+  const parche = c.getImageData(x0, y0, ancho, alto);
+  for (let y = 0; y < s.alto; y++) {
+    for (let x = 0; x < s.ancho; x++) {
+      if (!s.mascara[y * s.ancho + x]) continue;
+      const gx = s.x + x, gy = s.y + y;
+      for (let my = Math.max(y0, gy - margen); my <= Math.min(y1 - 1, gy + margen); my++) {
+        for (let mx = Math.max(x0, gx - margen); mx <= Math.min(x1 - 1, gx + margen); mx++) {
+          const o = ((my - y0) * ancho + mx - x0) * 4;
+          parche.data[o] = fondo[0];
+          parche.data[o + 1] = fondo[1];
+          parche.data[o + 2] = fondo[2];
+          parche.data[o + 3] = usarCroma ? 255 : 0;
+        }
+      }
+    }
+  }
+  c.putImageData(parche, x0, y0);
+}
+
+function pintarFondo(
+  c: CanvasRenderingContext2D,
+  puntos: PuntoHoja[],
+  tam: number,
+  fondo: [number, number, number],
+  usarCroma: boolean,
+) {
+  if (!puntos.length) return;
+  c.save();
+  c.globalCompositeOperation = usarCroma ? "source-over" : "destination-out";
+  c.strokeStyle = `rgb(${fondo[0]} ${fondo[1]} ${fondo[2]})`;
+  c.lineCap = "round";
+  c.lineJoin = "round";
+  c.lineWidth = tam;
+  c.beginPath();
+  c.moveTo(puntos[0].x, puntos[0].y);
+  for (const p of puntos.slice(1)) c.lineTo(p.x, p.y);
+  if (puntos.length === 1) c.lineTo(puntos[0].x + 0.01, puntos[0].y + 0.01);
+  c.stroke();
+  c.restore();
+}
 
 export function EditorHojaSprite({
   hojaUrl,
@@ -67,6 +122,8 @@ export function EditorHojaSprite({
   const [fuenteInicial] = useState(hojaUrl);
   const [modo, setModo] = useState<Modo>("automatico");
   const [tolerancia, setTolerancia] = useState(52);
+  const [pincelFondo, setPincelFondo] = useState(16);
+  const [margenLimpieza, setMargenLimpieza] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [seleccion, setSeleccion] = useState<SeleccionVisual | null>(null);
   const [dx, setDx] = useState(0);
@@ -125,22 +182,17 @@ export function EditorHojaSprite({
       const destinoX = seleccion.x + dx;
       const destinoY = seleccion.y + dy;
       if (dx || dy) {
-        const parche = c.getImageData(seleccion.x, seleccion.y, seleccion.ancho, seleccion.alto);
-        for (let p = 0; p < seleccion.mascara.length; p++) {
-          if (!seleccion.mascara[p]) continue;
-          const o = p * 4;
-          parche.data[o] = fondo[0];
-          parche.data[o + 1] = fondo[1];
-          parche.data[o + 2] = fondo[2];
-          parche.data[o + 3] = usarCroma ? 255 : 0;
-        }
-        c.putImageData(parche, seleccion.x, seleccion.y);
+        cubrirSeleccionConFondo(c, seleccion, margenLimpieza, fondo, usarCroma);
         c.drawImage(seleccion.lienzo, destinoX, destinoY);
       }
       c.save();
       c.globalAlpha = 0.3;
       c.drawImage(seleccion.lienzo, destinoX, destinoY);
       c.restore();
+    }
+
+    if (borrador?.tipo === "pincel") {
+      pintarFondo(c, borrador.puntos, pincelFondo, fondo, usarCroma);
     }
 
     // La rejilla solo es una guía: nunca se hornea en la hoja guardada.
@@ -197,7 +249,8 @@ export function EditorHojaSprite({
       c.stroke();
       c.restore();
     }
-  }, [altoHoja, anchoHoja, borrador, celdas, dx, dy, fondo, listo, revision, seleccion, usarCroma]);
+  }, [altoHoja, anchoHoja, borrador, celdas, dx, dy, fondo, listo, margenLimpieza,
+    pincelFondo, revision, seleccion, usarCroma]);
 
   useEffect(() => { pintar(); }, [pintar]);
 
@@ -255,7 +308,10 @@ export function EditorHojaSprite({
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = punto(e);
     let gesto: Gesto;
-    if (enSeleccion(p)) {
+    if (modo === "pincel") {
+      setSeleccion(null); setDx(0); setDy(0);
+      gesto = { tipo: "pincel", puntero: e.pointerId, puntos: [p] };
+    } else if (enSeleccion(p)) {
       gesto = { tipo: "mover", puntero: e.pointerId, inicio: p, dx, dy };
     } else if (modo === "automatico") {
       seleccionarAutomatico(p);
@@ -288,9 +344,10 @@ export function EditorHojaSprite({
     } else if (g.tipo === "rectangulo") {
       g.fin = p;
       setBorrador({ ...g });
-    } else if (g.tipo === "lazo") {
+    } else if (g.tipo === "lazo" || g.tipo === "pincel") {
       const ultimo = g.puntos[g.puntos.length - 1];
-      if ((p.x - ultimo.x) ** 2 + (p.y - ultimo.y) ** 2 >= 9) {
+      const distanciaMinima = g.tipo === "pincel" ? 1 : 9;
+      if ((p.x - ultimo.x) ** 2 + (p.y - ultimo.y) ** 2 >= distanciaMinima) {
         g.puntos.push(p);
         setBorrador({ ...g, puntos: [...g.puntos] });
       }
@@ -306,6 +363,16 @@ export function EditorHojaSprite({
     if (g.tipo === "mover") return;
     const trabajo = trabajoRef.current;
     if (!trabajo) return;
+    if (g.tipo === "pincel") {
+      const radio = Math.ceil(pincelFondo / 2) + 1;
+      const xs = g.puntos.map((p) => p.x), ys = g.puntos.map((p) => p.y);
+      const x0 = Math.min(...xs) - radio, y0 = Math.min(...ys) - radio;
+      const x1 = Math.max(...xs) + radio, y1 = Math.max(...ys) + radio;
+      guardarPaso(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+      pintarFondo(trabajo.getContext("2d")!, g.puntos, pincelFondo, fondo, usarCroma);
+      marcarCambio();
+      return;
+    }
     const d = trabajo.getContext("2d")!.getImageData(0, 0, anchoHoja, altoHoja).data;
     convertirSeleccion(g.tipo === "rectangulo"
       ? seleccionarRectanguloHoja(d, anchoHoja, altoHoja, g.inicio, g.fin, opcionesFondo())
@@ -313,16 +380,7 @@ export function EditorHojaSprite({
   }
 
   function limpiarMascara(c: CanvasRenderingContext2D, s: SeleccionVisual) {
-    const parche = c.getImageData(s.x, s.y, s.ancho, s.alto);
-    for (let p = 0; p < s.mascara.length; p++) {
-      if (!s.mascara[p]) continue;
-      const o = p * 4;
-      parche.data[o] = fondo[0];
-      parche.data[o + 1] = fondo[1];
-      parche.data[o + 2] = fondo[2];
-      parche.data[o + 3] = usarCroma ? 255 : 0;
-    }
-    c.putImageData(parche, s.x, s.y);
+    cubrirSeleccionConFondo(c, s, margenLimpieza, fondo, usarCroma);
   }
 
   function guardarPaso(x: number, y: number, ancho: number, alto: number) {
@@ -351,7 +409,8 @@ export function EditorHojaSprite({
     const y0 = Math.min(seleccion.y, seleccion.y + dy);
     const x1 = Math.max(seleccion.x + seleccion.ancho, seleccion.x + dx + seleccion.ancho);
     const y1 = Math.max(seleccion.y + seleccion.alto, seleccion.y + dy + seleccion.alto);
-    guardarPaso(x0, y0, x1 - x0, y1 - y0);
+    guardarPaso(x0 - margenLimpieza, y0 - margenLimpieza,
+      x1 - x0 + margenLimpieza * 2, y1 - y0 + margenLimpieza * 2);
     const c = trabajo.getContext("2d")!;
     if (!copiar) limpiarMascara(c, seleccion);
     c.drawImage(seleccion.lienzo, seleccion.x + dx, seleccion.y + dy);
@@ -362,9 +421,49 @@ export function EditorHojaSprite({
   function borrarSeleccion() {
     const trabajo = trabajoRef.current;
     if (!trabajo || !seleccion) return;
-    guardarPaso(seleccion.x, seleccion.y, seleccion.ancho, seleccion.alto);
+    guardarPaso(seleccion.x - margenLimpieza, seleccion.y - margenLimpieza,
+      seleccion.ancho + margenLimpieza * 2, seleccion.alto + margenLimpieza * 2);
     limpiarMascara(trabajo.getContext("2d")!, seleccion);
     setSeleccion(null); setDx(0); setDy(0);
+    marcarCambio();
+  }
+
+  function encajarSeleccion() {
+    const trabajo = trabajoRef.current;
+    if (!trabajo || !seleccion || !celdas.length) return;
+    const sx = seleccion.x + dx, sy = seleccion.y + dy;
+    const areaComun = (c: CeldaSprite) => Math.max(0,
+      Math.min(sx + seleccion.ancho, c.x + c.ancho) - Math.max(sx, c.x),
+    ) * Math.max(0,
+      Math.min(sy + seleccion.alto, c.y + c.alto) - Math.max(sy, c.y),
+    );
+    const centroX = sx + seleccion.ancho / 2, centroY = sy + seleccion.alto / 2;
+    const distancia = (c: CeldaSprite) =>
+      (centroX - c.x - c.ancho / 2) ** 2 + (centroY - c.y - c.alto / 2) ** 2;
+    const celda = [...celdas].sort((a, b) =>
+      areaComun(b) - areaComun(a) || distancia(a) - distancia(b),
+    )[0];
+    const margen = Math.max(2, Math.round(Math.min(celda.ancho, celda.alto) * 0.05));
+    const disponibleX = Math.max(1, celda.ancho - margen * 2);
+    const disponibleY = Math.max(1, celda.alto - margen * 2);
+    const escala = Math.min(1, disponibleX / seleccion.ancho, disponibleY / seleccion.alto);
+    const ancho = Math.max(1, Math.round(seleccion.ancho * escala));
+    const alto = Math.max(1, Math.round(seleccion.alto * escala));
+    const destinoX = Math.round(celda.x + (celda.ancho - ancho) / 2);
+    const destinoY = Math.round(celda.y + (celda.alto - alto) / 2);
+    const x0 = Math.min(seleccion.x - margenLimpieza, destinoX);
+    const y0 = Math.min(seleccion.y - margenLimpieza, destinoY);
+    const x1 = Math.max(seleccion.x + seleccion.ancho + margenLimpieza, destinoX + ancho);
+    const y1 = Math.max(seleccion.y + seleccion.alto + margenLimpieza, destinoY + alto);
+    guardarPaso(x0, y0, x1 - x0, y1 - y0);
+    const c = trabajo.getContext("2d")!;
+    limpiarMascara(c, seleccion);
+    c.save();
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = "high";
+    c.drawImage(seleccion.lienzo, destinoX, destinoY, ancho, alto);
+    c.restore();
+    setSeleccion(null); setDx(0); setDy(0); setError(null);
     marcarCambio();
   }
 
@@ -440,6 +539,10 @@ export function EditorHojaSprite({
           className={modo === "lazo" ? "btn-brand px-2 py-1 text-xs" : "btn-ghost px-2 py-1 text-xs"}>
           <PenTool className="h-3.5 w-3.5" /> Lazo preciso
         </button>
+        <button type="button" onClick={() => setModo("pincel")} disabled={ocupado}
+          className={modo === "pincel" ? "btn-brand px-2 py-1 text-xs" : "btn-ghost px-2 py-1 text-xs"}>
+          <Paintbrush className="h-3.5 w-3.5" /> Pincel de fondo
+        </button>
         <button type="button" onClick={deshacer} disabled={ocupado || !historial.length}
           className="btn-ghost ml-auto px-2 py-1 text-xs">
           <Undo2 className="h-3.5 w-3.5" /> Deshacer
@@ -511,6 +614,10 @@ export function EditorHojaSprite({
                   className="btn-ghost px-2 py-1 text-xs text-danger">
                   <Trash2 className="h-3.5 w-3.5" /> Borrar elemento
                 </button>
+                <button type="button" onClick={encajarSeleccion} disabled={ocupado}
+                  className="btn-ghost px-2 py-1 text-xs">
+                  <Minimize2 className="h-3.5 w-3.5 text-gold" /> Encajar en casilla
+                </button>
               </div>
               <p className="text-[9px] text-muted">
                 Arrastra el borde azul o usa las flechas. El hueco anterior se rellenará con el fondo cromático.
@@ -522,6 +629,7 @@ export function EditorHojaSprite({
               {modo === "rectangulo" && "Arrastra un rectángulo alrededor de la parte que quieres mover."}
               {modo === "lazo" && "Dibuja un contorno cerrado alrededor del elemento para evitar líneas o dibujos vecinos."}
               {modo === "navegar" && "Desplaza la hoja ampliada sin cambiar ninguna selección."}
+              {modo === "pincel" && "Pinta sobre rayas o restos. Se usa el mismo fondo y desaparecerá al recortar."}
             </p>
           )}
         </div>
@@ -542,6 +650,18 @@ export function EditorHojaSprite({
                 onChange={(e) => setTolerancia(Number(e.target.value))} className="mt-1 w-full" />
             </label>
           )}
+          {modo === "pincel" && (
+            <label className="block text-[10px] text-muted">
+              Pincel de fondo: {pincelFondo}px
+              <input type="range" min={2} max={80} step={1} value={pincelFondo}
+                onChange={(e) => setPincelFondo(Number(e.target.value))} className="mt-1 w-full" />
+            </label>
+          )}
+          <label className="block text-[10px] text-muted">
+            Limpiar contorno al mover: {margenLimpieza}px
+            <input type="range" min={0} max={3} step={1} value={margenLimpieza}
+              onChange={(e) => setMargenLimpieza(Number(e.target.value))} className="mt-1 w-full" />
+          </label>
         </div>
       </div>
 

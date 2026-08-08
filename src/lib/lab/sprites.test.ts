@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   celdasSpritePorDefecto, desplazamientoParaCentrar, limitesCelda, normalizarCeldasSprite,
-  tamanoComunCeldasSprite,
+  limpiarResiduosLinealesBorde, tamanoComunCeldasSprite,
 } from "./sprites";
 
 describe("limitesCelda", () => {
@@ -14,6 +14,30 @@ describe("limitesCelda", () => {
       expect(celdas[i].inicio).toBe(celdas[i - 1].inicio + celdas[i - 1].tam);
     }
     expect(celdas.at(-1)!.inicio + celdas.at(-1)!.tam).toBe(1536);
+  });
+});
+
+describe("limpieza de residuos lineales", () => {
+  const datos = (w: number, h: number) => new Uint8ClampedArray(w * h * 4);
+  const pintar = (d: Uint8ClampedArray, w: number, x: number, y: number) => {
+    d[(y * w + x) * 4 + 3] = 255;
+  };
+
+  it("elimina una raya larga pegada al borde", () => {
+    const w = 40, h = 30, d = datos(w, h);
+    for (let y = 0; y < h; y++) pintar(d, w, 1, y);
+    for (let y = 10; y < 20; y++) for (let x = 14; x < 25; x++) pintar(d, w, x, y);
+
+    expect(limpiarResiduosLinealesBorde(d, w, h)).toBe(30);
+    expect(d[(15 * w + 18) * 4 + 3]).toBe(255);
+  });
+
+  it("conserva detalles delgados que no son separadores", () => {
+    const w = 40, h = 30, d = datos(w, h);
+    for (let y = 3; y < 12; y++) pintar(d, w, 1, y);
+
+    expect(limpiarResiduosLinealesBorde(d, w, h)).toBe(0);
+    expect(d[(7 * w + 1) * 4 + 3]).toBe(255);
   });
 });
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crosshair, Eraser,
-  Eye, EyeOff, Loader2, Move, RotateCcw, Undo2,
+  Eye, EyeOff, Loader2, Move, RotateCcw, SlidersHorizontal, Undo2,
 } from "lucide-react";
 import { cargarImagen } from "@/lib/lab/quitar-fondo";
 import {
@@ -135,6 +135,7 @@ export function EditorSprite({
   const [modo, setModo] = useState<"mover" | "borrar">("mover");
   const [pincel, setPincel] = useState(24);
   const [fantasma, setFantasma] = useState(true);
+  const [avanzado, setAvanzado] = useState(false);
   const [procesando, setProcesando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historial, setHistorial] = useState<CuadroEditable[][]>([]);
@@ -360,6 +361,51 @@ export function EditorSprite({
         </span>
       </div>
 
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {cuadros.map((q, i) => (
+          <button
+            type="button"
+            key={q.id}
+            onClick={() => setElegido(i)}
+            className={`relative h-14 shrink-0 overflow-hidden rounded-md border bg-surface-2 ${i === elegido ? "border-accent ring-1 ring-accent" : "border-border"}`}
+            style={{ aspectRatio: `${q.ancho}/${q.alto}` }}
+            aria-label={`Elegir fotograma ${i + 1}`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={q.fuente}
+              alt=""
+              className="absolute inset-0 h-full w-full object-contain"
+              style={{ transform: `translate(${q.x / q.ancho * 100}%, ${q.y / q.alto * 100}%)` }}
+            />
+            <span className="absolute left-0 top-0 rounded-br bg-black/70 px-1 text-[9px] text-white">{i + 1}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="sticky top-12 z-20 grid grid-cols-3 gap-1 rounded-lg border border-border bg-surface/95 p-1 backdrop-blur lg:static lg:grid-cols-2">
+        <button type="button" onClick={() => setModo("mover")}
+          className={modo === "mover" ? "btn-brand px-2 py-1 text-xs" : "btn-ghost px-2 py-1 text-xs"}>
+          <Move className="h-3.5 w-3.5" /> Mover
+        </button>
+        <button type="button" onClick={() => setModo("borrar")}
+          className={modo === "borrar" ? "btn-brand px-2 py-1 text-xs" : "btn-ghost px-2 py-1 text-xs"}>
+          <Eraser className="h-3.5 w-3.5" /> Borrar
+        </button>
+        <button type="button" onClick={() => setAvanzado((v) => !v)}
+          className="btn-ghost px-2 py-1 text-xs lg:hidden">
+          <SlidersHorizontal className="h-3.5 w-3.5" /> {avanzado ? "Ocultar" : "Más ajustes"}
+        </button>
+      </div>
+
+      {modo === "borrar" && (
+        <label className="block rounded-lg border border-border bg-surface/50 p-2">
+          <span className="text-[10px] text-muted">Pincel: {pincel}px</span>
+          <input type="range" min={2} max={maxPincel} value={Math.min(pincel, maxPincel)}
+            onChange={(e) => setPincel(Number(e.target.value))} className="mt-1 w-full" />
+        </label>
+      )}
+
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_13rem]">
         <div className="flex min-h-56 items-center justify-center overflow-hidden rounded-lg border border-border bg-black/30 p-2">
           <canvas
@@ -370,31 +416,12 @@ export function EditorSprite({
             onPointerMove={alMover}
             onPointerUp={terminar}
             onPointerCancel={terminar}
-            className={`max-h-[28rem] max-w-full touch-none rounded ${modo === "mover" ? "cursor-grab active:cursor-grabbing" : "cursor-crosshair"}`}
+            className={`max-h-[52vh] max-w-full touch-none rounded lg:max-h-[28rem] ${modo === "mover" ? "cursor-grab active:cursor-grabbing" : "cursor-crosshair"}`}
             aria-label={`Editar fotograma ${elegido + 1}`}
           />
         </div>
 
-        <div className="space-y-2">
-          <div className="grid grid-cols-2 gap-1">
-            <button type="button" onClick={() => setModo("mover")}
-              className={modo === "mover" ? "btn-brand px-2 py-1 text-xs" : "btn-ghost px-2 py-1 text-xs"}>
-              <Move className="h-3.5 w-3.5" /> Mover
-            </button>
-            <button type="button" onClick={() => setModo("borrar")}
-              className={modo === "borrar" ? "btn-brand px-2 py-1 text-xs" : "btn-ghost px-2 py-1 text-xs"}>
-              <Eraser className="h-3.5 w-3.5" /> Borrar
-            </button>
-          </div>
-
-          {modo === "borrar" && (
-            <label className="block rounded-lg border border-border bg-surface/50 p-2">
-              <span className="text-[10px] text-muted">Pincel: {pincel}px</span>
-              <input type="range" min={2} max={maxPincel} value={Math.min(pincel, maxPincel)}
-                onChange={(e) => setPincel(Number(e.target.value))} className="mt-1 w-full" />
-            </label>
-          )}
-
+        <div className={`${avanzado ? "space-y-2" : "hidden"} lg:block lg:space-y-2`}>
           <div className="grid grid-cols-3 gap-1" aria-label="Mover un pixel">
             <span />
             <button type="button" onClick={() => mover(0, -1)} className="btn-ghost px-2 py-1" aria-label="Mover arriba">
@@ -453,27 +480,6 @@ export function EditorSprite({
 
       {error && <p className="text-[10px] text-danger">{error}</p>}
 
-      <div className="flex gap-1 overflow-x-auto pb-1">
-        {cuadros.map((q, i) => (
-          <button
-            type="button"
-            key={q.id}
-            onClick={() => setElegido(i)}
-            className={`relative h-16 shrink-0 overflow-hidden rounded-md border bg-surface-2 ${i === elegido ? "border-accent ring-1 ring-accent" : "border-border"}`}
-            style={{ aspectRatio: `${q.ancho}/${q.alto}` }}
-            aria-label={`Elegir fotograma ${i + 1}`}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={q.fuente}
-              alt=""
-              className="absolute inset-0 h-full w-full object-contain"
-              style={{ transform: `translate(${q.x / q.ancho * 100}%, ${q.y / q.alto * 100}%)` }}
-            />
-            <span className="absolute left-0 top-0 rounded-br bg-black/70 px-1 text-[9px] text-white">{i + 1}</span>
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

@@ -55,7 +55,7 @@ export function BibliotecaSprites({ recargar, onUsar }: {
   const total = sprites?.reduce((a, s) => a + s.bytes, 0) ?? 0;
 
   return (
-    <div className="card space-y-3 p-4">
+    <div className="card min-w-0 space-y-3 overflow-hidden p-4">
       <div className="flex items-center gap-2">
         <Library className="h-4 w-4 shrink-0 text-accent" />
         <span className="min-w-0 flex-1">
@@ -90,10 +90,10 @@ export function BibliotecaSprites({ recargar, onUsar }: {
 
       {!!sprites?.length && (
         <>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {sprites.map((s) => (
-              <div key={s.id} className="space-y-1.5 rounded-lg border border-border bg-surface-2/40 p-2">
-                <div className="flex items-start gap-2">
+              <div key={s.id} className="min-w-0 space-y-1.5 overflow-hidden rounded-lg border border-border bg-surface-2/40 p-2">
+                <div className="flex min-w-0 items-start gap-2">
                   <VistaSprite
                     tira={urlSprite(s.id)}
                     fotogramas={s.fotogramas}
@@ -103,16 +103,16 @@ export function BibliotecaSprites({ recargar, onUsar }: {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium text-fg" title={s.nombre}>{s.nombre}</p>
                     <p className="truncate text-[10px] text-muted" title={s.que}>{s.que}</p>
-                    <p className="text-[10px] text-muted">
+                    <p className="truncate text-[10px] text-muted">
                       {s.fotogramas} fotogramas · {s.fps}/s · {s.ancho}×{s.alto} · {pesoLegible(s.bytes)}
                     </p>
                   </div>
                 </div>
-                <div className="flex gap-1.5">
+                <div className="flex min-w-0 gap-1.5 overflow-hidden">
                   <button
                     onClick={() => onUsar?.(s)}
                     disabled={!onUsar}
-                    className="btn-brand flex-1 py-1 text-[11px] disabled:opacity-40"
+                    className="btn-brand min-w-0 flex-1 py-1 text-[11px] disabled:opacity-40"
                   >
                     <Plus className="h-3 w-3" /> Al montaje
                   </button>
