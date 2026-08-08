@@ -78,6 +78,64 @@ export function cajaDe(d: Uint8ClampedArray, w: number, h: number): CajaContenid
 }
 
 /**
+ * Borra separadores residuales que el croma dejó pegados al borde de una celda.
+ *
+ * No se eliminan componentes pequeños a ciegas: una pata, antena o chispa puede
+ * ser legítima. Solo se consideran grupos de 1–4 filas/columnas, muy largos y
+ * situados junto al borde. Esa geometría corresponde a una línea de rejilla,
+ * no a la silueta normal de un personaje.
+ */
+export function limpiarResiduosLinealesBorde(
+  d: Uint8ClampedArray,
+  w: number,
+  h: number,
+): number {
+  if (w < 2 || h < 2) return 0;
+  const corto = Math.min(w, h);
+  const grosorMax = Math.max(1, Math.min(4, Math.round(corto * 0.012)));
+  const banda = Math.max(3, Math.min(12, grosorMax * 3));
+  const opaco = (x: number, y: number) => d[(y * w + x) * 4 + 3] > 24;
+  const columnas = Array.from({ length: w }, (_, x) => {
+    let n = 0;
+    for (let y = 0; y < h; y++) if (opaco(x, y)) n++;
+    return n >= h * 0.58;
+  });
+  const filas = Array.from({ length: h }, (_, y) => {
+    let n = 0;
+    for (let x = 0; x < w; x++) if (opaco(x, y)) n++;
+    return n >= w * 0.58;
+  });
+  const borrarColumnas = new Uint8Array(w);
+  const borrarFilas = new Uint8Array(h);
+
+  function marcarGrupos(candidatos: boolean[], salida: Uint8Array) {
+    for (let i = 0; i < candidatos.length;) {
+      if (!candidatos[i]) { i++; continue; }
+      const inicio = i;
+      while (i < candidatos.length && candidatos[i]) i++;
+      const fin = i - 1;
+      const ancho = fin - inicio + 1;
+      const juntoAlBorde = inicio <= banda || fin >= candidatos.length - 1 - banda;
+      if (ancho <= grosorMax && juntoAlBorde) {
+        for (let p = inicio; p <= fin; p++) salida[p] = 1;
+      }
+    }
+  }
+
+  marcarGrupos(columnas, borrarColumnas);
+  marcarGrupos(filas, borrarFilas);
+  let borrados = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!borrarColumnas[x] && !borrarFilas[y]) continue;
+      const a = (y * w + x) * 4 + 3;
+      if (d[a] > 0) { d[a] = 0; borrados++; }
+    }
+  }
+  return borrados;
+}
+
+/**
  * Los limites enteros de una celda dentro de una hoja.
  *
  * No se usa `total / n` directamente en drawImage: si el ancho no es divisible
@@ -228,7 +286,11 @@ export async function cortarHoja(opts: {
       const r = quitarColor(cv, base);
       color = color ?? r.color;
     }
-    celdas.push({ cv, datos: c.getImageData(0, 0, cv.width, cv.height).data });
+    const limpia = c.getImageData(0, 0, cv.width, cv.height);
+    if (limpiarResiduosLinealesBorde(limpia.data, cv.width, cv.height)) {
+      c.putImageData(limpia, 0, 0);
+    }
+    celdas.push({ cv, datos: limpia.data });
   }
 
   // 2 · Una caja COMÚN, con lo que tienen todos los fotogramas que valen.

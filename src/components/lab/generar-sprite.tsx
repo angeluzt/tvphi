@@ -92,6 +92,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
   const [actualizando, setActualizando] = useState(false);
   const [cortesPendientes, setCortesPendientes] = useState(false);
   const [hojaPendiente, setHojaPendiente] = useState(false);
+  const [editorActivo, setEditorActivo] = useState<"hoja" | "cortes" | "fotogramas">("hoja");
   const revisionTira = useRef(0);
   const edicionPendiente = cortesPendientes || hojaPendiente;
 
@@ -170,6 +171,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       });
       setCortesPendientes(false);
       setHojaPendiente(false);
+      setEditorActivo("hoja");
       setNombre(nombreSprite(que));
       setPaso(null);
       setAviso(
@@ -223,6 +225,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       aceptada = true;
       setGuardado(false);
       setHojaPendiente(false);
+      setEditorActivo("cortes");
       setAviso(
         `Hoja corregida · ${cortada.fotogramas.length} fotogramas recortados de nuevo`
         + (cortada.descartados ? ` · ${cortada.descartados} celdas vacías` : ""),
@@ -269,6 +272,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       } : prev);
       setGuardado(false);
       setCortesPendientes(false);
+      setEditorActivo("fotogramas");
       setAviso(
         `${cortada.fotogramas.length} fotogramas recortados desde la hoja original`
         + (cortada.descartados ? ` · ${cortada.descartados} celdas vacías` : ""),
@@ -444,6 +448,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       setGuardado(false);
       setCortesPendientes(false);
       setHojaPendiente(false);
+      setEditorActivo("hoja");
       setAviso(`Proyecto importado · ${fotos.length} fotogramas · hoja y cortes recuperados.`);
     } catch (e) {
       if (urlHoja) URL.revokeObjectURL(urlHoja);
@@ -537,30 +542,48 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
 
       {hecho && (
         <>
-          <EditorHojaSprite
-            key={hecho.hoja.sesionId}
-            hojaUrl={hecho.hoja.url}
-            anchoHoja={hecho.hoja.ancho}
-            altoHoja={hecho.hoja.alto}
-            croma={hecho.hoja.croma}
-            celdas={hecho.hoja.celdas}
-            procesando={actualizando}
-            bloqueado={cortesPendientes}
-            onAplicar={aplicarHoja}
-            onPendiente={setHojaPendiente}
-          />
+          <div className="sticky top-2 z-30 grid grid-cols-3 gap-1 rounded-xl border border-border bg-surface/95 p-1 shadow-lg backdrop-blur">
+            {([
+              ["hoja", "1 · Hoja", hojaPendiente],
+              ["cortes", "2 · Cortes", cortesPendientes],
+              ["fotogramas", "3 · Cuadros", false],
+            ] as const).map(([id, etiqueta, pendiente]) => (
+              <button key={id} type="button" onClick={() => setEditorActivo(id)}
+                className={editorActivo === id ? "btn-brand min-w-0 px-2 py-1.5 text-xs" : "btn-ghost min-w-0 px-2 py-1.5 text-xs"}>
+                <span className="truncate">{etiqueta}</span>
+                {pendiente && <span className="h-2 w-2 shrink-0 rounded-full bg-gold" title="Cambios sin aplicar" />}
+              </button>
+            ))}
+          </div>
 
-          <EditorCortesSprite
-            hojaUrl={hecho.hoja.url}
-            anchoHoja={hecho.hoja.ancho}
-            altoHoja={hecho.hoja.alto}
-            forma={hecho.hoja.forma}
-            celdas={hecho.hoja.celdas}
-            procesando={actualizando}
-            bloqueado={hojaPendiente}
-            onAplicar={aplicarCortes}
-            onPendiente={setCortesPendientes}
-          />
+          <div className={editorActivo === "hoja" ? "block" : "hidden"}>
+            <EditorHojaSprite
+              key={hecho.hoja.sesionId}
+              hojaUrl={hecho.hoja.url}
+              anchoHoja={hecho.hoja.ancho}
+              altoHoja={hecho.hoja.alto}
+              croma={hecho.hoja.croma}
+              celdas={hecho.hoja.celdas}
+              procesando={actualizando}
+              bloqueado={cortesPendientes}
+              onAplicar={aplicarHoja}
+              onPendiente={setHojaPendiente}
+            />
+          </div>
+
+          <div className={editorActivo === "cortes" ? "block" : "hidden"}>
+            <EditorCortesSprite
+              hojaUrl={hecho.hoja.url}
+              anchoHoja={hecho.hoja.ancho}
+              altoHoja={hecho.hoja.alto}
+              forma={hecho.hoja.forma}
+              celdas={hecho.hoja.celdas}
+              procesando={actualizando}
+              bloqueado={hojaPendiente}
+              onAplicar={aplicarCortes}
+              onPendiente={setCortesPendientes}
+            />
+          </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <VistaSprite tira={hecho.url} fotogramas={hecho.fotos.length} fps={fps} andando={andando} />
@@ -582,11 +605,13 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
             </div>
           </div>
 
-          <EditorSprite
-            key={hecho.edicionId}
-            fotosIniciales={hecho.fotos}
-            onChange={actualizarFotogramas}
-          />
+          <div className={editorActivo === "fotogramas" ? "block" : "hidden"}>
+            <EditorSprite
+              key={hecho.edicionId}
+              fotosIniciales={hecho.fotos}
+              onChange={actualizarFotogramas}
+            />
+          </div>
 
           {/* Guardarlo es el paso que hace que todo esto valga la pena: la
               velocidad que se elija arriba se guarda con él, así que el sprite
