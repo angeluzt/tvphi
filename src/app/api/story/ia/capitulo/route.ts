@@ -8,6 +8,7 @@ import { prepararCapituloGenerado, ajustarMusicaCapitulo } from "@/lib/story/gui
 import { VOCES } from "@/lib/story/modelos";
 import { estadoCupoHistorias, mensajeCupoAgotado, registrarUsoIaCapitulo, esAdminHistorias } from "@/lib/story/cupo";
 import { AVISO_SIN_VERIFICAR } from "@/lib/email-verify";
+import { fijarConsistencia, leerReparto, leerEstilo } from "@/lib/story/consistencia";
 
 // Si la IA no rellenó project.voices, se asigna una voz distinta por hablante
 // para que Nora y Tomás no suenen iguales al narrar.
@@ -62,7 +63,7 @@ const MEDIDAS: Record<string, { w: number; h: number }> = {
 const INSTRUCCIONES = `Escribes el montaje de un video narrado, en JSON, para la aplicación TVPHI.
 
 Devuelve SOLO un objeto JSON con esta forma:
-{"name": "título", "project": {"aspect":"16:9","narrationVolume":1,"audioLayers":[],"intro":null,"outro":null,"voices":{"":"onyx"},"scenes":[...]}}
+{"name": "título", "project": {"aspect":"16:9","narrationVolume":1,"audioLayers":[],"intro":null,"outro":null,"voices":{"":"onyx"},"reparto":{...},"estilo":"...","scenes":[...]}}
 
 Cada escena es UNA imagen:
 {"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen",
@@ -77,7 +78,8 @@ Cada toma es un encuadre sobre esa imagen:
 
 Reglas que NO puedes saltarte:
 - Los identificadores de imagen ("imageId") son inventados y descriptivos: uno distinto por escena.
-- "prompt" describe la imagen de esa escena para poder dibujarla: qué se ve, encuadre, luz, ambiente y estilo. Concreto y visual, 1-3 frases, sin texto ni letras dentro de la imagen. Mantén los mismos personajes y el mismo estilo entre escenas describiéndolos igual cada vez: es lo único que las mantiene unidas.
+- "prompt" describe la imagen de esa escena para poder dibujarla: qué se ve, encuadre, luz y ambiente. Concreto y visual, 1-3 frases, sin texto ni letras dentro de la imagen. NO repitas aquí cómo son los personajes ni el estilo: eso va en "reparto" y "estilo", y el servidor lo pega solo a cada escena.
+- "personajes": lista con los nombres del reparto que SE VEN en esa imagen. Si no se ve nadie, [].
 - Si hay portal en scenes[].vfx, el prompt no debe meter caras dentro del vano. Fuego/antorcha/lámpara: la gente SÍ puede estar delante; lo incorrecto es el efecto tapando la cara como si la persona quedara detrás.
 - "kind" de preset: fixed, left, right, up, down, in, out. Para un primer plano baja "w" (1 = imagen entera, 0.35 = primer plano).
 - Los efectos pegados a la foto (portal, fuego, humo, lámpara, aura…) van UNA SOLA VEZ en "scenes[].vfx", con "espacio":"imagen" y "follow":true. NO los copies en cada toma.
@@ -89,6 +91,13 @@ Reglas que NO puedes saltarte:
 - Escribe los diálogos en el idioma del encargo del usuario, con frases que se puedan narrar en voz alta.
 - "quien" dice quién habla: cadena vacía para el narrador, y el nombre del personaje cuando habla él. Usa el mismo nombre siempre para el mismo personaje.
 - Varias tomas por escena quedan mejor que una: un plano abierto y un primer plano sobre la misma imagen (mismos vfx de escena, distinto encuadre).
+
+REPARTO Y ESTILO (lo que hace que el video parezca uno solo):
+- "reparto": un objeto nombre → descripción física, con TODOS los personajes que se ven en alguna escena. Ejemplo: {"Elena":"mujer mexicana de unos 30, pelo negro corto, cazadora vaquera azul, cicatriz en la ceja izquierda"}.
+- La descripción tiene que fijar lo que no puede cambiar: edad aproximada, tono de piel, pelo, ropa y algún rasgo reconocible. Sin eso, cada imagen saca a una persona distinta.
+- "estilo": una frase con el estilo visual común a todo el capítulo (técnica, paleta, luz, época). Ejemplo: "fotografía nocturna, luz de sodio anaranjada, grano fino, paleta fría".
+- Escribe reparto y estilo en INGLÉS: es el idioma en el que mejor los entiende el modelo de imagen. Los diálogos NO: esos van en el idioma del encargo.
+- Un personaje del que solo se oye la voz y nunca se ve NO va en el reparto.
 
 VOCES (importante — no improvises con efectos de tono):
 - En "project" incluye "voices": un mapa nombre→voz OpenAI. Voces válidas: alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse, marin, cedar.
@@ -231,6 +240,12 @@ export async function POST(req: Request) {
   // Red de seguridad: el prompt PIDE que no meta frases de presentador, pero
   // pedir no es garantizar. Lo que se cuela aquí se acabaría oyendo en el vídeo
   // («¿te gustó cómo quedó?»), y para entonces ya está pagado.
+  // La ficha de cada personaje se PEGA al prompt de sus escenas, aquí y por
+  // código. Pedírselo al modelo en el prompt ya se hacía y no bastaba: lo
+  // cumple dos o tres escenas y luego escribe «Elena mira por la ventana», sin
+  // decir quién es Elena, y el modelo de imagen se inventa a otra persona.
+  const consistencia = fijarConsistencia(project, leerReparto(crudo), leerEstilo(crudo));
+
   const { quitadas } = prepararCapituloGenerado(project);
   asegurarVocesCapitulo(project);
   const musica = ajustarMusicaCapitulo(project);
@@ -244,6 +259,8 @@ export async function POST(req: Request) {
     quitadas,
     // Lo mismo con la música que se ha enderezado.
     musica,
+    // Y con las fichas que se han pegado a las escenas.
+    consistencia,
     name: typeof crudo?.name === "string" ? crudo.name : "Capítulo generado",
     project,
     // Para que la interfaz pueda decir cuántas imágenes va a pedir.

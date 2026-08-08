@@ -83,6 +83,12 @@ export function IaPanel({
       // Si se ha enderezado la música, se dice: el usuario tiene que poder
       // entender por qué su capítulo no suena como el JSON que pidió.
       const arreglos: string[] = [];
+      if (j.consistencia?.personajes?.length) {
+        arreglos.push(
+          `${j.consistencia.personajes.length} ${j.consistencia.personajes.length === 1 ? "personaje fijado" : "personajes fijados"}`
+          + ` en ${j.consistencia.escenas} ${j.consistencia.escenas === 1 ? "escena" : "escenas"}`,
+        );
+      }
       if (j.musica?.bajadas) arreglos.push("música bajada, tapaba la voz");
       if (j.musica?.movidas) arreglos.push(`${j.musica.movidas} música a su escena`);
       setAviso(`Listo · ${j.imagenes} escenas`
