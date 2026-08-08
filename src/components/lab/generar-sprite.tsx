@@ -15,6 +15,7 @@ import { leerZip } from "@/lib/story/zip";
 import { VistaSprite } from "./vista-sprite";
 import { EditorSprite } from "./editor-sprite";
 import { EditorCortesSprite } from "./editor-cortes-sprite";
+import { EditorHojaSprite } from "./editor-hoja-sprite";
 import { esPng, pesoLegible, type SpriteMeta } from "@/lib/lab/biblioteca";
 import {
   ARCHIVO_HOJA_SPRITE, ARCHIVO_META_SPRITE, ARCHIVO_TIRA_SPRITE,
@@ -56,8 +57,10 @@ interface Hecho {
   ancho: number;
   alto: number;
   descartados: number;
-  /** La llamada original, intacta, y cómo se divide antes de limpiar. */
+  /** La hoja de trabajo previa al corte y cómo se divide antes de limpiar. */
   hoja: {
+    /** Permanece estable mientras se edita la misma hoja. */
+    sesionId: number;
     url: string;
     blob: Blob;
     ancho: number;
@@ -88,7 +91,9 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
   const [guardado, setGuardado] = useState(false);
   const [actualizando, setActualizando] = useState(false);
   const [cortesPendientes, setCortesPendientes] = useState(false);
+  const [hojaPendiente, setHojaPendiente] = useState(false);
   const revisionTira = useRef(0);
+  const edicionPendiente = cortesPendientes || hojaPendiente;
 
   // Cada correccion crea una URL nueva para la vista previa. La anterior deja
   // de hacer falta en cuanto React cambia de imagen.
@@ -153,6 +158,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
         alto: tira.alto,
         descartados: hoja.descartados,
         hoja: {
+          sesionId: Date.now(),
           url: URL.createObjectURL(blobHoja),
           blob: blobHoja,
           ancho: imagenHoja.naturalWidth,
@@ -163,6 +169,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
         },
       });
       setCortesPendientes(false);
+      setHojaPendiente(false);
       setNombre(nombreSprite(que));
       setPaso(null);
       setAviso(
@@ -176,9 +183,62 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
     }
   }
 
-  /** Vuelve a cortar desde la hoja pagada, antes de cualquier edición fina. */
+  /** Reemplaza la hoja PRE-CORTE por su versión corregida y vuelve a dividirla. */
+  async function aplicarHoja(blobHoja: Blob) {
+    if (!hecho || actualizando || cortesPendientes) return;
+    const revision = ++revisionTira.current;
+    const urlHoja = URL.createObjectURL(blobHoja);
+    let aceptada = false;
+    setActualizando(true);
+    setError(null);
+    try {
+      const cortada = await cortarHoja({
+        dataUrl: urlHoja,
+        fotogramas: hecho.hoja.celdas.length,
+        forma: hecho.hoja.forma,
+        croma: hecho.hoja.croma,
+        celdas: hecho.hoja.celdas,
+      });
+      if (!cortada.fotogramas.length) {
+        throw new Error("La hoja corregida no contiene ningún fotograma visible.");
+      }
+      const tira = await tiraDeFotogramas(cortada.fotogramas);
+      if (revision !== revisionTira.current) return;
+      setHecho((prev) => prev ? {
+        ...prev,
+        edicionId: Date.now(),
+        fotos: cortada.fotogramas,
+        url: URL.createObjectURL(tira.blob),
+        blob: tira.blob,
+        ancho: tira.ancho,
+        alto: tira.alto,
+        descartados: cortada.descartados,
+        hoja: {
+          ...prev.hoja,
+          url: urlHoja,
+          blob: blobHoja,
+          celdas: cortada.celdas,
+        },
+      } : prev);
+      aceptada = true;
+      setGuardado(false);
+      setHojaPendiente(false);
+      setAviso(
+        `Hoja corregida · ${cortada.fotogramas.length} fotogramas recortados de nuevo`
+        + (cortada.descartados ? ` · ${cortada.descartados} celdas vacías` : ""),
+      );
+    } catch (e) {
+      setError((e as Error).message || "No se pudo aplicar la hoja corregida.");
+      throw e;
+    } finally {
+      if (!aceptada) URL.revokeObjectURL(urlHoja);
+      if (revision === revisionTira.current) setActualizando(false);
+    }
+  }
+
+  /** Vuelve a cortar desde la hoja de trabajo, antes de cualquier edición fina. */
   async function aplicarCortes(celdas: CeldaSprite[]) {
-    if (!hecho || actualizando) return;
+    if (!hecho || actualizando || hojaPendiente) return;
     const revision = ++revisionTira.current;
     setActualizando(true);
     setError(null);
@@ -248,7 +308,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
   }
 
   async function guardar() {
-    if (!hecho || guardando || cortesPendientes) return;
+    if (!hecho || guardando || edicionPendiente) return;
     setGuardando(true);
     setError(null);
     try {
@@ -281,7 +341,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
   }
 
   async function descargar() {
-    if (!hecho || cortesPendientes) return;
+    if (!hecho || edicionPendiente) return;
     const base = nombreSprite(nombre || que);
     const proyecto = crearProyectoSprite({
       nombre: nombre.trim() || base,
@@ -363,6 +423,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
         alto: proyecto.tira.altoFotograma,
         descartados: Math.max(0, proyecto.celdas.length - fotos.length),
         hoja: {
+          sesionId: Date.now(),
           url: urlHoja,
           blob: blobHoja,
           ancho: proyecto.hoja.ancho,
@@ -382,6 +443,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       setN(proyecto.celdas.length);
       setGuardado(false);
       setCortesPendientes(false);
+      setHojaPendiente(false);
       setAviso(`Proyecto importado · ${fotos.length} fotogramas · hoja y cortes recuperados.`);
     } catch (e) {
       if (urlHoja) URL.revokeObjectURL(urlHoja);
@@ -475,6 +537,19 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
 
       {hecho && (
         <>
+          <EditorHojaSprite
+            key={hecho.hoja.sesionId}
+            hojaUrl={hecho.hoja.url}
+            anchoHoja={hecho.hoja.ancho}
+            altoHoja={hecho.hoja.alto}
+            croma={hecho.hoja.croma}
+            celdas={hecho.hoja.celdas}
+            procesando={actualizando}
+            bloqueado={cortesPendientes}
+            onAplicar={aplicarHoja}
+            onPendiente={setHojaPendiente}
+          />
+
           <EditorCortesSprite
             hojaUrl={hecho.hoja.url}
             anchoHoja={hecho.hoja.ancho}
@@ -482,6 +557,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
             forma={hecho.hoja.forma}
             celdas={hecho.hoja.celdas}
             procesando={actualizando}
+            bloqueado={hojaPendiente}
             onAplicar={aplicarCortes}
             onPendiente={setCortesPendientes}
           />
@@ -499,7 +575,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
                   {andando ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 text-accent" />}
                   {andando ? "Parar" : "Animar"}
                 </button>
-                <button onClick={() => void descargar()} disabled={actualizando || cortesPendientes} className="btn-ghost text-xs">
+                <button onClick={() => void descargar()} disabled={actualizando || edicionPendiente} className="btn-ghost text-xs">
                   <Download className="h-3.5 w-3.5 text-accent" /> Descargar proyecto · ZIP
                 </button>
               </div>
@@ -528,7 +604,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
             </label>
             <button
               onClick={() => void guardar()}
-              disabled={guardando || guardado || actualizando || cortesPendientes || !nombre.trim()}
+              disabled={guardando || guardado || actualizando || edicionPendiente || !nombre.trim()}
               className="btn-brand text-xs disabled:opacity-40"
             >
               {guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
