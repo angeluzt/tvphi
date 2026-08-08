@@ -75,26 +75,45 @@ describe("ruta de varios pasos", () => {
     ruta: {
       pasos: [
         { tipo: "mover", x: 0.8, y: 0.25, segundos: 2 },
-        { tipo: "pausa", segundos: 1, espejo: true },
-        { tipo: "mover", x: -0.2, y: 0.75, segundos: 2, espejo: true },
+        { tipo: "pausa", segundos: 1 },
+        { tipo: "voltear", segundos: 0.1 },
+        { tipo: "mover", x: -0.2, y: 0.75, segundos: 2 },
       ],
     },
   };
 
   it("mueve, espera, voltea y continúa desde el punto anterior", () => {
     expect(estadoSpriteEn(sprite, 1).x).toBeCloseTo(0.3);
-    expect(estadoSpriteEn(sprite, 2.5)).toMatchObject({ x: 0.8, y: 0.25, espejo: true, paso: 1 });
-    const regreso = estadoSpriteEn(sprite, 4);
+    expect(estadoSpriteEn(sprite, 2.5)).toMatchObject({ x: 0.8, y: 0.25, espejo: false, paso: 1 });
+    expect(estadoSpriteEn(sprite, 3.05)).toMatchObject({ x: 0.8, y: 0.25, espejo: true, paso: 2 });
+    const regreso = estadoSpriteEn(sprite, 4.1);
     expect(regreso.x).toBeCloseTo(0.3);
-    expect(regreso).toMatchObject({ y: 0.5, espejo: true, paso: 2 });
+    expect(regreso.y).toBeCloseTo(0.5);
+    expect(regreso).toMatchObject({ espejo: true, paso: 3 });
     expect(posicionSprite(sprite, 9)).toEqual({ x: -0.2, y: 0.75 });
-    expect(duracionRutaSprite(sprite)).toBe(5);
+    expect(duracionRutaSprite(sprite)).toBe(5.1);
   });
 
   it("repite la ruta completa cuando está en bucle", () => {
     const enBucle = { ...sprite, ruta: { ...sprite.ruta!, bucle: true } };
-    expect(estadoSpriteEn(enBucle, 5)).toMatchObject({ x: -0.2, y: 0.25, paso: 0 });
-    expect(estadoSpriteEn(enBucle, 6).x).toBeCloseTo(0.3);
+    expect(estadoSpriteEn(enBucle, 5.1)).toMatchObject({ x: -0.2, y: 0.25, paso: 0 });
+    expect(estadoSpriteEn(enBucle, 6.1).x).toBeCloseTo(0.3);
+  });
+
+  it("conserva las rutas anteriores que fijaban el giro dentro de una pausa", () => {
+    const anterior: SpriteEnCapa = {
+      ...base,
+      ruta: {
+        pasos: [
+          { tipo: "mover", x: 0.8, y: 0.25, segundos: 2 },
+          { tipo: "pausa", segundos: 1, espejo: true },
+          { tipo: "mover", x: -0.2, y: 0.25, segundos: 2, espejo: true },
+        ],
+      },
+    };
+
+    expect(estadoSpriteEn(anterior, 2.5)).toMatchObject({ x: 0.8, espejo: true, paso: 1 });
+    expect(estadoSpriteEn(anterior, 4)).toMatchObject({ espejo: true, paso: 2 });
   });
 
   it("normaliza el JSON sin romper trayectoria ni proyectos antiguos", () => {
@@ -106,6 +125,7 @@ describe("ruta de varios pasos", () => {
         pasos: [
           { tipo: "mover", x: 4, y: -4, segundos: 0 },
           { tipo: "pausa", segundos: 500, espejo: true },
+          { tipo: "voltear", segundos: 0 },
           { tipo: "inventado", segundos: 2 },
         ],
       },
@@ -117,6 +137,7 @@ describe("ruta de varios pasos", () => {
       pasos: [
         { tipo: "mover", x: 1.5, y: -0.5, segundos: 0.1 },
         { tipo: "pausa", segundos: 120, espejo: true },
+        { tipo: "voltear", segundos: 0.1 },
       ],
     });
   });
