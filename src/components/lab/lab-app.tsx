@@ -90,7 +90,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
             // Las imágenes generadas van directas al montaje: es el final del
             // recorrido, y hacer que el usuario las baje y las vuelva a subir
             // no aporta nada.
-            setSemilla(cs.map((c) => ({ nombre: c.nombre, url: c.url, via: c.via, vacio: c.vacio })));
+            setSemilla(cs.map((c) => ({ nombre: c.nombre, url: c.url, via: c.via, vacio: c.vacio, mov: c.mov as any })));
             setResumen(resumen);
             setPestana("compositor");
           }}

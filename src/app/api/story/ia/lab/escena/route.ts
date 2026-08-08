@@ -7,6 +7,7 @@ import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/
 import { revisar } from "@/lib/lab/escena";
 import { leerAnimacion } from "@/lib/lab/animacion-ia";
 import { referenciaAnimacion } from "@/lib/lab/referencia-camara";
+import { movimientosCapaParaIA, reglasMovimientoCapa } from "@/lib/lab/movimiento-capa";
 
 // De una frase a un mapa de la escena por capas.
 //
@@ -41,9 +42,16 @@ Estructura:
 {"scene":{"id":"kebab-case","title":"...","width":N,"height":N,"description":"qué se ve, en una frase","style":"estilo visual en inglés, sin texto ni letras"},
  "layers":[{"id":"kebab","name":"01 Nombre","depth":0.05,"blur":0.3,
    "ai":{"prompt":"lo que hay que DIBUJAR en esta capa, en inglés","exclude":"lo que NO, en inglés"},
+   "mov":{"tipo":"deriva","x":0.2,"bucle":true},
    "objects":[{"id":"x","shape":"rect","semantic":"sky","x":0,"y":0,"w":1,"h":1,"label":"CIELO"}]}],
  "animacion":{"pasos":[{"mov":"acercar","segundos":3,"intensidad":45,"nota":"para qué es este tramo"}]},
  "efectos":[{"id":"humo","espacio":"imagen","x":0.5,"y":0.7,"escala":0.4}]}
+
+CAPAS QUE SE MUEVEN SOLAS (esto es lo que hace que la escena esté viva)
+- Una capa puede llevar «mov» y moverse por su cuenta, además de moverse con la cámara.
+- Si en la escena hay algo que debería estar EN MOVIMIENTO —un pájaro, un barco, una nube, un meteoro, una bandera— dale su PROPIA capa, con el resto del cuadro vacío, y ponle «mov».
+- Los tipos, sus campos y las velocidades que funcionan van en la referencia. No inventes otros.
+- El fondo y el suelo NUNCA llevan «mov»: si se despegan se ve el borde.
 
 LA ANIMACIÓN Y LOS EFECTOS
 - Además del mapa, escribes la ANIMACIÓN de cámara en «animacion.pasos» y los EFECTOS del motor en «efectos».
@@ -130,6 +138,12 @@ export async function POST(req: Request) {
           { role: "system", content:
             "REFERENCIA DE CÁMARA Y EFECTOS (no inventes nada fuera de esto):\n"
             + JSON.stringify(referenciaAnimacion()) },
+          { role: "system", content:
+            "CAPAS QUE SE MUEVEN SOLAS:\n"
+            + JSON.stringify({
+                tipos: movimientosCapaParaIA(),
+                reglas: reglasMovimientoCapa(),
+              }) },
           { role: "user", content:
             `Escena: ${parsed.data.idea}\n\n`
             + `Lienzo: ${w}x${h}. Haz exactamente ${parsed.data.capas} capas que se DIBUJEN. `
