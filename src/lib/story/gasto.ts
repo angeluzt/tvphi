@@ -207,7 +207,9 @@ export async function leerGasto(dias = 30): Promise<Gasto | { error: string }> {
         + "esa cifra no la publica su API. ")
       + "Los días van en UTC porque es como los agrupa OpenAI; su API no da el "
       + "detalle por horas, así que «hoy» empieza a las 18:00 del día anterior "
-      + "en el centro de México.",
+      + "en el centro de México. Y OpenAI publica el gasto con retraso: que "
+      + "«hoy» salga a cero no quiere decir que no hayas gastado, sino que "
+      + "todavía no lo ha apuntado.",
   };
 }
 
