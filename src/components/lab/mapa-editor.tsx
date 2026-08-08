@@ -222,9 +222,19 @@ export function MapaEditor({
               <input type="checkbox" checked={etiquetas} onChange={(e) => setEtiquetas(e.target.checked)} />
               Incluir etiquetas en el PNG
             </label>
-            <button onClick={() => exportar("zip", marcadas)} disabled={trabajando || !esc} className="btn-brand w-full text-xs">
-              <Download className="h-3.5 w-3.5" /> Capas marcadas · ZIP
+            <button onClick={() => exportar("zip", marcadas)} disabled={trabajando || !esc} className="btn-ghost w-full text-xs">
+              <Download className="h-3.5 w-3.5 text-accent" /> Guías de color · ZIP
             </button>
+            {/* Este ZIP se confundía con el del proyecto: alguien exportaba
+                desde aquí, importaba, y le volvían las formas de colores en vez
+                de sus imágenes. Ahora el nombre dice qué lleva y dónde está el
+                otro. */}
+            <p className="text-[10px] leading-tight text-muted">
+              Son los mapas de colores para dárselos a una IA de fuera, no tu
+              trabajo. Para guardar y recuperar el proyecto entero —imágenes,
+              mapa y cámara— usa <b className="text-fg">Descargar todo</b> en
+              «Montaje y paralaje».
+            </p>
             <button onClick={() => exportar("png", marcadas)} disabled={trabajando || !esc} className="btn-ghost w-full text-xs">
               <ImageIcon className="h-3.5 w-3.5 text-accent" /> Marcadas en un PNG
             </button>

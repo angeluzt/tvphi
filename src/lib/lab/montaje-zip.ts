@@ -1,8 +1,16 @@
-// Empaquetar / desempaquetar el montaje del compositor (capas + JSON).
+// Empaquetar / desempaquetar el trabajo del laboratorio.
 //
-// El ZIP del mapa (zipDeCapas) lleva guías de color. Este lleva las imágenes
-// YA generadas o subidas, con su profundidad, para poder guardar una prueba y
-// volver a abrirla sin regenerar.
+// HAY DOS ZIP Y SE CONFUNDEN, así que conviene saber cuál es cuál:
+//
+//   zipDeCapas (exportar.ts) → el MAPA: guías de colores planos. Sirve para
+//     dárselo a una IA de fuera, no para volver a abrir tu trabajo.
+//   este ....................→ el PROYECTO: las imágenes ya generadas, su
+//     profundidad, el mapa que las originó y la animación de cámara.
+//
+// El segundo es el que devuelve las cosas donde estaban. Antes solo llevaba las
+// imágenes, así que al reimportar se recuperaba el montaje pero se perdían el
+// mapa y la cola: había que rehacerlos a mano. Ahora van dentro (versión 2), y
+// los ZIP viejos se siguen leyendo.
 
 import { zip, bajar } from "@/lib/lab/exportar";
 import { leerZip } from "@/lib/story/zip";
@@ -18,10 +26,17 @@ export type CapaMontajeMeta = {
 };
 
 export type MontajePack = {
-  version: 1;
+  /** 1 = solo imágenes. 2 = además el mapa y la animación. */
+  version: 1 | 2;
   width: number;
   height: number;
   capas: CapaMontajeMeta[];
+  /** El mapa de formas que originó estas capas. */
+  escena?: unknown;
+  /** La cola de cámara, tal cual la entiende el motor. */
+  cola?: unknown[];
+  /** Efectos del motor colgados de la escena. */
+  efectos?: unknown[];
 };
 
 function limpio(s: string) {
@@ -45,6 +60,10 @@ function pngDeImg(img: HTMLImageElement): Promise<Uint8Array<ArrayBuffer>> {
 export async function bajarMontajeZip(opts: {
   width: number;
   height: number;
+  /** El mapa, la cámara y los efectos. Opcionales: sin ellos sale un ZIP v1. */
+  escena?: unknown;
+  cola?: unknown[];
+  efectos?: unknown[];
   capas: {
     nombre: string;
     depth: number;
@@ -73,11 +92,15 @@ export async function bajarMontajeZip(opts: {
     });
   }
 
+  const llevaExtras = !!opts.escena || !!opts.cola?.length || !!opts.efectos?.length;
   const pack: MontajePack = {
-    version: 1,
+    version: llevaExtras ? 2 : 1,
     width: opts.width,
     height: opts.height,
     capas: metas,
+    ...(opts.escena ? { escena: opts.escena } : {}),
+    ...(opts.cola?.length ? { cola: opts.cola } : {}),
+    ...(opts.efectos?.length ? { efectos: opts.efectos } : {}),
   };
   archivos.push({
     nombre: "montaje.json",
@@ -86,13 +109,17 @@ export async function bajarMontajeZip(opts: {
   archivos.push({
     nombre: "leeme.txt",
     datos: new TextEncoder().encode(
-      "Montaje de capas con paralaje (laboratorio TVPHI).\n"
-      + "Importa este ZIP en la pestaña Compositor → Importar ZIP.\n"
+      "Proyecto del laboratorio de TVPHI.\n\n"
+      + "Lleva dentro TODO lo necesario para volver a donde lo dejaste:\n"
+      + "  · las imágenes de cada capa, con su profundidad\n"
+      + "  · el mapa de formas que las originó\n"
+      + "  · la animación de cámara\n\n"
+      + "Para recuperarlo: laboratorio → Montaje y paralaje → «Importar todo».\n"
       + "La primera imagen es el fondo; el resto deberían ser PNG con transparencia.\n",
     ),
   });
 
-  bajar(zip(archivos), `montaje-capas-${Date.now()}.zip`);
+  bajar(zip(archivos), `laboratorio-${Date.now()}.zip`);
 }
 
 export type CapaImportada = {
@@ -110,6 +137,10 @@ export async function leerMontajeZip(file: Blob): Promise<{
   width: number;
   height: number;
   capas: CapaImportada[];
+  /** Solo en los ZIP v2. En los viejos vienen vacíos, y no pasa nada. */
+  escena?: unknown;
+  cola?: unknown[];
+  efectos?: unknown[];
 }> {
   const entradas = await leerZip(file);
   if (!entradas.length) throw new Error("Ese ZIP está vacío o no se puede leer.");
@@ -151,6 +182,9 @@ export async function leerMontajeZip(file: Blob): Promise<{
       width: pack.width || 1920,
       height: pack.height || 1080,
       capas,
+      escena: pack.escena,
+      cola: Array.isArray(pack.cola) ? pack.cola : undefined,
+      efectos: Array.isArray(pack.efectos) ? pack.efectos : undefined,
     };
   }
 

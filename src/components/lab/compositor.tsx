@@ -46,10 +46,14 @@ export interface Semilla {
 let contador = 0;
 let pasoSeq = 0;
 
-export function Compositor({ semilla, colaInicial }: {
+export function Compositor({ semilla, colaInicial, escena, onEscena }: {
   semilla?: Semilla[];
   /** Cola escrita por la IA. Se carga una vez, y a partir de ahí se edita. */
   colaInicial?: PasoSecuencia[];
+  /** El mapa de formas, para que viaje dentro del ZIP del proyecto. */
+  escena?: unknown;
+  /** Al importar un ZIP que trae mapa, se devuelve para reponerlo en su pestaña. */
+  onEscena?: (e: unknown) => void;
 }) {
   const [capas, setCapas] = useState<CapaImg[]>([]);
   const [moviendo, setMoviendo] = useState(true);
@@ -219,12 +223,22 @@ export function Compositor({ semilla, colaInicial }: {
       await bajarMontajeZip({
         width: tam.current.w,
         height: tam.current.h,
+        // El mapa y la cámara van DENTRO. Sin ellos, al reimportar volvían las
+        // imágenes pero había que rehacer el mapa y la animación a mano, que es
+        // justo el trabajo que uno guarda para no repetir.
+        escena,
+        cola,
         capas: capas.map((c) => ({
           nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
           via: c.via, vacio: c.vacio, img: c.img,
         })),
       });
-      setAviso(`ZIP con ${capas.length} capas y montaje.json listo.`);
+      setAviso(
+        `ZIP con ${capas.length} capas`
+        + (escena ? ", el mapa" : "")
+        + (cola.length ? ` y ${cola.length} pasos de cámara` : "")
+        + ".",
+      );
     } catch (e) {
       setAviso((e as Error).message || "No se pudo crear el ZIP.");
     } finally {
@@ -254,7 +268,18 @@ export function Compositor({ semilla, colaInicial }: {
         tam.current = { w: nuevas[0].img.naturalWidth, h: nuevas[0].img.naturalHeight };
       }
       setCapas(nuevas);
-      setAviso(`Importadas ${nuevas.length} capas del ZIP.`);
+
+      // Y lo demás, si el ZIP lo trae (los v1 no).
+      const partes = [`${nuevas.length} capas`];
+      if (Array.isArray(pack.cola) && pack.cola.length) {
+        setCola((pack.cola as PasoSecuencia[]).map((p, i) => pasoPorDefecto({ ...p, id: `z${++pasoSeq}-${i}` })));
+        partes.push(`${pack.cola.length} pasos de cámara`);
+      }
+      if (pack.escena) {
+        onEscena?.(pack.escena);
+        partes.push("el mapa");
+      }
+      setAviso(`Importado: ${partes.join(", ")}.`);
     } catch (e) {
       setAviso((e as Error).message || "No se pudo importar el ZIP.");
     } finally {
@@ -537,11 +562,11 @@ export function Compositor({ semilla, colaInicial }: {
         </button>
         <button onClick={() => void exportarZip()} disabled={!capas.length || !!busyZip} className="btn-ghost text-xs">
           {busyZip === "bajar" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" /> : <Package className="h-3.5 w-3.5 text-accent" />}
-          Descargar ZIP
+          Descargar todo · ZIP
         </button>
         <label className={`btn-ghost cursor-pointer text-xs ${busyZip ? "pointer-events-none opacity-50" : ""}`}>
           {busyZip === "subir" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" /> : <FolderOpen className="h-3.5 w-3.5 text-accent" />}
-          Importar ZIP
+          Importar todo
           <input
             type="file" accept=".zip,application/zip" className="hidden"
             onChange={(e) => { void importarZip(e.target.files?.[0] ?? null); e.target.value = ""; }}
