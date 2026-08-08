@@ -317,19 +317,25 @@ export async function cortarHoja(opts: {
   const aire = Math.max(0, Math.min(0.2, opts.aire ?? 0.04));
   const w0 = c0.x1 - c0.x0 + 1;
   const h0 = c0.y1 - c0.y0 + 1;
-  const mx = Math.round(w0 * aire);
-  const my = Math.round(h0 * aire);
-  const rx = Math.max(0, c0.x0 - mx);
-  const ry = Math.max(0, c0.y0 - my);
-  const rw = Math.min(cw - rx, w0 + mx * 2);
-  const rh = Math.min(ch - ry, h0 + my * 2);
+  // 4096 es también el máximo aceptado por los proyectos y la biblioteca.
+  // Si se importa una hoja enorme, se reduce el aire —nunca el dibujo— para
+  // que el resultado siga siendo válido y simétrico.
+  const mx = Math.min(Math.round(w0 * aire), Math.max(0, Math.floor((4096 - w0) / 2)));
+  const my = Math.min(Math.round(h0 * aire), Math.max(0, Math.floor((4096 - h0) / 2)));
+  // El margen final es NUEVO espacio transparente, no un trozo de la celda.
+  // Antes, si el dibujo tocaba arriba o a la izquierda, ese margen se recortaba
+  // contra el borde de origen: el objeto quedaba cargado hacia ese lado aunque
+  // todos los cuadros compartieran caja. Al crear el aire alrededor de la caja
+  // común, el contenido queda centrado de manera idéntica en la tira guardada.
+  const rw = w0 + mx * 2;
+  const rh = h0 + my * 2;
 
   // 3 · Recortar todos con la misma caja.
   const fotogramas: Fotograma[] = [];
   celdas.forEach(({ cv }, i) => {
     if (!vale[i]) return;
     const out = lienzo(rw, rh);
-    out.getContext("2d")!.drawImage(cv, rx, ry, rw, rh, 0, 0, rw, rh);
+    out.getContext("2d")!.drawImage(cv, c0.x0, c0.y0, w0, h0, mx, my, w0, h0);
     const d = out.getContext("2d")!.getImageData(0, 0, out.width, out.height).data;
     fotogramas.push({
       url: out.toDataURL("image/png"),

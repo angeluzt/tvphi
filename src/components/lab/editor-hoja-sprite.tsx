@@ -12,6 +12,7 @@ import {
   seleccionarRectanguloHoja, type MascaraHoja, type PuntoHoja,
 } from "@/lib/lab/seleccion-hoja-sprite";
 import type { CeldaSprite } from "@/lib/lab/sprites";
+import { RangoPreciso } from "./rango-preciso";
 
 type Modo = "navegar" | "automatico" | "rectangulo" | "lazo" | "pincel";
 
@@ -646,21 +647,21 @@ export function EditorHojaSprite({
           {usarCroma && (
             <label className="block text-[10px] text-muted">
               Sensibilidad del fondo: {tolerancia}
-              <input type="range" min={20} max={110} step={2} value={tolerancia}
-                onChange={(e) => setTolerancia(Number(e.target.value))} className="mt-1 w-full" />
+              <RangoPreciso valor={tolerancia} min={20} max={110} paso={2}
+                onCambio={setTolerancia} etiqueta="sensibilidad del fondo" className="mt-1" />
             </label>
           )}
           {modo === "pincel" && (
             <label className="block text-[10px] text-muted">
               Pincel de fondo: {pincelFondo}px
-              <input type="range" min={2} max={80} step={1} value={pincelFondo}
-                onChange={(e) => setPincelFondo(Number(e.target.value))} className="mt-1 w-full" />
+              <RangoPreciso valor={pincelFondo} min={2} max={80} paso={1}
+                onCambio={setPincelFondo} etiqueta="pincel de fondo" className="mt-1" />
             </label>
           )}
           <label className="block text-[10px] text-muted">
             Limpiar contorno al mover: {margenLimpieza}px
-            <input type="range" min={0} max={3} step={1} value={margenLimpieza}
-              onChange={(e) => setMargenLimpieza(Number(e.target.value))} className="mt-1 w-full" />
+            <RangoPreciso valor={margenLimpieza} min={0} max={3} paso={1}
+              onCambio={setMargenLimpieza} etiqueta="limpieza de contorno" className="mt-1" />
           </label>
         </div>
       </div>

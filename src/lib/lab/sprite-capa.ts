@@ -27,6 +27,24 @@ export interface TrayectoriaSprite {
   bucle?: boolean;
 }
 
+/** Un tramo declarativo de una ruta. También se puede escribir desde la IA. */
+export interface PasoRutaSprite {
+  /** mover interpola desde el punto anterior; pausa conserva ese punto. */
+  tipo: "mover" | "pausa";
+  /** Destino del tramo. Solo se usa al mover. */
+  x?: number;
+  y?: number;
+  /** Duración del movimiento o de la espera. */
+  segundos: number;
+  /** Sentido durante este paso. Si falta, conserva el anterior. */
+  espejo?: boolean;
+}
+
+export interface RutaSprite {
+  pasos: PasoRutaSprite[];
+  bucle?: boolean;
+}
+
 export interface SpriteEnCapa {
   /** El id en la biblioteca, si vino de ahí. Sirve para volver a bajarlo. */
   id?: string;
@@ -45,8 +63,12 @@ export interface SpriteEnCapa {
   espacio: EspacioSprite;
   /** Recorrido absoluto desde (x,y) hasta este destino. */
   trayectoria?: TrayectoriaSprite;
+  /** Ruta de varios movimientos y pausas. Tiene prioridad sobre trayectoria. */
+  ruta?: RutaSprite;
   /** Voltearlo para que mire al otro lado. */
   espejo?: boolean;
+  /** Reiniciar la ruta al reproducir la cámara/transición. Por defecto sí. */
+  sincronizar?: boolean;
 }
 
 const acotar = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
@@ -78,6 +100,9 @@ export function normalizarSprite(s: any): SpriteEnCapa | undefined {
   };
   if (typeof s.id === "string" && s.id) spr.id = s.id;
   if (s.espejo) spr.espejo = true;
+  // Los recorridos de las versiones anteriores ya se reiniciaban al reproducir
+  // la cámara. Ausente, por tanto, significa sincronizado.
+  spr.sincronizar = s.sincronizar !== false;
   if (s.trayectoria && typeof s.trayectoria === "object") {
     spr.trayectoria = {
       x: acotar(num(s.trayectoria.x, spr.x), -0.5, 1.5),
@@ -86,20 +111,101 @@ export function normalizarSprite(s: any): SpriteEnCapa | undefined {
       ...(s.trayectoria.bucle ? { bucle: true } : {}),
     };
   }
+  if (s.ruta && typeof s.ruta === "object" && Array.isArray(s.ruta.pasos)) {
+    const pasos = s.ruta.pasos.slice(0, 24).flatMap((p: any): PasoRutaSprite[] => {
+      if (!p || typeof p !== "object" || (p.tipo !== "mover" && p.tipo !== "pausa")) return [];
+      const comun = {
+        tipo: p.tipo,
+        segundos: acotar(num(p.segundos, p.tipo === "pausa" ? 1 : 4), 0.1, 120),
+        ...(typeof p.espejo === "boolean" ? { espejo: p.espejo } : {}),
+      } as PasoRutaSprite;
+      if (p.tipo === "mover") {
+        comun.x = acotar(num(p.x, spr.x), -0.5, 1.5);
+        comun.y = acotar(num(p.y, spr.y), -0.5, 1.5);
+      }
+      return [comun];
+    });
+    if (pasos.length) spr.ruta = { pasos, ...(s.ruta.bucle ? { bucle: true } : {}) };
+  }
   return spr;
 }
 
-/** Posición del sprite en un instante: A es (spr.x,spr.y), B la trayectoria. */
-export function posicionSprite(spr: SpriteEnCapa, t: number) {
+export interface EstadoSprite {
+  x: number;
+  y: number;
+  espejo: boolean;
+  /** Índice del paso activo; −1 cuando no hay ruta por pasos. */
+  paso: number;
+  avance: number;
+  terminado: boolean;
+}
+
+/** Duración espacial total; no altera el ciclo interno de fotogramas. */
+export function duracionRutaSprite(spr: SpriteEnCapa) {
+  if (spr.ruta?.pasos.length) {
+    return spr.ruta.pasos.reduce((total, p) => total + Math.max(0.1, p.segundos), 0);
+  }
+  return spr.trayectoria ? Math.max(0.1, spr.trayectoria.segundos) : 0;
+}
+
+/** Posición, sentido y paso del sprite en un instante. */
+export function estadoSpriteEn(spr: SpriteEnCapa, t: number): EstadoSprite {
+  const pasos = spr.ruta?.pasos;
+  if (pasos?.length) {
+    const total = duracionRutaSprite(spr);
+    const enBucle = !!spr.ruta?.bucle;
+    let tiempo = Math.max(0, t);
+    if (enBucle && total > 0) tiempo %= total;
+
+    let x = spr.x;
+    let y = spr.y;
+    let espejo = !!spr.espejo;
+    for (let i = 0; i < pasos.length; i++) {
+      const paso = pasos[i];
+      const dur = Math.max(0.1, paso.segundos);
+      const sentido = typeof paso.espejo === "boolean" ? paso.espejo : espejo;
+      if (tiempo < dur) {
+        const avance = paso.tipo === "mover" ? tiempo / dur : 0;
+        return {
+          x: paso.tipo === "mover" ? x + ((paso.x ?? x) - x) * avance : x,
+          y: paso.tipo === "mover" ? y + ((paso.y ?? y) - y) * avance : y,
+          espejo: sentido,
+          paso: i,
+          avance,
+          terminado: false,
+        };
+      }
+      tiempo -= dur;
+      if (paso.tipo === "mover") {
+        x = paso.x ?? x;
+        y = paso.y ?? y;
+      }
+      espejo = sentido;
+    }
+    return { x, y, espejo, paso: pasos.length - 1, avance: 1, terminado: !enBucle };
+  }
+
   const tr = spr.trayectoria;
-  if (!tr) return { x: spr.x, y: spr.y };
+  if (!tr) {
+    return { x: spr.x, y: spr.y, espejo: !!spr.espejo, paso: -1, avance: 0, terminado: false };
+  }
   const dur = Math.max(0.1, tr.segundos);
   const tiempo = Math.max(0, t);
   const p = tr.bucle ? (tiempo % dur) / dur : Math.min(1, tiempo / dur);
   return {
     x: spr.x + (tr.x - spr.x) * p,
     y: spr.y + (tr.y - spr.y) * p,
+    espejo: !!spr.espejo,
+    paso: -1,
+    avance: p,
+    terminado: !tr.bucle && tiempo >= dur,
   };
+}
+
+/** Posición conservada para consumidores y proyectos anteriores. */
+export function posicionSprite(spr: SpriteEnCapa, t: number) {
+  const { x, y } = estadoSpriteEn(spr, t);
+  return { x, y };
 }
 
 /** Ausente solo en objetos viejos aún no normalizados: esos seguían la cámara. */
@@ -173,4 +279,22 @@ export function pintarSprite(
     return;
   }
   c.drawImage(tira, sx, 0, anchoFot, altoFot, caja.dx, caja.dy, caja.dw, caja.dh);
+}
+
+/** Referencia compacta para el JSON declarativo que puede escribir la IA. */
+export function rutasSpriteParaIA() {
+  return {
+    posicionInicial: "spr.x y spr.y (−0.5..1.5; 0.5 es el centro)",
+    tamano: "spr.alto (0.01..2; proporción del alto del lienzo)",
+    ruta: {
+      bucle: "opcional",
+      pasos: [
+        { tipo: "mover", x: 1.2, y: 0.5, segundos: 4, espejo: false },
+        { tipo: "pausa", segundos: 1 },
+        { tipo: "mover", x: -0.2, y: 0.5, segundos: 4, espejo: true },
+      ],
+    },
+    sincronizar: "true reinicia la ruta al reproducir cámara/transiciones; false usa su reloj independiente",
+    compatibilidad: "spr.trayectoria sigue admitida para un único recorrido A→B",
+  };
 }

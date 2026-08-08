@@ -8,6 +8,7 @@ import { revisar, pegas, nombreArchivo, type Escena } from "@/lib/lab/escena";
 import { dibujarEscena } from "@/lib/lab/dibujar";
 import { aBlob, bajar, lienzoDeCapas, promptIa, zipDeCapas } from "@/lib/lab/exportar";
 import { EJEMPLOS } from "@/lib/lab/ejemplos";
+import { RangoPreciso } from "./rango-preciso";
 
 // Paso 1: escribir el mapa y sacar las capas.
 //
@@ -257,7 +258,8 @@ export function MapaEditor({
             </label>
             <label className="flex min-w-[170px] flex-1 items-center gap-2 text-[11px] text-muted">
               Fuerza
-              <input type="range" min={0} max={100} value={fuerza} onChange={(e) => setFuerza(Number(e.target.value))} className="min-w-0 flex-1" />
+              <RangoPreciso valor={fuerza} min={0} max={100} paso={1}
+                onCambio={setFuerza} etiqueta="fuerza" />
               <span className="w-8 tabular-nums">{fuerza}%</span>
             </label>
             {esc && <span className="chip bg-surface-2 text-muted">{esc.scene.width}×{esc.scene.height}</span>}

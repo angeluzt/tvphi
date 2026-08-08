@@ -21,6 +21,7 @@ import {
   ARCHIVO_HOJA_SPRITE, ARCHIVO_META_SPRITE, ARCHIVO_TIRA_SPRITE,
   archivosProyectoSprite, crearProyectoSprite, normalizarProyectoSprite,
 } from "@/lib/lab/sprite-proyecto";
+import { RangoPreciso } from "./rango-preciso";
 
 // Fabricar un sprite animado: un bicho, varios fotogramas, fondo fuera.
 //
@@ -498,8 +499,8 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="block">
           <span className="text-xs text-muted">Fotogramas: {n}</span>
-          <input type="range" min={2} max={12} value={n}
-            onChange={(e) => setN(Number(e.target.value))} className="mt-1 w-full" />
+          <RangoPreciso valor={n} min={2} max={12} paso={1}
+            onCambio={setN} etiqueta="fotogramas" className="mt-1" />
         </label>
         <label className="block">
           <span className="text-xs text-muted">Cómo se reparten</span>
@@ -590,8 +591,8 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
             <div className="min-w-0 flex-1 space-y-2">
               <label className="block">
                 <span className="text-xs text-muted">Velocidad: {fps} por segundo</span>
-                <input type="range" min={2} max={24} value={fps}
-                  onChange={(e) => setFps(Number(e.target.value))} className="mt-1 w-full" />
+                <RangoPreciso valor={fps} min={2} max={24} paso={1}
+                  onCambio={setFps} etiqueta="velocidad" className="mt-1" />
               </label>
               <div className="flex flex-wrap gap-2">
                 <button onClick={() => setAndando((v) => !v)} className="btn-ghost text-xs">

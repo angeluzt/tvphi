@@ -9,6 +9,7 @@ import { cargarImagen } from "@/lib/lab/quitar-fondo";
 import {
   cajaDe, desplazamientoParaCentrar, fotogramaDeLienzo, type Fotograma,
 } from "@/lib/lab/sprites";
+import { RangoPreciso } from "./rango-preciso";
 
 // Editor de los cuadros que salen de una hoja de sprites.
 //
@@ -401,8 +402,8 @@ export function EditorSprite({
       {modo === "borrar" && (
         <label className="block rounded-lg border border-border bg-surface/50 p-2">
           <span className="text-[10px] text-muted">Pincel: {pincel}px</span>
-          <input type="range" min={2} max={maxPincel} value={Math.min(pincel, maxPincel)}
-            onChange={(e) => setPincel(Number(e.target.value))} className="mt-1 w-full" />
+          <RangoPreciso valor={Math.min(pincel, maxPincel)} min={2} max={maxPincel} paso={1}
+            onCambio={setPincel} etiqueta="pincel" className="mt-1" />
         </label>
       )}
 
