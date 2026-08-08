@@ -10,7 +10,8 @@ import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import { desplazamientoCapa, normalizarMov, MOVS_CAPA, type MovCapa } from "@/lib/lab/movimiento-capa";
 import {
-  cajaSprite, fotogramaEn, normalizarSprite, pintarSprite, type SpriteEnCapa,
+  cajaSprite, fotogramaEn, normalizarSprite, pintarSprite, spriteSigueCamara,
+  type SpriteEnCapa,
 } from "@/lib/lab/sprite-capa";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
@@ -349,8 +350,11 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
           ...hacerCapa(sprite.nombre, img),
           depth: prev.length ? 0.5 : 0,
           mov: sprite.mov,
-          spr: sprite.spr,
+          spr: { ...sprite.spr, espacio: sprite.spr.espacio ?? "pantalla" },
         }]);
+        // Empieza en A al entrar al montaje; si se conserva el reloj de la
+        // sesión, una trayectoria corta aparecería ya terminada en B.
+        relojRef.current = performance.now();
         setAviso(`«${sprite.nombre}» añadido. Colócalo con los mandos de su capa.`);
       } catch {
         if (vivo) setAviso(`No se pudo cargar «${sprite.nombre}».`);
@@ -437,6 +441,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
             // cada vuelta del bucle tiene que salir de abajo otra vez.
             idx = 0;
             estadoRef.current = clonarEstado(inicioRef.current);
+            relojRef.current = performance.now();
           } else { acabo = true; }
           break;
         }
@@ -449,6 +454,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         // Al acabar, la cámara VUELVE al inicio que se definió: es lo que deja
         // ver otra vez el fotograma cero y poder repetir la misma animación.
         estadoRef.current = clonarEstado(inicioRef.current);
+        relojRef.current = performance.now();
         anotarPose();
         setAviso("Terminada. La cámara vuelve al inicio que fijaste: dale otra vez y hace lo mismo.");
         vista = vistaDesdeEstado(estadoRef.current);
@@ -482,12 +488,46 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
     // transparente, y darle el trato de fondo opaco solo consigue que se estire
     // buscando tapar un cuadro que no puede tapar.
     const idFondo = capas.find((x) => x.visible && !x.spr)?.id;
-    // Reloj propio: el movimiento de las capas NO depende de la cola. Un
-    // pájaro sigue volando mientras la cámara está parada, que es justo lo que
-    // hace que la escena parezca viva.
+    // Reloj propio: un pájaro sigue volando aunque la cámara esté quieta. Al
+    // reproducir una cola sí se reinicia, para que A→B y la toma compartan un
+    // fotograma cero reproducible.
     const reloj = (performance.now() - relojRef.current) / 1000;
     for (const capa of capas) {
       if (!capa.visible) continue;
+      // El movimiento propio siempre usa coordenadas del lienzo. Para sprites
+      // «pantalla» este es TODO su movimiento; para el resto se suma después
+      // al paneo y al zoom de cámara.
+      const propio = desplazamientoCapa(capa.mov, reloj);
+
+      if (capa.spr && !spriteSigueCamara(capa.spr)) {
+        // Plano fijo del lienzo: no usa vista.ox, vista.zoom, profundidad ni
+        // alphaCapa. Así una transición de cámara no dobla la trayectoria A→B
+        // ni hace desaparecer al sprite. Zoom y opacidad manuales sí mandan.
+        const af = capa.img.naturalWidth / capa.spr.fotogramas;
+        const hf = capa.img.naturalHeight;
+        const i = fotogramaEn(capa.spr, reloj);
+        const spr = {
+          ...capa.spr,
+          alto: capa.spr.alto * capa.escala * propio.escala,
+        };
+        const plano = { x0: propio.dx * w, y0: propio.dy * h, w, h };
+        c.save();
+        c.globalAlpha = capa.opacidad;
+        pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, plano, reloj));
+        if (propio.repetir) {
+          if (capa.mov?.x) {
+            const p2 = { ...plano, x0: plano.x0 - Math.sign(capa.mov.x) * 2 * w };
+            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, reloj));
+          }
+          if (capa.mov?.y) {
+            const p2 = { ...plano, y0: plano.y0 - Math.sign(capa.mov.y) * 2 * h };
+            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, reloj));
+          }
+        }
+        c.restore();
+        continue;
+      }
+
       let e = capa.escala * vista.zoom * vista.zoomCapa(capa.depth);
       // El paneo también va con la perspectiva: de cerca, el mismo movimiento
       // de cámara barre mucho más cuadro. Sin esto, al acercarse el paralaje se
@@ -501,10 +541,6 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         const holgura = 1 + 2 * Math.max(Math.abs(vista.ox * pan), Math.abs(vista.oy * pan));
         e = Math.max(e, holgura);
       }
-      // Movimiento PROPIO de la capa, encima del de la cámara: es lo que hace
-      // que un pájaro cruce o una barca flote en una escena por lo demás
-      // quieta. Va en anchos de pantalla, así que aguanta cualquier tamaño.
-      const propio = desplazamientoCapa(capa.mov, reloj);
       e *= propio.escala;
       const dw = w * e, dh = h * e;
       const x0 = -(dw - w) / 2 + vista.ox * pan * w + propio.dx * w;
@@ -513,23 +549,21 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
       c.globalAlpha = capa.opacidad * vista.alphaCapa(capa.depth, capa.id);
 
       if (capa.spr) {
-        // El sprite se pinta DENTRO del plano de su capa: por eso hereda el
-        // paralaje, el zoom y el desplazamiento sin una sola línea de más. El
-        // plano es el rectángulo que acabamos de calcular; el bicho va en su
-        // sitio de ese rectángulo, y se agranda con él.
+        // Este es el modo opcional «seguir cámara»: el sprite vive dentro del
+        // plano transformado y por eso sí hereda paralaje, zoom y fundidos.
         const af = capa.img.naturalWidth / capa.spr.fotogramas;
         const hf = capa.img.naturalHeight;
         const i = fotogramaEn(capa.spr, reloj);
         const plano = { x0, y0, w: dw, h: dh };
-        pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, plano));
+        pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, plano, reloj));
         if (propio.repetir) {
           if (capa.mov?.x) {
             const p2 = { ...plano, x0: x0 - Math.sign(capa.mov.x) * 2 * w };
-            pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, p2));
+            pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, p2, reloj));
           }
           if (capa.mov?.y) {
             const p2 = { ...plano, y0: y0 - Math.sign(capa.mov.y) * 2 * h };
-            pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, p2));
+            pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, p2, reloj));
           }
         }
         c.restore();
@@ -563,8 +597,14 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         // Un PNG es un instante, así que del sprite se congela el primero.
         const af = capa.img.naturalWidth / capa.spr.fotogramas;
         const hf = capa.img.naturalHeight;
-        const plano = { x0, y0, w: dw, h: dh };
-        pintarSprite(c, capa.img, capa.spr, af, hf, 0, cajaSprite(capa.spr, af, hf, plano));
+        if (spriteSigueCamara(capa.spr)) {
+          const plano = { x0, y0, w: dw, h: dh };
+          pintarSprite(c, capa.img, capa.spr, af, hf, 0, cajaSprite(capa.spr, af, hf, plano));
+        } else {
+          const spr = { ...capa.spr, alto: capa.spr.alto * capa.escala };
+          const plano = { x0: 0, y0: 0, w: out.width, h: out.height };
+          pintarSprite(c, capa.img, spr, af, hf, 0, cajaSprite(spr, af, hf, plano));
+        }
         continue;
       }
       c.drawImage(capa.img, x0, y0, dw, dh);
@@ -594,6 +634,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
     pasoActivoRef.current = 0;
     setPasoActivo(0);
     planificar();
+    // La cámara y todos los recorridos A→B comparten fotograma cero.
+    relojRef.current = performance.now();
     setEnSecuencia(true);
     setMoviendo(true);
     anotarPose();
@@ -613,6 +655,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
     inicioRef.current = estadoNeutro();
     retenerPoseRef.current = false;
     pasoMsRef.current = 0;
+    relojRef.current = performance.now();
     setPose({ ox: 0, oy: 0, avance: 0 });
     setAviso("Cámara al centro. La animación vuelve a empezar desde aquí.");
   }
@@ -686,6 +729,11 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
             <span className="label">Capas</span>
             <span className="chip ml-auto bg-surface-2 text-muted">{capas.length}</span>
           </div>
+          {!!capas.length && (
+            <p className="text-[10px] text-muted">
+              Orden visual: arriba queda detrás; abajo queda delante. La profundidad solo controla el paralaje.
+            </p>
+          )}
           {!capas.length && (
             <p className="text-[11px] text-muted">
               La primera imagen fija el tamaño y hace de fondo. Las siguientes tienen que ser PNG
@@ -696,8 +744,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
             <div key={c.id} className="space-y-1.5 rounded-lg border border-border bg-surface-2/50 p-2">
               <div className="flex items-center gap-1.5">
                 <span className="min-w-0 flex-1 truncate text-xs font-medium">{c.nombre}</span>
-                <button onClick={() => mover(i, -1)} disabled={i === 0} className="text-muted hover:text-fg disabled:opacity-30" title="Atrás"><ChevronUp className="h-3.5 w-3.5" /></button>
-                <button onClick={() => mover(i, 1)} disabled={i === capas.length - 1} className="text-muted hover:text-fg disabled:opacity-30" title="Adelante"><ChevronDown className="h-3.5 w-3.5" /></button>
+                <button onClick={() => mover(i, -1)} disabled={i === 0} className="text-muted hover:text-fg disabled:opacity-30" title="Mover detrás" aria-label={`Mover ${c.nombre} detrás`}><ChevronUp className="h-3.5 w-3.5" /></button>
+                <button onClick={() => mover(i, 1)} disabled={i === capas.length - 1} className="text-muted hover:text-fg disabled:opacity-30" title="Mover delante" aria-label={`Mover ${c.nombre} delante`}><ChevronDown className="h-3.5 w-3.5" /></button>
                 <button onClick={() => upd(c.id, { visible: !c.visible })} className="text-muted hover:text-fg">
                   {c.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </button>
@@ -723,6 +771,11 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
                   mov={c.mov}
                   onSpr={(p) => upd(c.id, { spr: { ...c.spr!, ...p } })}
                   onMov={(m) => upd(c.id, { mov: m })}
+                  onAtras={() => mover(i, -1)}
+                  onAdelante={() => mover(i, 1)}
+                  puedeAtras={i > 0}
+                  puedeAdelante={i < capas.length - 1}
+                  onReiniciar={() => { relojRef.current = performance.now(); }}
                 />
               )}
             </div>
@@ -1434,14 +1487,49 @@ function Barra({ etiqueta, valor, min = 0, max, paso, onCambio, formato }: {
  * que se quiere el 90% de las veces: un pájaro entra por un lado y sale por el
  * otro. Los demás movimientos se afinan luego, con el resto de la escena.
  */
-function MandosSprite({ spr, mov, onSpr, onMov }: {
+function MandosSprite({
+  spr, mov, onSpr, onMov, onAtras, onAdelante, puedeAtras, puedeAdelante, onReiniciar,
+}: {
   spr: SpriteEnCapa;
   mov?: MovCapa;
   onSpr: (p: Partial<SpriteEnCapa>) => void;
   onMov: (m: MovCapa | undefined) => void;
+  onAtras: () => void;
+  onAdelante: () => void;
+  puedeAtras: boolean;
+  puedeAdelante: boolean;
+  onReiniciar: () => void;
 }) {
+  const modo = spr.trayectoria ? "trayectoria" : (mov?.tipo ?? "");
+
+  function elegirMovimiento(t: string) {
+    if (!t) {
+      onSpr({ trayectoria: undefined });
+      onMov(undefined);
+      return;
+    }
+    if (t === "trayectoria") {
+      onMov(undefined);
+      onSpr({
+        trayectoria: {
+          x: spr.x < 0.9 ? 1.2 : -0.2,
+          y: spr.y,
+          segundos: 4,
+        },
+      });
+      onReiniciar();
+      return;
+    }
+    onSpr({ trayectoria: undefined });
+    // Valores de salida que ya se ven bien: un pájaro que cruza en unos ocho
+    // segundos, o un balanceo corto. Luego se afinan aquí mismo.
+    if (t === "deriva") onMov({ tipo: "deriva", x: 0.12, y: 0, bucle: true });
+    else onMov({ tipo: t as MovCapa["tipo"], amplitud: 0.04, segundos: 3.5 });
+    onReiniciar();
+  }
+
   return (
-    <div className="space-y-1 rounded-md border border-accent/25 bg-accent/5 p-1.5">
+    <div className="space-y-1.5 rounded-md border border-accent/25 bg-accent/5 p-1.5">
       <div className="flex items-center gap-1.5">
         <span className="text-[10px] font-medium text-accent">
           Sprite · {spr.fotogramas} fotogramas
@@ -1457,10 +1545,26 @@ function MandosSprite({ spr, mov, onSpr, onMov }: {
           ⇄ espejo
         </button>
       </div>
-      <Barra etiqueta="Izq · der" valor={spr.x} min={-0.5} max={1.5} paso={0.01}
-        onCambio={(v) => onSpr({ x: v })} formato={(v) => v.toFixed(2)} />
-      <Barra etiqueta="Arr · abj" valor={spr.y} min={-0.5} max={1.5} paso={0.01}
-        onCambio={(v) => onSpr({ y: v })} formato={(v) => v.toFixed(2)} />
+      <label className="flex items-center gap-1.5 text-[10px] text-muted">
+        <span className="w-16 shrink-0">Se ancla a</span>
+        <select
+          className="input min-w-0 flex-1 py-0.5 text-[10px]"
+          value={spr.espacio === "pantalla" ? "pantalla" : "capa"}
+          onChange={(e) => onSpr({ espacio: e.target.value as SpriteEnCapa["espacio"] })}
+        >
+          <option value="pantalla">Lienzo · independiente de cámara</option>
+          <option value="capa">Su capa · sigue las transiciones</option>
+        </select>
+      </label>
+      <p className="text-[9px] leading-snug text-muted">
+        {spr.espacio === "pantalla"
+          ? "Su ruta no cambia con paneos, zooms ni fundidos de cámara."
+          : "Hereda cámara y profundidad: sirve si forma parte del decorado 2.5D."}
+      </p>
+      <Barra etiqueta={spr.trayectoria ? "A · X" : "Izq · der"} valor={spr.x} min={-0.5} max={1.5} paso={0.01}
+        onCambio={(v) => { onSpr({ x: v }); if (spr.trayectoria) onReiniciar(); }} formato={(v) => v.toFixed(2)} />
+      <Barra etiqueta={spr.trayectoria ? "A · Y" : "Arr · abj"} valor={spr.y} min={-0.5} max={1.5} paso={0.01}
+        onCambio={(v) => { onSpr({ y: v }); if (spr.trayectoria) onReiniciar(); }} formato={(v) => v.toFixed(2)} />
       <Barra etiqueta="Tamaño" valor={spr.alto} min={0.02} max={1} paso={0.01}
         onCambio={(v) => onSpr({ alto: v })} formato={(v) => `${Math.round(v * 100)}%`} />
       <Barra etiqueta="Velocidad" valor={spr.fps} min={1} max={30} paso={1}
@@ -1469,28 +1573,97 @@ function MandosSprite({ spr, mov, onSpr, onMov }: {
         <span className="w-16 shrink-0">Se mueve</span>
         <select
           className="input min-w-0 flex-1 py-0.5 text-[10px]"
-          value={mov?.tipo ?? ""}
-          onChange={(e) => {
-            const t = e.target.value;
-            if (!t) return onMov(undefined);
-            // Valores de salida que ya se ven bien: un pájaro que cruza en unos
-            // ocho segundos, un balanceo corto. Se afinan después, pero elegir
-            // «cruza» y que no pase nada visible sería lo peor.
-            if (t === "deriva") return onMov({ tipo: "deriva", x: 0.12, y: 0, bucle: true });
-            onMov({ tipo: t as MovCapa["tipo"], amplitud: 0.04, segundos: 3.5 });
-          }}
+          value={modo}
+          onChange={(e) => elegirMovimiento(e.target.value)}
         >
           <option value="">— quieto en su sitio —</option>
+          <option value="trayectoria">Punto A → punto B</option>
           {MOVS_CAPA.map((m) => (
             <option key={m.id} value={m.id}>{m.label}</option>
           ))}
         </select>
       </label>
-      {mov?.tipo === "deriva" && (
-        <Barra etiqueta="Rumbo" valor={mov.x ?? 0} min={-1} max={1} paso={0.02}
-          onCambio={(v) => onMov({ ...mov, x: v })}
-          formato={(v) => (v === 0 ? "—" : `${v > 0 ? "→" : "←"}${Math.abs(v).toFixed(2)}`)} />
+      {spr.trayectoria && (
+        <div className="space-y-1 rounded border border-border/70 bg-surface/40 p-1">
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] font-medium text-fg">Destino B</span>
+            <button
+              type="button"
+              onClick={() => {
+                const b = spr.trayectoria!;
+                onSpr({
+                  x: b.x,
+                  y: b.y,
+                  trayectoria: { ...b, x: spr.x, y: spr.y },
+                });
+                onReiniciar();
+              }}
+              className="ml-auto rounded border border-border px-1 py-0.5 text-[9px] text-muted hover:text-fg"
+              title="Intercambiar punto A y punto B"
+            >
+              ⇄ intercambiar A/B
+            </button>
+          </div>
+          <Barra etiqueta="B · X" valor={spr.trayectoria.x} min={-0.5} max={1.5} paso={0.01}
+            onCambio={(v) => { onSpr({ trayectoria: { ...spr.trayectoria!, x: v } }); onReiniciar(); }}
+            formato={(v) => v.toFixed(2)} />
+          <Barra etiqueta="B · Y" valor={spr.trayectoria.y} min={-0.5} max={1.5} paso={0.01}
+            onCambio={(v) => { onSpr({ trayectoria: { ...spr.trayectoria!, y: v } }); onReiniciar(); }}
+            formato={(v) => v.toFixed(2)} />
+          <Barra etiqueta="Duración" valor={spr.trayectoria.segundos} min={0.2} max={30} paso={0.1}
+            onCambio={(v) => { onSpr({ trayectoria: { ...spr.trayectoria!, segundos: v } }); onReiniciar(); }}
+            formato={(v) => `${v.toFixed(1)}s`} />
+          <div className="flex flex-wrap items-center gap-2 text-[9px] text-muted">
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={!!spr.trayectoria.bucle}
+                onChange={(e) => {
+                  onSpr({ trayectoria: { ...spr.trayectoria!, bucle: e.target.checked } });
+                  onReiniciar();
+                }}
+              />
+              Repetir recorrido
+            </label>
+            <button type="button" onClick={onReiniciar} className="ml-auto rounded border border-border px-1.5 py-0.5 hover:text-fg">
+              Probar desde A
+            </button>
+          </div>
+        </div>
       )}
+      {mov?.tipo === "deriva" && (
+        <div className="space-y-1">
+          <Barra etiqueta="Horizontal" valor={mov.x ?? 0} min={-1.5} max={1.5} paso={0.02}
+            onCambio={(v) => onMov({ ...mov, x: v })}
+            formato={(v) => (v === 0 ? "—" : `${v > 0 ? "→" : "←"}${Math.abs(v).toFixed(2)}`)} />
+          <Barra etiqueta="Vertical" valor={mov.y ?? 0} min={-1.5} max={1.5} paso={0.02}
+            onCambio={(v) => onMov({ ...mov, y: v })}
+            formato={(v) => (v === 0 ? "—" : `${v > 0 ? "↓" : "↑"}${Math.abs(v).toFixed(2)}`)} />
+          <label className="flex items-center gap-1 text-[9px] text-muted">
+            <input type="checkbox" checked={mov.bucle !== false} onChange={(e) => onMov({ ...mov, bucle: e.target.checked })} />
+            Reaparecer por el borde contrario
+          </label>
+        </div>
+      )}
+      {mov && mov.tipo !== "deriva" && (
+        <div className="space-y-1">
+          <Barra etiqueta="Amplitud" valor={mov.amplitud ?? 0.04} min={0.01} max={0.3} paso={0.01}
+            onCambio={(v) => onMov({ ...mov, amplitud: v })} formato={(v) => v.toFixed(2)} />
+          <Barra etiqueta="Ciclo" valor={mov.segundos ?? 3.5} min={0.3} max={20} paso={0.1}
+            onCambio={(v) => onMov({ ...mov, segundos: v })} formato={(v) => `${v.toFixed(1)}s`} />
+        </div>
+      )}
+      <div className="flex items-center gap-1 border-t border-border/60 pt-1 text-[9px] text-muted">
+        <span>Orden: quién lo tapa</span>
+        <button type="button" onClick={onAtras} disabled={!puedeAtras}
+          className="ml-auto rounded border border-border px-1.5 py-0.5 hover:text-fg disabled:opacity-30">
+          ↑ detrás
+        </button>
+        <button type="button" onClick={onAdelante} disabled={!puedeAdelante}
+          className="rounded border border-border px-1.5 py-0.5 hover:text-fg disabled:opacity-30">
+          ↓ delante
+        </button>
+      </div>
     </div>
   );
 }

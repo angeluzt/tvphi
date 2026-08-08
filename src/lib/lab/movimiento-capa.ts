@@ -133,7 +133,7 @@ export function movimientosCapaParaIA() {
 
 export function reglasMovimientoCapa() {
   return [
-    "Una capa con «mov» se mueve SOLA, además de moverse con la cámara. Es lo que hace que la escena esté viva y no sea un decorado quieto.",
+    "Una capa con «mov» se mueve SOLA, además de moverse con la cámara. Los sprites anclados al lienzo son la excepción: su ruta queda independiente de la cámara.",
     "Para que algo cruce el cuadro —un pájaro, un barco, un meteoro, una nube— dale una capa PARA ÉL SOLO, con el resto transparente, y ponle «deriva».",
     "Velocidades que funcionan: nube 0.02, barco 0.04, pájaro 0.2, meteoro 1.5 (con «y» positivo para que caiga).",
     "«bucle» hace que reaparezca por el lado contrario: bien para nubes y pájaros de fondo, mal para un meteoro que debe pasar UNA vez.",
