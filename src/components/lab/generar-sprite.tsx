@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check,
 } from "lucide-react";
@@ -8,6 +8,7 @@ import { pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
 import { cortarHoja, nombreSprite, tiraDeFotogramas, type Fotograma } from "@/lib/lab/sprites";
 import { zip, bajar } from "@/lib/lab/exportar";
 import { VistaSprite } from "./vista-sprite";
+import { EditorSprite } from "./editor-sprite";
 import { pesoLegible, type SpriteMeta } from "@/lib/lab/biblioteca";
 
 // Fabricar un sprite animado: un bicho, varios fotogramas, fondo fuera.
@@ -36,6 +37,8 @@ const IDEAS = [
 
 /** Lo que queda tras cortar la hoja: los fotogramas y la tira ya pegada. */
 interface Hecho {
+  /** Cambia solo cuando se fabrica una hoja nueva; mantiene vivo su editor. */
+  edicionId: number;
   fotos: Fotograma[];
   /** La tira, para verla y para guardarla. */
   url: string;
@@ -59,6 +62,15 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
   const [nombre, setNombre] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
+  const [actualizando, setActualizando] = useState(false);
+  const revisionTira = useRef(0);
+
+  // Cada correccion crea una URL nueva para la vista previa. La anterior deja
+  // de hacer falta en cuanto React cambia de imagen.
+  useEffect(() => {
+    const url = hecho?.url;
+    return () => { if (url?.startsWith("blob:")) URL.revokeObjectURL(url); };
+  }, [hecho?.url]);
 
   async function generar() {
     if (que.trim().length < 3) return;
@@ -90,6 +102,7 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
       // es exactamente lo que quedará en la biblioteca, byte a byte.
       const tira = await tiraDeFotogramas(hoja.fotogramas);
       setHecho({
+        edicionId: Date.now(),
         fotos: hoja.fotogramas,
         url: URL.createObjectURL(tira.blob),
         blob: tira.blob,
@@ -107,6 +120,32 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
     } catch (e) {
       setError((e as Error).message);
       setPaso(null);
+    }
+  }
+
+  /** Rehace la tira despues de mover, borrar o reordenar un fotograma. */
+  async function actualizarFotogramas(fotos: Fotograma[]) {
+    const revision = ++revisionTira.current;
+    setActualizando(true);
+    try {
+      const tira = await tiraDeFotogramas(fotos);
+      if (revision !== revisionTira.current) return;
+      const url = URL.createObjectURL(tira.blob);
+      setHecho((prev) => prev ? {
+        ...prev,
+        fotos,
+        url,
+        blob: tira.blob,
+        ancho: tira.ancho,
+        alto: tira.alto,
+      } : prev);
+      setGuardado(false);
+      setAviso(
+        `${fotos.length} fotogramas corregidos · ${tira.ancho}×${tira.alto}`
+        + ` · ${pesoLegible(tira.blob.size)}`,
+      );
+    } finally {
+      if (revision === revisionTira.current) setActualizando(false);
     }
   }
 
@@ -267,12 +306,18 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
                   {andando ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 text-accent" />}
                   {andando ? "Parar" : "Animar"}
                 </button>
-                <button onClick={() => void descargar()} className="btn-ghost text-xs">
+                <button onClick={() => void descargar()} disabled={actualizando} className="btn-ghost text-xs">
                   <Download className="h-3.5 w-3.5 text-accent" /> Descargar · ZIP
                 </button>
               </div>
             </div>
           </div>
+
+          <EditorSprite
+            key={hecho.edicionId}
+            fotosIniciales={hecho.fotos}
+            onChange={actualizarFotogramas}
+          />
 
           {/* Guardarlo es el paso que hace que todo esto valga la pena: la
               velocidad que se elija arriba se guarda con él, así que el sprite
@@ -290,7 +335,7 @@ export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => 
             </label>
             <button
               onClick={() => void guardar()}
-              disabled={guardando || guardado || !nombre.trim()}
+              disabled={guardando || guardado || actualizando || !nombre.trim()}
               className="btn-brand text-xs disabled:opacity-40"
             >
               {guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
