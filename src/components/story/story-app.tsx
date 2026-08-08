@@ -68,11 +68,32 @@ function storyPath(opts: { id?: string | null; serie?: string | null } = {}) {
   const s = q.toString();
   return s ? `/story?${s}` : "/story";
 }
+/**
+ * Deja la URL a juego con lo que se está viendo, SIN añadir un paso al
+ * historial. Para cambios que no son «entrar» en ningún sitio.
+ */
 function syncStoryUrl(opts: { id?: string | null; serie?: string | null } = {}) {
   if (typeof window === "undefined") return;
   const next = storyPath(opts);
   const cur = window.location.pathname + window.location.search;
   if (cur !== next) window.history.replaceState(window.history.state, "", next);
+}
+
+/**
+ * Entrar en una carpeta o en un capítulo: esto SÍ añade un paso.
+ *
+ * Antes todo iba con replaceState, que sustituye el paso en vez de crear uno.
+ * El resultado: inicio → historias → capítulo dejaba UNA sola entrada, y el
+ * botón de atrás del móvil se saltaba la app entera y te mandaba al inicio.
+ * Con push, atrás deshace un paso cada vez, que es lo que espera cualquiera.
+ */
+function entrarStoryUrl(opts: { id?: string | null; serie?: string | null } = {}) {
+  if (typeof window === "undefined") return;
+  // Se empuja AUNQUE la dirección sea la misma. Lo que se quiere es añadir un
+  // paso, no cambiar la barra: un capítulo nuevo todavía no tiene id, así que
+  // su URL sigue siendo /story, y comparando direcciones no se creaba ninguna
+  // entrada — atrás se saltaba el editor entero y volvía al inicio.
+  window.history.pushState(window.history.state, "", storyPath(opts));
 }
 
 // Rectángulo con la forma real del video, para reconocerlo de un vistazo.
@@ -146,6 +167,9 @@ export function StoryApp({
   const [projects, setProjects] = useState<ProjMeta[]>(initialProjects);
   const [cupo, setCupo] = useState<CupoHistorias>(initialCupo);
   const [projectId, setProjectId] = useState<string | null>(initialOpenId);
+  // El id actual, leíble desde un escuchador que se registra una sola vez.
+  const projectIdRef = useRef<string | null>(initialOpenId);
+  useEffect(() => { projectIdRef.current = projectId; }, [projectId]);
   // Series: agrupan capítulos y personajes. Todo opcional — un video suelto no
   // necesita ninguna, y lo que ya existe se queda "sin serie".
   const [series, setSeries] = useState<{ id: string; name: string; capitulos: number; personajes: number }[]>([]);
@@ -371,6 +395,31 @@ export function StoryApp({
     void load(initialOpenId, { silencioso: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialOpenId]);
+
+  // El botón de atrás del navegador (y el del móvil).
+  //
+  // La vista vive en la URL, así que al retroceder basta con leerla y ponerse
+  // donde toque. Sin esto, atrás cambiaba la barra de direcciones pero la
+  // pantalla se quedaba igual, que es peor que no hacer nada.
+  useEffect(() => {
+    function alRetroceder() {
+      const q = new URLSearchParams(window.location.search);
+      const id = q.get("id");
+      if (id) {
+        // Silencioso: retroceder no es momento de preguntar por cambios sin
+        // guardar; el autoguardado ya los tiene, y un confirm que sale solo al
+        // pulsar atrás desconcierta más de lo que protege.
+        if (id !== projectIdRef.current) void load(id, { silencioso: true });
+        setVista("editor");
+        return;
+      }
+      setVista("inicio");
+      void cargarSeries();
+    }
+    window.addEventListener("popstate", alRetroceder);
+    return () => window.removeEventListener("popstate", alRetroceder);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Qué archivos le faltan a este proyecto en este navegador. Se recalcula solo
   // cuando cambia la LISTA de archivos usados, no en cada retoque, que si no
@@ -1855,13 +1904,18 @@ export function StoryApp({
         cupo={cupo}
         busy={busy === "load" || busy === "delete"}
         serieInicial={initialSerie}
-        onSerieVista={(sid) => syncStoryUrl({ serie: sid })}
-        onAbrir={(id) => void load(id)}
+        onSerieVista={(sid) => {
+          // Entrar en una carpeta añade paso; salir de ella lo deshace, y de eso
+          // se encarga el propio historial cuando se pulsa atrás.
+          if (sid) entrarStoryUrl({ serie: sid });
+          else syncStoryUrl({});
+        }}
+        onAbrir={(id) => { entrarStoryUrl({ id }); void load(id); }}
         // Se entra al editor y ahí se pregunta la forma del video.
         onNuevoCapitulo={(sid) => {
           setSeriesId(sid);
           setVista("editor");
-          syncStoryUrl({});
+          entrarStoryUrl({});
           newProject();
         }}
         onNuevaSerie={async () => {
@@ -1960,9 +2014,15 @@ export function StoryApp({
           serie={series.find((x) => x.id === seriesId)?.name ?? null}
           capitulo={name}
           onVolver={() => {
+            // Se deshace el paso del historial en vez de inventar uno nuevo:
+            // así el botón de la app y el del móvil hacen lo mismo, y no se
+            // acumulan entradas que obliguen a pulsar atrás tres veces.
+            if (typeof window !== "undefined" && window.history.length > 1) {
+              window.history.back();
+              return;
+            }
             void cargarSeries();
             setVista("inicio");
-            // Si el capítulo era de una serie, vuelve a esa carpeta.
             syncStoryUrl({ serie: seriesId });
           }}
         />
