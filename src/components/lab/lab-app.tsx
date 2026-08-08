@@ -13,6 +13,8 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
   const [semilla, setSemilla] = useState<Semilla[] | undefined>();
   // El mapa que hay ahora mismo, para que el panel de IA pueda dibujarlo.
   const [escena, setEscena] = useState<Escena | null>(null);
+  // La cámara que escribió la IA, esperando a que se monte el compositor.
+  const [colaIa, setColaIa] = useState<any[] | null>(null);
   // Lo que se le pasa al editor cuando la IA escribe un mapa nuevo.
   const [impuesta, setImpuesta] = useState<Escena | null>(null);
   // Qué salió y qué se pagó. Vive aquí y no en la tarjeta de la IA porque esa
@@ -82,6 +84,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
         <GenerarIa
           escena={escena}
           onEscena={(e) => { setImpuesta(e); setEscena(e); }}
+          onAnimacion={(pasos) => setColaIa(pasos)}
           onCapas={(cs, resumen) => {
             // Las imágenes generadas van directas al montaje: es el final del
             // recorrido, y hacer que el usuario las baje y las vuelva a subir
@@ -101,7 +104,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
 
       {pestana === "mapa"
         ? <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} />
-        : <Compositor semilla={semilla} />}
+        : <Compositor semilla={semilla} colaInicial={colaIa ?? undefined} />}
     </div>
   );
 }

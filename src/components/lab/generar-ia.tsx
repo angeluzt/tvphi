@@ -27,11 +27,18 @@ export interface CapaGenerada {
 export function GenerarIa({
   escena,
   onEscena,
+  onAnimacion,
   onCapas,
 }: {
   /** El mapa que hay ahora, para poder dibujar capa a capa. */
   escena: Escena | null;
   onEscena: (e: Escena) => void;
+  /**
+   * La animación que escribió la IA, ya traducida a la cola del motor. Llega
+   * junto al mapa porque se piden en la misma llamada: la cámara se decide
+   * mirando las capas que se acaban de crear, no después.
+   */
+  onAnimacion?: (pasos: any[], avisos: string[]) => void;
   /** El resumen viaja con las capas: esta tarjeta se cierra al montarlas. */
   onCapas: (c: CapaGenerada[], resumen: string) => void;
 }) {
@@ -59,7 +66,17 @@ export function GenerarIa({
         throw new Error(j.error ?? "No se pudo");
       }
       onEscena(j.escena);
-      setPaso(`Mapa listo: ${j.escena.layers.length} capas. Revísalo y dale a dibujar.`);
+      if (Array.isArray(j.animacion) && j.animacion.length) {
+        onAnimacion?.(j.animacion, Array.isArray(j.avisos) ? j.avisos : []);
+      }
+      const conAnim = Array.isArray(j.animacion) && j.animacion.length
+        ? ` y ${j.animacion.length} ${j.animacion.length === 1 ? "paso de cámara" : "pasos de cámara"}`
+        : "";
+      setPaso(`Mapa listo: ${j.escena.layers.length} capas${conAnim}. Revísalo y dale a dibujar.`);
+      // Lo que se tuvo que enderezar se enseña: si la IA pidió algo imposible
+      // —dos movimientos del mismo eje, una capa que no existe— hay que poder
+      // corregir el encargo en vez de preguntarse por qué se ve raro.
+      if (Array.isArray(j.avisos) && j.avisos.length) setError(j.avisos.join(" · "));
     } catch (e) { setError((e as Error).message); setPaso(null); }
   }
 

@@ -46,7 +46,11 @@ export interface Semilla {
 let contador = 0;
 let pasoSeq = 0;
 
-export function Compositor({ semilla }: { semilla?: Semilla[] }) {
+export function Compositor({ semilla, colaInicial }: {
+  semilla?: Semilla[];
+  /** Cola escrita por la IA. Se carga una vez, y a partir de ahí se edita. */
+  colaInicial?: PasoSecuencia[];
+}) {
   const [capas, setCapas] = useState<CapaImg[]>([]);
   const [moviendo, setMoviendo] = useState(true);
   const [fuerza, setFuerza] = useState(55);
@@ -54,6 +58,14 @@ export function Compositor({ semilla }: { semilla?: Semilla[] }) {
   // Borrador del paso a añadir a la cola
   const [borrador, setBorrador] = useState(() => pasoPorDefecto({ id: "borrador", mov: "der", durMs: 4000, distancia: 55 }));
   const [cola, setCola] = useState<PasoSecuencia[]>([]);
+  // La cola de la IA se copia UNA vez y ya es tuya: si se volviera a copiar en
+  // cada render, cualquier retoque a mano se perdería al respirar.
+  const colaIaRef = useRef<PasoSecuencia[] | null>(null);
+  useEffect(() => {
+    if (!colaInicial?.length || colaIaRef.current === colaInicial) return;
+    colaIaRef.current = colaInicial;
+    setCola(colaInicial.map((p, i) => ({ ...p, id: `p${++pasoSeq}-${i}` })));
+  }, [colaInicial]);
   const [enSecuencia, setEnSecuencia] = useState(false);
   const [pasoActivo, setPasoActivo] = useState(0);
   const [repetirCola, setRepetirCola] = useState(false);
