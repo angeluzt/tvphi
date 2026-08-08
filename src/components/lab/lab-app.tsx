@@ -36,7 +36,12 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
   function probar(esc: Escena) {
     const urls = esc.layers
       .filter((c) => c.visible !== false)
-      .map((c) => ({ nombre: c.name, url: lienzoDeCapas(esc, [c.id], true, false).toDataURL("image/png") }));
+      .map((c) => ({
+        nombre: c.name,
+        url: lienzoDeCapas(esc, [c.id], true, false).toDataURL("image/png"),
+        depth: c.depth,
+        escala: 1 + c.depth * 0.12,
+      }));
     setSemilla(urls);
     setPestana("compositor");
   }
@@ -135,11 +140,50 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
           escena={escena}
           onEscena={(e) => { setImpuesta(e); setEscena(e); }}
           onAnimacion={(pasos) => setColaIa(pasos)}
-          onCapas={(cs, resumen) => {
+          onCapas={(cs, resumen, actores) => {
             // Las imágenes generadas van directas al montaje: es el final del
             // recorrido, y hacer que el usuario las baje y las vuelva a subir
             // no aporta nada.
-            setSemilla(cs.map((c) => ({ nombre: c.nombre, url: c.url, via: c.via, vacio: c.vacio, mov: c.mov as any })));
+            const porCapa = new globalThis.Map<string, typeof actores>();
+            for (const actor of actores) {
+              const grupo = porCapa.get(actor.despuesDe) ?? [];
+              grupo.push(actor);
+              porCapa.set(actor.despuesDe, grupo);
+            }
+            const montaje: Semilla[] = [];
+            for (const capa of cs) {
+              montaje.push({
+                nombre: capa.nombre,
+                url: capa.url,
+                via: capa.via,
+                vacio: capa.vacio,
+                mov: capa.mov as any,
+                depth: capa.depth,
+                escala: 1 + capa.depth * 0.12,
+              });
+              const despues = (porCapa.get(capa.id) ?? []).sort((a, b) => a.depth - b.depth);
+              despues.forEach((actor) => montaje.push({
+                nombre: actor.nombre,
+                url: actor.url,
+                depth: actor.depth,
+                escala: 1,
+                spr: actor.spr,
+              }));
+              porCapa.delete(capa.id);
+            }
+            // Si el mapa cambió entre planear y dibujar, no se pierde el actor:
+            // queda delante y se avisa visualmente en el editor para recolocarlo.
+            for (const pendientes of porCapa.values()) {
+              pendientes.forEach((actor) => montaje.push({
+                nombre: actor.nombre,
+                url: actor.url,
+                depth: actor.depth,
+                escala: 1,
+                spr: actor.spr,
+              }));
+            }
+            setSemilla(montaje);
+            if (actores.some((a) => a.fuente === "generado")) setTandaSprites((v) => v + 1);
             setResumen(resumen);
             setPestana("compositor");
           }}
