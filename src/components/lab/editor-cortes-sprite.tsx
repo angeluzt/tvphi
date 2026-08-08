@@ -18,17 +18,18 @@ type Gesto = {
   celda: CeldaSprite;
 };
 
-function Control({ etiqueta, valor, min, max, onChange }: {
+function Control({ etiqueta, valor, min, max, disabled, onChange }: {
   etiqueta: string;
   valor: number;
   min: number;
   max: number;
+  disabled?: boolean;
   onChange: (n: number) => void;
 }) {
   return (
     <label className="flex items-center gap-1.5 text-[10px] text-muted">
       <span className="w-12 shrink-0">{etiqueta}</span>
-      <input type="range" min={min} max={Math.max(min, max)} step={1} value={valor}
+      <input type="range" min={min} max={Math.max(min, max)} step={1} value={valor} disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))} className="min-w-0 flex-1" />
       <span className="w-10 text-right tabular-nums">{valor}</span>
     </label>
@@ -42,6 +43,7 @@ export function EditorCortesSprite({
   forma,
   celdas,
   procesando,
+  bloqueado = false,
   onAplicar,
   onPendiente,
 }: {
@@ -51,6 +53,7 @@ export function EditorCortesSprite({
   forma: "tira" | "columna";
   celdas: CeldaSprite[];
   procesando: boolean;
+  bloqueado?: boolean;
   onAplicar: (celdas: CeldaSprite[]) => Promise<void> | void;
   onPendiente?: (pendiente: boolean) => void;
 }) {
@@ -95,6 +98,7 @@ export function EditorCortesSprite({
   }
 
   function empezar(e: React.PointerEvent<HTMLElement>, indice: number, tipo: Gesto["tipo"]) {
+    if (procesando || bloqueado) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -112,7 +116,7 @@ export function EditorCortesSprite({
   function alMover(e: React.PointerEvent<HTMLDivElement>) {
     const g = gestoRef.current;
     const im = imagenRef.current;
-    if (!g || g.puntero !== e.pointerId || !im) return;
+    if (!g || g.puntero !== e.pointerId || !im || bloqueado) return;
     e.preventDefault();
     const r = im.getBoundingClientRect();
     const dx = Math.round((e.clientX - g.clienteX) * anchoHoja / Math.max(1, r.width));
@@ -134,7 +138,7 @@ export function EditorCortesSprite({
   }
 
   async function aplicar() {
-    if (!sucio || procesando) return;
+    if (!sucio || procesando || bloqueado) return;
     setError(null);
     try {
       await onAplicar(localesRef.current);
@@ -152,7 +156,7 @@ export function EditorCortesSprite({
     <div className="space-y-3 rounded-xl border border-gold/35 bg-gold/5 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <span>
-          <span className="block text-xs font-semibold text-fg">1 · Ajustar cortes sobre la hoja original</span>
+          <span className="block text-xs font-semibold text-fg">2 · Ajustar las casillas de corte</span>
           <span className="block text-[10px] leading-snug text-muted">
             La app ya colocó la rejilla. Mueve cada celda para recuperar patas; el tamaño siempre cambia en todas.
           </span>
@@ -213,32 +217,37 @@ export function EditorCortesSprite({
         <div className="grid gap-3 rounded-lg border border-border bg-surface/45 p-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
           <div className="space-y-1">
             <Control etiqueta="X" valor={actual.x} min={0} max={anchoHoja - actual.ancho}
+              disabled={bloqueado || procesando}
               onChange={(x) => cambiar(elegida, { x })} />
             <Control etiqueta="Y" valor={actual.y} min={0} max={altoHoja - actual.alto}
+              disabled={bloqueado || procesando}
               onChange={(y) => cambiar(elegida, { y })} />
             <Control etiqueta="Ancho" valor={actual.ancho} min={Math.min(16, anchoHoja)} max={anchoHoja}
+              disabled={bloqueado || procesando}
               onChange={(ancho) => cambiarTamanoComun(ancho, actual.alto)} />
             <Control etiqueta="Alto" valor={actual.alto} min={Math.min(16, altoHoja)} max={altoHoja}
+              disabled={bloqueado || procesando}
               onChange={(alto) => cambiarTamanoComun(actual.ancho, alto)} />
             <p className="pl-[3.4rem] text-[9px] text-muted">Tamaño común para todos los cuadros.</p>
           </div>
           <div className="space-y-1">
             <div className="grid grid-cols-3 gap-1" aria-label="Mover celda un píxel">
               <span />
-              <button type="button" onClick={() => cambiar(elegida, { y: actual.y - 1 })} className="btn-ghost p-1" aria-label="Subir celda"><ArrowUp className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => cambiar(elegida, { y: actual.y - 1 })} disabled={bloqueado || procesando} className="btn-ghost p-1" aria-label="Subir celda"><ArrowUp className="h-3.5 w-3.5" /></button>
               <span />
-              <button type="button" onClick={() => cambiar(elegida, { x: actual.x - 1 })} className="btn-ghost p-1" aria-label="Mover celda a la izquierda"><ArrowLeft className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => cambiar(elegida, { y: actual.y + 1 })} className="btn-ghost p-1" aria-label="Bajar celda"><ArrowDown className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => cambiar(elegida, { x: actual.x + 1 })} className="btn-ghost p-1" aria-label="Mover celda a la derecha"><ArrowRight className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => cambiar(elegida, { x: actual.x - 1 })} disabled={bloqueado || procesando} className="btn-ghost p-1" aria-label="Mover celda a la izquierda"><ArrowLeft className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => cambiar(elegida, { y: actual.y + 1 })} disabled={bloqueado || procesando} className="btn-ghost p-1" aria-label="Bajar celda"><ArrowDown className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => cambiar(elegida, { x: actual.x + 1 })} disabled={bloqueado || procesando} className="btn-ghost p-1" aria-label="Mover celda a la derecha"><ArrowRight className="h-3.5 w-3.5" /></button>
             </div>
             <button type="button" onClick={() => cambiar(elegida, {
               x: iniciales[elegida].x,
               y: iniciales[elegida].y,
             })}
+              disabled={bloqueado || procesando}
               className="btn-ghost w-full px-1.5 py-1 text-[10px]">
               <RotateCcw className="h-3 w-3" /> Restaurar posición
             </button>
-            <button type="button" onClick={() => poner(iniciales)}
+            <button type="button" onClick={() => poner(iniciales)} disabled={bloqueado || procesando}
               className="btn-ghost w-full px-1.5 py-1 text-[10px]">
               <Crop className="h-3 w-3" /> Rejilla original
             </button>
@@ -247,11 +256,12 @@ export function EditorCortesSprite({
       )}
 
       {error && <p className="text-[10px] text-danger">{error}</p>}
+      {bloqueado && <p className="text-[10px] text-gold">Aplica o restaura primero los cambios pendientes de la hoja.</p>}
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 text-[9px] leading-snug text-muted">
           Aplicar vuelve a cortar desde la hoja completa. Después podrás centrar y borrar manchas en el editor fino.
         </p>
-        <button type="button" onClick={() => void aplicar()} disabled={!sucio || procesando}
+        <button type="button" onClick={() => void aplicar()} disabled={!sucio || procesando || bloqueado}
           className="btn-brand text-xs disabled:opacity-40">
           {procesando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
           {procesando ? "Aplicando…" : sucio ? "Aplicar estos cortes" : "Cortes aplicados"}

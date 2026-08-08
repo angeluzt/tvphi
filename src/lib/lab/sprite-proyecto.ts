@@ -138,7 +138,7 @@ export function archivosProyectoSprite(
     nombre: "leeme.txt",
     datos: new TextEncoder().encode(
       `Proyecto de sprite «${proyecto.nombre}» (${proyecto.tira.fotogramas} fotogramas, ${proyecto.fps}/s).\n\n`
-      + `${ARCHIVO_HOJA_SPRITE}: la imagen original completa, sin perder patas ni bordes.\n`
+      + `${ARCHIVO_HOJA_SPRITE}: la hoja de trabajo completa previa al corte, con sus correcciones.\n`
       + `${ARCHIVO_TIRA_SPRITE}: el resultado final exacto que reproduce TVPhi.\n`
       + `${ARCHIVO_META_SPRITE}: posición x/y/ancho/alto de cada celda y metadatos.\n\n`
       + "Para seguir editándolo: Laboratorio → Sprites → Importar proyecto ZIP.\n",
