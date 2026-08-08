@@ -1,16 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Map, Layers3, FlaskConical, Clapperboard } from "lucide-react";
+import { Map, Layers3, FlaskConical, Clapperboard, Bird } from "lucide-react";
 import { MapaEditor } from "./mapa-editor";
 import { Compositor, type Semilla } from "./compositor";
 import { revisar } from "@/lib/lab/escena";
 import { GenerarIa } from "./generar-ia";
+import { GenerarSprite } from "./generar-sprite";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import type { Escena } from "@/lib/lab/escena";
 
 export function LabApp({ hayIa }: { hayIa: boolean }) {
-  const [pestana, setPestana] = useState<"mapa" | "compositor">("mapa");
+  const [pestana, setPestana] = useState<"mapa" | "compositor" | "sprites">("mapa");
   const [semilla, setSemilla] = useState<Semilla[] | undefined>();
   // El mapa que hay ahora mismo, para que el panel de IA pueda dibujarlo.
   const [escena, setEscena] = useState<Escena | null>(null);
@@ -66,6 +67,9 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
         {([
           { id: "mapa", label: "1 · Mapa de la escena", Icono: Map },
           { id: "compositor", label: "2 · Montaje y paralaje", Icono: Layers3 },
+          // Los sprites no son un paso del recorrido: se fabrican una vez y se
+          // reutilizan, así que van aparte y no numerados.
+          { id: "sprites", label: "Sprites", Icono: Bird },
         ] as const).map(({ id, label, Icono }) => (
           <button
             key={id}
@@ -80,6 +84,16 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
           </button>
         ))}
       </div>
+
+      {pestana === "sprites" && (
+        hayIa
+          ? <GenerarSprite />
+          : (
+            <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
+              Hace falta la clave de OpenAI en el servidor para fabricar sprites.
+            </p>
+          )
+      )}
 
       {hayIa && pestana === "mapa" && (
         <GenerarIa
@@ -103,7 +117,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
         </p>
       )}
 
-      {pestana === "mapa"
+      {pestana === "sprites" ? null : pestana === "mapa"
         ? <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} />
         : (
           <Compositor
