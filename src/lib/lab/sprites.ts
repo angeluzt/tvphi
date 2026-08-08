@@ -1,4 +1,4 @@
-import { cargarImagen, colorDelFondo, parseHex, quitarColor, CROMA } from "@/lib/lab/quitar-fondo";
+import { cargarImagen, colorDelFondo, parseHex, quitarColor, CROMA } from "./quitar-fondo";
 
 // Partir una hoja de sprites en fotogramas sueltos, limpios y recortados.
 //
@@ -30,6 +30,13 @@ export interface HojaCortada {
   color?: string;
 }
 
+export interface CajaContenido {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 const lienzo = (w: number, h: number) => {
   const cv = document.createElement("canvas");
   cv.width = Math.max(1, Math.round(w));
@@ -45,7 +52,7 @@ function llenoDe(d: Uint8ClampedArray): number {
 }
 
 /** La caja de lo que NO es transparente. Null si no hay nada. */
-function cajaDe(d: Uint8ClampedArray, w: number, h: number) {
+export function cajaDe(d: Uint8ClampedArray, w: number, h: number): CajaContenido | null {
   let x0 = w, y0 = h, x1 = -1, y1 = -1;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -58,6 +65,44 @@ function cajaDe(d: Uint8ClampedArray, w: number, h: number) {
     }
   }
   return x1 < 0 ? null : { x0, y0, x1, y1 };
+}
+
+/**
+ * Los limites enteros de una celda dentro de una hoja.
+ *
+ * No se usa `total / n` directamente en drawImage: si el ancho no es divisible
+ * entre los fotogramas, el navegador interpola desde media columna del cuadro
+ * vecino y aparece una raya o una mancha que parece pertenecer al siguiente.
+ */
+export function limitesCelda(total: number, n: number, i: number) {
+  const cuantos = Math.max(1, Math.round(n));
+  const cual = Math.max(0, Math.min(cuantos - 1, Math.round(i)));
+  const inicio = Math.round((cual * total) / cuantos);
+  const fin = Math.round(((cual + 1) * total) / cuantos);
+  return { inicio, tam: Math.max(1, fin - inicio) };
+}
+
+/** Cuanto hay que mover una silueta para que su caja quede en el centro. */
+export function desplazamientoParaCentrar(
+  caja: CajaContenido,
+  ancho: number,
+  alto: number,
+) {
+  return {
+    x: Math.round(ancho / 2 - (caja.x0 + caja.x1 + 1) / 2),
+    y: Math.round(alto / 2 - (caja.y0 + caja.y1 + 1) / 2),
+  };
+}
+
+/** Convierte un canvas corregido en el fotograma que usa el resto del motor. */
+export function fotogramaDeLienzo(cv: HTMLCanvasElement): Fotograma {
+  const d = cv.getContext("2d")!.getImageData(0, 0, cv.width, cv.height).data;
+  return {
+    url: cv.toDataURL("image/png"),
+    ancho: cv.width,
+    alto: cv.height,
+    lleno: llenoDe(d),
+  };
 }
 
 /**
@@ -78,20 +123,31 @@ export async function cortarHoja(opts: {
   const img = await cargarImagen(opts.dataUrl);
   const n = Math.max(1, opts.fotogramas);
   const columna = opts.forma === "columna";
-  const cw = columna ? img.naturalWidth : img.naturalWidth / n;
-  const ch = columna ? img.naturalHeight / n : img.naturalHeight;
+  // Todas las celdas se llevan al mismo lienzo sin escalar. Cuando la division
+  // deja un pixel de diferencia, se centra ese pixel: no se roba contenido al
+  // fotograma contiguo y tampoco se deforma el dibujo.
+  const cw = columna ? img.naturalWidth : Math.ceil(img.naturalWidth / n);
+  const ch = columna ? Math.ceil(img.naturalHeight / n) : img.naturalHeight;
 
   // 1 · Cortar y limpiar cada celda.
   const celdas: { cv: HTMLCanvasElement; datos: Uint8ClampedArray }[] = [];
   let color: string | undefined;
 
   for (let i = 0; i < n; i++) {
+    const lx = columna
+      ? { inicio: 0, tam: img.naturalWidth }
+      : limitesCelda(img.naturalWidth, n, i);
+    const ly = columna
+      ? limitesCelda(img.naturalHeight, n, i)
+      : { inicio: 0, tam: img.naturalHeight };
     const cv = lienzo(cw, ch);
     const c = cv.getContext("2d")!;
     c.drawImage(
       img,
-      columna ? 0 : i * cw, columna ? i * ch : 0, cw, ch,
-      0, 0, cv.width, cv.height,
+      lx.inicio, ly.inicio, lx.tam, ly.tam,
+      Math.floor((cv.width - lx.tam) / 2),
+      Math.floor((cv.height - ly.tam) / 2),
+      lx.tam, ly.tam,
     );
     const d0 = c.getImageData(0, 0, cv.width, cv.height).data;
     // El croma se busca celda a celda: el modelo a veces vira el tono de un
