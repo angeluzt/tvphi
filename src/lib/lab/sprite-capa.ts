@@ -29,14 +29,14 @@ export interface TrayectoriaSprite {
 
 /** Un tramo declarativo de una ruta. También se puede escribir desde la IA. */
 export interface PasoRutaSprite {
-  /** mover interpola desde el punto anterior; pausa conserva ese punto. */
-  tipo: "mover" | "pausa";
+  /** mover interpola; pausa conserva el punto; voltear cambia el sentido. */
+  tipo: "mover" | "pausa" | "voltear";
   /** Destino del tramo. Solo se usa al mover. */
   x?: number;
   y?: number;
-  /** Duración del movimiento o de la espera. */
+  /** Duración del movimiento, la espera o el giro (normalmente 0.1 s). */
   segundos: number;
-  /** Sentido durante este paso. Si falta, conserva el anterior. */
+  /** Sentido durante este paso. En voltear, si falta, invierte el anterior. */
   espejo?: boolean;
 }
 
@@ -63,7 +63,7 @@ export interface SpriteEnCapa {
   espacio: EspacioSprite;
   /** Recorrido absoluto desde (x,y) hasta este destino. */
   trayectoria?: TrayectoriaSprite;
-  /** Ruta de varios movimientos y pausas. Tiene prioridad sobre trayectoria. */
+  /** Secuencia de movimientos, pausas y giros. Tiene prioridad sobre trayectoria. */
   ruta?: RutaSprite;
   /** Voltearlo para que mire al otro lado. */
   espejo?: boolean;
@@ -113,10 +113,10 @@ export function normalizarSprite(s: any): SpriteEnCapa | undefined {
   }
   if (s.ruta && typeof s.ruta === "object" && Array.isArray(s.ruta.pasos)) {
     const pasos = s.ruta.pasos.slice(0, 24).flatMap((p: any): PasoRutaSprite[] => {
-      if (!p || typeof p !== "object" || (p.tipo !== "mover" && p.tipo !== "pausa")) return [];
+      if (!p || typeof p !== "object" || !["mover", "pausa", "voltear"].includes(p.tipo)) return [];
       const comun = {
         tipo: p.tipo,
-        segundos: acotar(num(p.segundos, p.tipo === "pausa" ? 1 : 4), 0.1, 120),
+        segundos: acotar(num(p.segundos, p.tipo === "mover" ? 4 : p.tipo === "pausa" ? 1 : 0.1), 0.1, 120),
         ...(typeof p.espejo === "boolean" ? { espejo: p.espejo } : {}),
       } as PasoRutaSprite;
       if (p.tipo === "mover") {
@@ -163,7 +163,9 @@ export function estadoSpriteEn(spr: SpriteEnCapa, t: number): EstadoSprite {
     for (let i = 0; i < pasos.length; i++) {
       const paso = pasos[i];
       const dur = Math.max(0.1, paso.segundos);
-      const sentido = typeof paso.espejo === "boolean" ? paso.espejo : espejo;
+      const sentido = typeof paso.espejo === "boolean"
+        ? paso.espejo
+        : paso.tipo === "voltear" ? !espejo : espejo;
       if (tiempo < dur) {
         const avance = paso.tipo === "mover" ? tiempo / dur : 0;
         return {
@@ -291,7 +293,8 @@ export function rutasSpriteParaIA() {
       pasos: [
         { tipo: "mover", x: 1.2, y: 0.5, segundos: 4, espejo: false },
         { tipo: "pausa", segundos: 1 },
-        { tipo: "mover", x: -0.2, y: 0.5, segundos: 4, espejo: true },
+        { tipo: "voltear", segundos: 0.1 },
+        { tipo: "mover", x: -0.2, y: 0.5, segundos: 4 },
       ],
     },
     sincronizar: "true reinicia la ruta al reproducir cámara/transiciones; false usa su reloj independiente",
