@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   cajaSprite,
+  duracionRutaSprite,
+  estadoSpriteEn,
   normalizarSprite,
   posicionSprite,
   spriteSigueCamara,
@@ -64,5 +66,58 @@ describe("trayectoria A a B", () => {
     expect(caja.dy).toBeCloseTo(200);
     expect(caja.dw).toBe(100);
     expect(caja.dh).toBe(100);
+  });
+});
+
+describe("ruta de varios pasos", () => {
+  const sprite: SpriteEnCapa = {
+    ...base,
+    ruta: {
+      pasos: [
+        { tipo: "mover", x: 0.8, y: 0.25, segundos: 2 },
+        { tipo: "pausa", segundos: 1, espejo: true },
+        { tipo: "mover", x: -0.2, y: 0.75, segundos: 2, espejo: true },
+      ],
+    },
+  };
+
+  it("mueve, espera, voltea y continúa desde el punto anterior", () => {
+    expect(estadoSpriteEn(sprite, 1).x).toBeCloseTo(0.3);
+    expect(estadoSpriteEn(sprite, 2.5)).toMatchObject({ x: 0.8, y: 0.25, espejo: true, paso: 1 });
+    const regreso = estadoSpriteEn(sprite, 4);
+    expect(regreso.x).toBeCloseTo(0.3);
+    expect(regreso).toMatchObject({ y: 0.5, espejo: true, paso: 2 });
+    expect(posicionSprite(sprite, 9)).toEqual({ x: -0.2, y: 0.75 });
+    expect(duracionRutaSprite(sprite)).toBe(5);
+  });
+
+  it("repite la ruta completa cuando está en bucle", () => {
+    const enBucle = { ...sprite, ruta: { ...sprite.ruta!, bucle: true } };
+    expect(estadoSpriteEn(enBucle, 5)).toMatchObject({ x: -0.2, y: 0.25, paso: 0 });
+    expect(estadoSpriteEn(enBucle, 6).x).toBeCloseTo(0.3);
+  });
+
+  it("normaliza el JSON sin romper trayectoria ni proyectos antiguos", () => {
+    const actual = normalizarSprite({
+      ...base,
+      sincronizar: false,
+      ruta: {
+        bucle: true,
+        pasos: [
+          { tipo: "mover", x: 4, y: -4, segundos: 0 },
+          { tipo: "pausa", segundos: 500, espejo: true },
+          { tipo: "inventado", segundos: 2 },
+        ],
+      },
+    });
+
+    expect(actual?.sincronizar).toBe(false);
+    expect(actual?.ruta).toEqual({
+      bucle: true,
+      pasos: [
+        { tipo: "mover", x: 1.5, y: -0.5, segundos: 0.1 },
+        { tipo: "pausa", segundos: 120, espejo: true },
+      ],
+    });
   });
 });

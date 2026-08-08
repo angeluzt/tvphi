@@ -5,6 +5,7 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Crop, Loader2, Rotate
 import {
   celdasSpritePorDefecto, normalizarCeldasSprite, tamanoComunCeldasSprite, type CeldaSprite,
 } from "@/lib/lab/sprites";
+import { RangoPreciso } from "./rango-preciso";
 
 // Editor de la hoja ORIGINAL. Aquí todavía existen los píxeles que quedaron al
 // otro lado de una división; después del corte ya no hay forma de recuperarlos.
@@ -29,8 +30,8 @@ function Control({ etiqueta, valor, min, max, disabled, onChange }: {
   return (
     <label className="flex items-center gap-1.5 text-[10px] text-muted">
       <span className="w-12 shrink-0">{etiqueta}</span>
-      <input type="range" min={min} max={Math.max(min, max)} step={1} value={valor} disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))} className="min-w-0 flex-1" />
+      <RangoPreciso valor={valor} min={min} max={Math.max(min, max)} paso={1}
+        disabled={disabled} onCambio={onChange} etiqueta={etiqueta} />
       <span className="w-10 text-right tabular-nums">{valor}</span>
     </label>
   );

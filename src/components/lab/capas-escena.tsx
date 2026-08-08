@@ -7,6 +7,7 @@ import type { EscenaCapa } from "@/lib/story/model";
 import { revisar, esGuia, type Escena } from "@/lib/lab/escena";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { prepararCapa } from "@/lib/lab/quitar-fondo";
+import { RangoPreciso } from "./rango-preciso";
 
 // Convertir una escena del guion en varias láminas con profundidad.
 //
@@ -203,8 +204,8 @@ function Barra({ etiqueta, valor, min = 0, max, paso, onCambio, formato }: {
   return (
     <label className="flex items-center gap-1.5 text-[10px] text-muted">
       <span className="w-16 shrink-0">{etiqueta}</span>
-      <input type="range" min={min} max={max} step={paso} value={valor}
-        onChange={(e) => onCambio(Number(e.target.value))} className="min-w-0 flex-1" />
+      <RangoPreciso valor={valor} min={min} max={max} paso={paso}
+        onCambio={onCambio} etiqueta={etiqueta} />
       <span className="w-9 shrink-0 text-right tabular-nums">{formato(valor)}</span>
     </label>
   );

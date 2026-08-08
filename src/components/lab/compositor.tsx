@@ -5,13 +5,14 @@ import {
   Upload, Play, Pause, Crosshair, Download, Trash2, ChevronUp, ChevronDown, Eye, EyeOff,
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
   Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
+  MapPinned, Plus, RotateCcw, Square,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import { desplazamientoCapa, normalizarMov, MOVS_CAPA, type MovCapa } from "@/lib/lab/movimiento-capa";
 import {
-  cajaSprite, fotogramaEn, normalizarSprite, pintarSprite, spriteSigueCamara,
-  type SpriteEnCapa,
+  cajaSprite, estadoSpriteEn, fotogramaEn, normalizarSprite, pintarSprite, spriteSigueCamara,
+  type PasoRutaSprite, type Plano, type SpriteEnCapa,
 } from "@/lib/lab/sprite-capa";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
@@ -20,6 +21,7 @@ import {
   type AnimParalaje, type MovCola, type PasoSecuencia, type VistaCamara, type EstadoCamara,
   type DesdePaso, type FadeAccion, type FadeCapa, type Tramo,
 } from "@/lib/lab/anim-paralaje";
+import { RangoPreciso } from "./rango-preciso";
 
 // Paso 2: apilar las capas ya generadas y moverlas con profundidad.
 //
@@ -85,6 +87,10 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   const [borrador, setBorrador] = useState(() => pasoPorDefecto({ id: "borrador", mov: "der", durMs: 4000, distancia: 55 }));
   const [cola, setCola] = useState<PasoSecuencia[]>([]);
   const relojRef = useRef(typeof performance !== "undefined" ? performance.now() : 0);
+  /** Cada sprite puede pararse y reanudarse sin congelar cámara ni animales vecinos. */
+  const relojesSpriteRef = useRef(new Map<string, { inicio: number; pausa?: number }>());
+  const [, refrescarRelojes] = useState(0);
+  const [rutaVisibleId, setRutaVisibleId] = useState<string | null>(null);
   // La cola de la IA se copia UNA vez y ya es tuya: si se volviera a copiar en
   // cada render, cualquier retoque a mano se perdería al respirar.
   const colaIaRef = useRef<PasoSecuencia[] | null>(null);
@@ -156,6 +162,49 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
 
   function metaCapas() {
     return capasRef.current.map((c) => ({ id: c.id, depth: c.depth }));
+  }
+
+  function tiempoSprite(id: string, ahora = performance.now()) {
+    let r = relojesSpriteRef.current.get(id);
+    if (!r) {
+      r = { inicio: relojRef.current || ahora };
+      relojesSpriteRef.current.set(id, r);
+    }
+    return r.pausa !== undefined ? r.pausa : Math.max(0, (ahora - r.inicio) / 1000);
+  }
+
+  function spriteCorriendo(id: string) {
+    return relojesSpriteRef.current.get(id)?.pausa === undefined;
+  }
+
+  function pausarSprite(id: string) {
+    const ahora = performance.now();
+    const segundos = tiempoSprite(id, ahora);
+    relojesSpriteRef.current.set(id, { inicio: ahora - segundos * 1000, pausa: segundos });
+    refrescarRelojes((n) => n + 1);
+  }
+
+  function reproducirSprite(id: string) {
+    const ahora = performance.now();
+    const r = relojesSpriteRef.current.get(id);
+    const segundos = r?.pausa ?? (r ? Math.max(0, (ahora - r.inicio) / 1000) : 0);
+    relojesSpriteRef.current.set(id, { inicio: ahora - segundos * 1000 });
+    refrescarRelojes((n) => n + 1);
+  }
+
+  function reiniciarSprite(id: string, reproducir = true) {
+    const ahora = performance.now();
+    relojesSpriteRef.current.set(id, reproducir ? { inicio: ahora } : { inicio: ahora, pausa: 0 });
+    refrescarRelojes((n) => n + 1);
+  }
+
+  function reiniciarSpritesSincronizados() {
+    const ahora = performance.now();
+    for (const capa of capasRef.current) {
+      if (capa.spr && capa.spr.sincronizar !== false) {
+        relojesSpriteRef.current.set(capa.id, { inicio: ahora });
+      }
+    }
   }
 
   function planificar() {
@@ -292,6 +341,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
       if (!pack.width || !pack.height) {
         tam.current = { w: nuevas[0].img.naturalWidth, h: nuevas[0].img.naturalHeight };
       }
+      relojesSpriteRef.current.clear();
+      setRutaVisibleId(null);
       setCapas(nuevas);
 
       // Y lo demás, si el ZIP lo trae (los v1 no).
@@ -326,6 +377,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         } catch {}
       }
       if (!vivo || !nuevas.length) return;
+      relojesSpriteRef.current.clear();
       tam.current = { w: nuevas[0].img.naturalWidth, h: nuevas[0].img.naturalHeight };
       setCapas(repartirProfundidad(nuevas));
       setAviso("Capas del mapa cargadas. Es el mapa, no la imagen final: sirve para ver el movimiento.");
@@ -346,12 +398,18 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
       try {
         const img = await cargar(sprite.url);
         if (!vivo) return;
-        setCapas((prev) => [...prev, {
+        const nueva = {
           ...hacerCapa(sprite.nombre, img),
-          depth: prev.length ? 0.5 : 0,
           mov: sprite.mov,
-          spr: { ...sprite.spr, espacio: sprite.spr.espacio ?? "pantalla" },
-        }]);
+          spr: {
+            ...sprite.spr,
+            espacio: sprite.spr.espacio ?? "pantalla",
+            sincronizar: sprite.spr.sincronizar !== false,
+          },
+        };
+        relojesSpriteRef.current.set(nueva.id, { inicio: performance.now() });
+        setRutaVisibleId(nueva.id);
+        setCapas((prev) => [...prev, { ...nueva, depth: prev.length ? 0.5 : 0 }]);
         // Empieza en A al entrar al montaje; si se conserva el reloj de la
         // sesión, una trayectoria corta aparecería ya terminada en B.
         relojRef.current = performance.now();
@@ -442,6 +500,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
             idx = 0;
             estadoRef.current = clonarEstado(inicioRef.current);
             relojRef.current = performance.now();
+            reiniciarSpritesSincronizados();
           } else { acabo = true; }
           break;
         }
@@ -455,6 +514,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         // ver otra vez el fotograma cero y poder repetir la misma animación.
         estadoRef.current = clonarEstado(inicioRef.current);
         relojRef.current = performance.now();
+        reiniciarSpritesSincronizados();
         anotarPose();
         setAviso("Terminada. La cámara vuelve al inicio que fijaste: dale otra vez y hace lo mismo.");
         vista = vistaDesdeEstado(estadoRef.current);
@@ -491,13 +551,16 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
     // Reloj propio: un pájaro sigue volando aunque la cámara esté quieta. Al
     // reproducir una cola sí se reinicia, para que A→B y la toma compartan un
     // fotograma cero reproducible.
-    const reloj = (performance.now() - relojRef.current) / 1000;
+    const ahora = performance.now();
+    const reloj = (ahora - relojRef.current) / 1000;
+    let guiaRuta: { spr: SpriteEnCapa; plano: Plano; tiempo: number } | null = null;
     for (const capa of capas) {
       if (!capa.visible) continue;
       // El movimiento propio siempre usa coordenadas del lienzo. Para sprites
       // «pantalla» este es TODO su movimiento; para el resto se suma después
       // al paneo y al zoom de cámara.
-      const propio = desplazamientoCapa(capa.mov, reloj);
+      const tiempo = capa.spr ? tiempoSprite(capa.id, ahora) : reloj;
+      const propio = desplazamientoCapa(capa.mov, tiempo);
 
       if (capa.spr && !spriteSigueCamara(capa.spr)) {
         // Plano fijo del lienzo: no usa vista.ox, vista.zoom, profundidad ni
@@ -505,26 +568,29 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         // ni hace desaparecer al sprite. Zoom y opacidad manuales sí mandan.
         const af = capa.img.naturalWidth / capa.spr.fotogramas;
         const hf = capa.img.naturalHeight;
-        const i = fotogramaEn(capa.spr, reloj);
+        const i = fotogramaEn(capa.spr, tiempo);
+        const estado = estadoSpriteEn(capa.spr, tiempo);
         const spr = {
           ...capa.spr,
           alto: capa.spr.alto * capa.escala * propio.escala,
+          espejo: estado.espejo,
         };
         const plano = { x0: propio.dx * w, y0: propio.dy * h, w, h };
         c.save();
         c.globalAlpha = capa.opacidad;
-        pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, plano, reloj));
+        pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, plano, tiempo));
         if (propio.repetir) {
           if (capa.mov?.x) {
             const p2 = { ...plano, x0: plano.x0 - Math.sign(capa.mov.x) * 2 * w };
-            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, reloj));
+            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
           }
           if (capa.mov?.y) {
             const p2 = { ...plano, y0: plano.y0 - Math.sign(capa.mov.y) * 2 * h };
-            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, reloj));
+            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
           }
         }
         c.restore();
+        if (rutaVisibleId === capa.id) guiaRuta = { spr, plano, tiempo };
         continue;
       }
 
@@ -553,20 +619,23 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         // plano transformado y por eso sí hereda paralaje, zoom y fundidos.
         const af = capa.img.naturalWidth / capa.spr.fotogramas;
         const hf = capa.img.naturalHeight;
-        const i = fotogramaEn(capa.spr, reloj);
+        const i = fotogramaEn(capa.spr, tiempo);
+        const estado = estadoSpriteEn(capa.spr, tiempo);
+        const spr = { ...capa.spr, espejo: estado.espejo };
         const plano = { x0, y0, w: dw, h: dh };
-        pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, plano, reloj));
+        pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, plano, tiempo));
         if (propio.repetir) {
           if (capa.mov?.x) {
             const p2 = { ...plano, x0: x0 - Math.sign(capa.mov.x) * 2 * w };
-            pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, p2, reloj));
+            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
           }
           if (capa.mov?.y) {
             const p2 = { ...plano, y0: y0 - Math.sign(capa.mov.y) * 2 * h };
-            pintarSprite(c, capa.img, capa.spr, af, hf, i, cajaSprite(capa.spr, af, hf, p2, reloj));
+            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
           }
         }
         c.restore();
+        if (rutaVisibleId === capa.id) guiaRuta = { spr, plano, tiempo };
         continue;
       }
 
@@ -579,6 +648,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
       }
       c.restore();
     }
+    // Guía solo en la vista previa. Nunca entra al PNG ni al ZIP.
+    if (guiaRuta) pintarGuiaRuta(c, guiaRuta.spr, guiaRuta.plano, guiaRuta.tiempo);
   }
 
   async function exportarPng() {
@@ -599,9 +670,14 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         const hf = capa.img.naturalHeight;
         if (spriteSigueCamara(capa.spr)) {
           const plano = { x0, y0, w: dw, h: dh };
-          pintarSprite(c, capa.img, capa.spr, af, hf, 0, cajaSprite(capa.spr, af, hf, plano));
+          const spr = { ...capa.spr, espejo: estadoSpriteEn(capa.spr, 0).espejo };
+          pintarSprite(c, capa.img, spr, af, hf, 0, cajaSprite(spr, af, hf, plano));
         } else {
-          const spr = { ...capa.spr, alto: capa.spr.alto * capa.escala };
+          const spr = {
+            ...capa.spr,
+            alto: capa.spr.alto * capa.escala,
+            espejo: estadoSpriteEn(capa.spr, 0).espejo,
+          };
           const plano = { x0: 0, y0: 0, w: out.width, h: out.height };
           pintarSprite(c, capa.img, spr, af, hf, 0, cajaSprite(spr, af, hf, plano));
         }
@@ -636,6 +712,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
     planificar();
     // La cámara y todos los recorridos A→B comparten fotograma cero.
     relojRef.current = performance.now();
+    reiniciarSpritesSincronizados();
+    refrescarRelojes((n) => n + 1);
     setEnSecuencia(true);
     setMoviendo(true);
     anotarPose();
@@ -656,6 +734,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
     retenerPoseRef.current = false;
     pasoMsRef.current = 0;
     relojRef.current = performance.now();
+    reiniciarSpritesSincronizados();
+    refrescarRelojes((n) => n + 1);
     setPose({ ox: 0, oy: 0, avance: 0 });
     setAviso("Cámara al centro. La animación vuelve a empezar desde aquí.");
   }
@@ -718,7 +798,12 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
             onChange={(e) => { void importarZip(e.target.files?.[0] ?? null); e.target.value = ""; }}
           />
         </label>
-        <button onClick={() => { setCapas([]); setAviso("Vacío."); }} disabled={!capas.length} className="btn-ghost text-xs text-danger">
+        <button onClick={() => {
+          relojesSpriteRef.current.clear();
+          setRutaVisibleId(null);
+          setCapas([]);
+          setAviso("Vacío.");
+        }} disabled={!capas.length} className="btn-ghost text-xs text-danger">
           <Trash2 className="h-3.5 w-3.5" /> Vaciar
         </button>
       </div>
@@ -749,7 +834,11 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
                 <button onClick={() => upd(c.id, { visible: !c.visible })} className="text-muted hover:text-fg">
                   {c.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </button>
-                <button onClick={() => setCapas((cs) => cs.filter((x) => x.id !== c.id))} className="text-muted hover:text-danger"><Trash2 className="h-3.5 w-3.5" /></button>
+                <button onClick={() => {
+                  relojesSpriteRef.current.delete(c.id);
+                  if (rutaVisibleId === c.id) setRutaVisibleId(null);
+                  setCapas((cs) => cs.filter((x) => x.id !== c.id));
+                }} className="text-muted hover:text-danger"><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
               {c.via && (
                 <p className={`text-[10px] ${c.via === "opaca" && i > 0 ? "text-gold" : "text-muted"}`}>
@@ -775,7 +864,12 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
                   onAdelante={() => mover(i, 1)}
                   puedeAtras={i > 0}
                   puedeAdelante={i < capas.length - 1}
-                  onReiniciar={() => { relojRef.current = performance.now(); }}
+                  corriendo={spriteCorriendo(c.id)}
+                  rutaVisible={rutaVisibleId === c.id}
+                  onReproducir={() => reproducirSprite(c.id)}
+                  onPausar={() => pausarSprite(c.id)}
+                  onReiniciar={() => reiniciarSprite(c.id)}
+                  onRutaVisible={(visible) => setRutaVisibleId(visible ? c.id : null)}
                 />
               )}
             </div>
@@ -976,7 +1070,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
             <div className="flex items-center gap-2">
               <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted">
                 Fuerza
-                <input type="range" min={0} max={100} value={fuerza} onChange={(e) => setFuerza(Number(e.target.value))} className="min-w-0 flex-1" />
+                <RangoPreciso valor={fuerza} min={0} max={100} paso={1}
+                  onCambio={setFuerza} etiqueta="fuerza" />
                 <span className="w-8 tabular-nums">{fuerza}%</span>
               </label>
             </div>
@@ -1462,6 +1557,91 @@ function Num({ etiqueta, valor, min, max, paso, onCambio, disabled, sufijo, anch
   );
 }
 
+/** Dibuja A, destinos, pausas y posición viva sin contaminar ninguna exportación. */
+function pintarGuiaRuta(c: CanvasRenderingContext2D, spr: SpriteEnCapa, plano: Plano, tiempo: number) {
+  if (!spr.trayectoria && !spr.ruta?.pasos.length) return;
+  const puntos: { x: number; y: number; etiqueta: string; pausas: number[] }[] = [
+    { x: spr.x, y: spr.y, etiqueta: "A", pausas: [] },
+  ];
+  if (spr.ruta?.pasos.length) {
+    spr.ruta.pasos.forEach((paso, i) => {
+      if (paso.tipo === "mover") {
+        const previo = puntos[puntos.length - 1];
+        puntos.push({
+          x: paso.x ?? previo.x,
+          y: paso.y ?? previo.y,
+          etiqueta: String(i + 1),
+          pausas: [],
+        });
+      } else {
+        puntos[puntos.length - 1].pausas.push(paso.segundos);
+      }
+    });
+  } else if (spr.trayectoria) {
+    puntos.push({ x: spr.trayectoria.x, y: spr.trayectoria.y, etiqueta: "B", pausas: [] });
+  }
+
+  const px = (x: number) => plano.x0 + x * plano.w;
+  const py = (y: number) => plano.y0 + y * plano.h;
+  const u = Math.max(1, Math.min(2.5, plano.w / 850));
+  c.save();
+  c.globalAlpha = 0.92;
+  c.lineWidth = 2 * u;
+  c.strokeStyle = "#22d3c5";
+  c.setLineDash([7 * u, 5 * u]);
+  c.beginPath();
+  puntos.forEach((p, i) => {
+    if (i) c.lineTo(px(p.x), py(p.y));
+    else c.moveTo(px(p.x), py(p.y));
+  });
+  c.stroke();
+  if (spr.ruta?.bucle && puntos.length > 1) {
+    const primero = puntos[0];
+    const ultimo = puntos[puntos.length - 1];
+    if (primero.x !== ultimo.x || primero.y !== ultimo.y) {
+      c.strokeStyle = "#f59e0b";
+      c.setLineDash([2 * u, 7 * u]);
+      c.beginPath();
+      c.moveTo(px(ultimo.x), py(ultimo.y));
+      c.lineTo(px(primero.x), py(primero.y));
+      c.stroke();
+    }
+  }
+
+  c.setLineDash([]);
+  c.font = `600 ${11 * u}px system-ui, sans-serif`;
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  for (const p of puntos) {
+    const x = px(p.x), y = py(p.y);
+    c.fillStyle = "#071415";
+    c.strokeStyle = "#5eead4";
+    c.lineWidth = 2 * u;
+    c.beginPath();
+    c.arc(x, y, 9 * u, 0, Math.PI * 2);
+    c.fill();
+    c.stroke();
+    c.fillStyle = "#ccfbf1";
+    c.fillText(p.etiqueta, x, y + 0.5 * u);
+    if (p.pausas.length) {
+      c.fillStyle = "rgba(7,20,21,.9)";
+      c.fillRect(x + 11 * u, y - 10 * u, 44 * u, 17 * u);
+      c.fillStyle = "#fbbf24";
+      c.textAlign = "left";
+      c.fillText(`⏸ ${p.pausas.reduce((a, b) => a + b, 0).toFixed(1)}s`, x + 14 * u, y - 1 * u);
+      c.textAlign = "center";
+    }
+  }
+
+  const actual = estadoSpriteEn(spr, tiempo);
+  c.strokeStyle = "#fb923c";
+  c.lineWidth = 3 * u;
+  c.beginPath();
+  c.arc(px(actual.x), py(actual.y), 14 * u, 0, Math.PI * 2);
+  c.stroke();
+  c.restore();
+}
+
 function Barra({ etiqueta, valor, min = 0, max, paso, onCambio, formato }: {
   etiqueta: string; valor: number; min?: number; max: number; paso: number;
   onCambio: (v: number) => void; formato: (v: number) => string;
@@ -1469,8 +1649,8 @@ function Barra({ etiqueta, valor, min = 0, max, paso, onCambio, formato }: {
   return (
     <label className="flex items-center gap-1.5 text-[10px] text-muted">
       <span className="w-16 shrink-0">{etiqueta}</span>
-      <input type="range" min={min} max={max} step={paso} value={valor}
-        onChange={(e) => onCambio(Number(e.target.value))} className="min-w-0 flex-1" />
+      <RangoPreciso valor={valor} min={min} max={max} paso={paso}
+        onCambio={onCambio} etiqueta={etiqueta} />
       <span className="w-9 shrink-0 text-right tabular-nums">{formato(valor)}</span>
     </label>
   );
@@ -1488,7 +1668,8 @@ function Barra({ etiqueta, valor, min = 0, max, paso, onCambio, formato }: {
  * otro. Los demás movimientos se afinan luego, con el resto de la escena.
  */
 function MandosSprite({
-  spr, mov, onSpr, onMov, onAtras, onAdelante, puedeAtras, puedeAdelante, onReiniciar,
+  spr, mov, onSpr, onMov, onAtras, onAdelante, puedeAtras, puedeAdelante,
+  corriendo, rutaVisible, onReproducir, onPausar, onReiniciar, onRutaVisible,
 }: {
   spr: SpriteEnCapa;
   mov?: MovCapa;
@@ -1498,29 +1679,91 @@ function MandosSprite({
   onAdelante: () => void;
   puedeAtras: boolean;
   puedeAdelante: boolean;
+  corriendo: boolean;
+  rutaVisible: boolean;
+  onReproducir: () => void;
+  onPausar: () => void;
   onReiniciar: () => void;
+  onRutaVisible: (visible: boolean) => void;
 }) {
-  const modo = spr.trayectoria ? "trayectoria" : (mov?.tipo ?? "");
+  const modo = spr.ruta ? "ruta" : spr.trayectoria ? "trayectoria" : (mov?.tipo ?? "");
+  const [pasoAbierto, setPasoAbierto] = useState<number | null>(0);
+
+  function guardarPasos(pasos: PasoRutaSprite[]) {
+    onSpr({ ruta: { ...spr.ruta!, pasos } });
+  }
+
+  function cambiarPaso(i: number, patch: Partial<PasoRutaSprite>) {
+    guardarPasos(spr.ruta!.pasos.map((p, j) => (i === j ? { ...p, ...patch } : p)));
+  }
+
+  function moverPaso(i: number, d: -1 | 1) {
+    const j = i + d;
+    if (!spr.ruta || j < 0 || j >= spr.ruta.pasos.length) return;
+    const pasos = [...spr.ruta.pasos];
+    [pasos[i], pasos[j]] = [pasos[j], pasos[i]];
+    guardarPasos(pasos);
+  }
+
+  function ultimoDestino() {
+    let x = spr.x;
+    let y = spr.y;
+    for (const p of spr.ruta?.pasos ?? []) {
+      if (p.tipo === "mover") { x = p.x ?? x; y = p.y ?? y; }
+    }
+    return { x, y };
+  }
+
+  function destinoAntes(i: number) {
+    let x = spr.x;
+    let y = spr.y;
+    for (const p of spr.ruta?.pasos.slice(0, i) ?? []) {
+      if (p.tipo === "mover") { x = p.x ?? x; y = p.y ?? y; }
+    }
+    return { x, y };
+  }
 
   function elegirMovimiento(t: string) {
     if (!t) {
-      onSpr({ trayectoria: undefined });
+      onSpr({ trayectoria: undefined, ruta: undefined });
       onMov(undefined);
+      onRutaVisible(false);
       return;
     }
     if (t === "trayectoria") {
       onMov(undefined);
       onSpr({
+        ruta: undefined,
         trayectoria: {
           x: spr.x < 0.9 ? 1.2 : -0.2,
           y: spr.y,
           segundos: 4,
         },
       });
+      onRutaVisible(true);
       onReiniciar();
       return;
     }
-    onSpr({ trayectoria: undefined });
+    if (t === "ruta") {
+      const bx = spr.x < 0.9 ? 1.2 : -0.2;
+      onMov(undefined);
+      onSpr({
+        trayectoria: undefined,
+        ruta: {
+          bucle: true,
+          pasos: [
+            { tipo: "mover", x: bx, y: spr.y, segundos: 4, espejo: bx < spr.x },
+            { tipo: "pausa", segundos: 1, espejo: bx < spr.x },
+            { tipo: "mover", x: spr.x, y: spr.y, segundos: 4, espejo: bx >= spr.x },
+          ],
+        },
+      });
+      onRutaVisible(true);
+      onReiniciar();
+      return;
+    }
+    onSpr({ trayectoria: undefined, ruta: undefined });
+    onRutaVisible(false);
     // Valores de salida que ya se ven bien: un pájaro que cruza en unos ocho
     // segundos, o un balanceo corto. Luego se afinan aquí mismo.
     if (t === "deriva") onMov({ tipo: "deriva", x: 0.12, y: 0, bucle: true });
@@ -1545,6 +1788,26 @@ function MandosSprite({
           ⇄ espejo
         </button>
       </div>
+      <div className="grid grid-cols-4 gap-1">
+        <button type="button" onClick={onReproducir} disabled={corriendo}
+          className="btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-35" title="Reproducir este sprite">
+          <Play className="h-3 w-3" /> Play
+        </button>
+        <button type="button" onClick={onPausar} disabled={!corriendo}
+          className="btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-35" title="Detener este sprite donde está">
+          <Square className="h-3 w-3" /> Stop
+        </button>
+        <button type="button" onClick={onReiniciar}
+          className="btn-ghost justify-center px-1 py-1 text-[9px]" title="Volver al punto A y reproducir">
+          <RotateCcw className="h-3 w-3" /> Desde A
+        </button>
+        <button type="button" onClick={() => onRutaVisible(!rutaVisible)}
+          disabled={!spr.trayectoria && !spr.ruta}
+          className={`btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-35 ${rutaVisible ? "border-accent text-accent" : ""}`}
+          title="Mostrar puntos y recorrido en la vista">
+          <MapPinned className="h-3 w-3" /> Ruta
+        </button>
+      </div>
       <label className="flex items-center gap-1.5 text-[10px] text-muted">
         <span className="w-16 shrink-0">Se ancla a</span>
         <select
@@ -1561,11 +1824,11 @@ function MandosSprite({
           ? "Su ruta no cambia con paneos, zooms ni fundidos de cámara."
           : "Hereda cámara y profundidad: sirve si forma parte del decorado 2.5D."}
       </p>
-      <Barra etiqueta={spr.trayectoria ? "A · X" : "Izq · der"} valor={spr.x} min={-0.5} max={1.5} paso={0.01}
-        onCambio={(v) => { onSpr({ x: v }); if (spr.trayectoria) onReiniciar(); }} formato={(v) => v.toFixed(2)} />
-      <Barra etiqueta={spr.trayectoria ? "A · Y" : "Arr · abj"} valor={spr.y} min={-0.5} max={1.5} paso={0.01}
-        onCambio={(v) => { onSpr({ y: v }); if (spr.trayectoria) onReiniciar(); }} formato={(v) => v.toFixed(2)} />
-      <Barra etiqueta="Tamaño" valor={spr.alto} min={0.02} max={1} paso={0.01}
+      <Barra etiqueta={spr.trayectoria || spr.ruta ? "A · X" : "Izq · der"} valor={spr.x} min={-0.5} max={1.5} paso={0.01}
+        onCambio={(v) => { onSpr({ x: v }); if (spr.trayectoria || spr.ruta) onReiniciar(); }} formato={(v) => v.toFixed(2)} />
+      <Barra etiqueta={spr.trayectoria || spr.ruta ? "A · Y" : "Arr · abj"} valor={spr.y} min={-0.5} max={1.5} paso={0.01}
+        onCambio={(v) => { onSpr({ y: v }); if (spr.trayectoria || spr.ruta) onReiniciar(); }} formato={(v) => v.toFixed(2)} />
+      <Barra etiqueta="Tamaño" valor={spr.alto} min={0.01} max={2} paso={0.01}
         onCambio={(v) => onSpr({ alto: v })} formato={(v) => `${Math.round(v * 100)}%`} />
       <Barra etiqueta="Velocidad" valor={spr.fps} min={1} max={30} paso={1}
         onCambio={(v) => onSpr({ fps: Math.round(v) })} formato={(v) => `${v}/s`} />
@@ -1578,11 +1841,19 @@ function MandosSprite({
         >
           <option value="">— quieto en su sitio —</option>
           <option value="trayectoria">Punto A → punto B</option>
+          <option value="ruta">Ruta por pasos · mover, pausar y volver</option>
           {MOVS_CAPA.map((m) => (
             <option key={m.id} value={m.id}>{m.label}</option>
           ))}
         </select>
       </label>
+      {(spr.trayectoria || spr.ruta) && (
+        <label className="flex items-center gap-1 text-[9px] text-muted">
+          <input type="checkbox" checked={spr.sincronizar !== false}
+            onChange={(e) => onSpr({ sincronizar: e.target.checked })} />
+          Reiniciar junto con la cámara y sus transiciones
+        </label>
+      )}
       {spr.trayectoria && (
         <div className="space-y-1 rounded border border-border/70 bg-surface/40 p-1">
           <div className="flex items-center gap-1">
@@ -1629,6 +1900,95 @@ function MandosSprite({
               Probar desde A
             </button>
           </div>
+        </div>
+      )}
+      {spr.ruta && (
+        <div className="space-y-1.5 rounded border border-accent/30 bg-surface/40 p-1.5">
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] font-medium text-fg">Ruta por pasos</span>
+            <span className="ml-auto text-[8px] text-muted">A es la posición inicial</span>
+          </div>
+          {spr.ruta.pasos.map((paso, i) => (
+            <div key={i} className="space-y-1 rounded border border-border/70 bg-surface-2/45 p-1">
+              <div className="flex items-center gap-1">
+                <span className="chip bg-surface text-[8px] text-muted">{i + 1}</span>
+                <select
+                  className="input min-w-0 flex-1 py-0.5 text-[9px]"
+                  value={paso.tipo}
+                  onChange={(e) => {
+                    const tipo = e.target.value as PasoRutaSprite["tipo"];
+                    if (tipo === "pausa") cambiarPaso(i, { tipo: "pausa" });
+                    else cambiarPaso(i, { tipo: "mover", ...destinoAntes(i) });
+                  }}
+                >
+                  <option value="mover">Mover a un punto</option>
+                  <option value="pausa">Detenerse aquí</option>
+                </select>
+                <button type="button" onClick={() => moverPaso(i, -1)} disabled={i === 0}
+                  className="rounded border border-border p-0.5 text-muted disabled:opacity-25" aria-label="Subir paso">
+                  <ChevronUp className="h-3 w-3" />
+                </button>
+                <button type="button" onClick={() => moverPaso(i, 1)} disabled={i === spr.ruta!.pasos.length - 1}
+                  className="rounded border border-border p-0.5 text-muted disabled:opacity-25" aria-label="Bajar paso">
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+                <button type="button" onClick={() => guardarPasos(spr.ruta!.pasos.filter((_, j) => i !== j))}
+                  disabled={spr.ruta!.pasos.length === 1}
+                  className="rounded border border-border p-0.5 text-muted hover:text-danger disabled:opacity-25" aria-label="Borrar paso">
+                  <Trash2 className="h-3 w-3" />
+                </button>
+                <button type="button" onClick={() => setPasoAbierto((v) => v === i ? null : i)}
+                  className="rounded border border-border p-0.5 text-muted hover:text-fg"
+                  aria-label={pasoAbierto === i ? "Cerrar ajustes del paso" : "Editar paso"}>
+                  <ChevronDown className={`h-3 w-3 transition-transform ${pasoAbierto === i ? "rotate-180" : ""}`} />
+                </button>
+              </div>
+              {pasoAbierto === i && (
+                <div className="space-y-1 border-t border-border/50 pt-1">
+                  {paso.tipo === "mover" && (
+                    <>
+                      <Barra etiqueta="Destino X" valor={paso.x ?? destinoAntes(i).x} min={-0.5} max={1.5} paso={0.01}
+                        onCambio={(v) => cambiarPaso(i, { x: v })} formato={(v) => v.toFixed(2)} />
+                      <Barra etiqueta="Destino Y" valor={paso.y ?? destinoAntes(i).y} min={-0.5} max={1.5} paso={0.01}
+                        onCambio={(v) => cambiarPaso(i, { y: v })} formato={(v) => v.toFixed(2)} />
+                    </>
+                  )}
+                  <Barra etiqueta={paso.tipo === "mover" ? "Duración" : "Espera"}
+                    valor={paso.segundos} min={0.1} max={120} paso={0.1}
+                    onCambio={(v) => cambiarPaso(i, { segundos: v })} formato={(v) => `${v.toFixed(1)}s`} />
+                  <label className="flex items-center gap-1 text-[8px] text-muted">
+                    <input type="checkbox" checked={paso.espejo ?? spr.espejo ?? false}
+                      onChange={(e) => cambiarPaso(i, { espejo: e.target.checked })} />
+                    Mirar al lado contrario durante este paso
+                  </label>
+                </div>
+              )}
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-1">
+            <button type="button" onClick={() => {
+              const p = ultimoDestino();
+              guardarPasos([...spr.ruta!.pasos, {
+                tipo: "mover", x: Math.min(1.5, p.x + 0.2), y: p.y, segundos: 2,
+              }]);
+            }} className="btn-ghost px-1.5 py-0.5 text-[8px]">
+              <Plus className="h-3 w-3" /> Destino
+            </button>
+            <button type="button" onClick={() => guardarPasos([
+              ...spr.ruta!.pasos, { tipo: "pausa", segundos: 1 },
+            ])} className="btn-ghost px-1.5 py-0.5 text-[8px]">
+              <Plus className="h-3 w-3" /> Pausa
+            </button>
+            <label className="ml-auto flex items-center gap-1 text-[8px] text-muted">
+              <input type="checkbox" checked={!!spr.ruta.bucle}
+                onChange={(e) => onSpr({ ruta: { ...spr.ruta!, bucle: e.target.checked } })} />
+              Repetir ruta
+            </label>
+          </div>
+          <p className="text-[8px] leading-snug text-muted">
+            Stop congela el objeto para colocarlo. La línea y el punto actual se actualizan al mover cada control.
+            Todo se guarda en <code>montaje.json</code> como <code>spr.ruta.pasos</code>, así que la IA también puede definirlo completo.
+          </p>
         </div>
       )}
       {mov?.tipo === "deriva" && (

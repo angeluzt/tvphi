@@ -121,6 +121,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
                   // Un sprite nuevo tiene coordenadas propias del lienzo. Solo
                   // seguirá paneos y zooms si la persona lo elige en Montaje.
                   espacio: "pantalla",
+                  sincronizar: true,
                 },
               });
               setPestana("compositor");
