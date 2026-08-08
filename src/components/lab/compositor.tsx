@@ -5,7 +5,7 @@ import {
   Upload, Play, Pause, Crosshair, Download, Trash2, ChevronUp, ChevronDown, Eye, EyeOff,
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
   Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
-  MapPinned, Plus, RotateCcw, Square,
+  MapPinned, Plus, RotateCcw, Square, Lock, LockOpen, ChevronsUp, ChevronsDown,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
@@ -39,6 +39,7 @@ interface CapaImg {
   visible: boolean;
   escala: number;
   opacidad: number;
+  bloqueada?: boolean;
   via?: "transparente" | "croma" | "opaca";
   vacio?: number;
   /** Movimiento propio, además del de la cámara. */
@@ -57,6 +58,7 @@ export interface Semilla {
   vacio?: number;
   mov?: MovCapa;
   spr?: SpriteEnCapa;
+  bloqueada?: boolean;
 }
 
 let contador = 0;
@@ -91,6 +93,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   const relojesSpriteRef = useRef(new Map<string, { inicio: number; pausa?: number }>());
   const [, refrescarRelojes] = useState(0);
   const [rutaVisibleId, setRutaVisibleId] = useState<string | null>(null);
+  /** Una sola capa abierta evita repetir todos sus controles en una lista interminable. */
+  const [capaActivaId, setCapaActivaId] = useState<string | null>(null);
   // La cola de la IA se copia UNA vez y ya es tuya: si se volviera a copiar en
   // cada render, cualquier retoque a mano se perdería al respirar.
   const colaIaRef = useRef<PasoSecuencia[] | null>(null);
@@ -159,6 +163,21 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   enSecuenciaRef.current = enSecuencia;
   pasoActivoRef.current = pasoActivo;
   repetirRef.current = repetirCola;
+
+  const indiceActivo = capas.findIndex((c) => c.id === capaActivaId);
+  const capaActiva = indiceActivo >= 0 ? capas[indiceActivo] : null;
+  useEffect(() => {
+    if (!capas.length) {
+      if (capaActivaId !== null) setCapaActivaId(null);
+      return;
+    }
+    if (!capas.some((c) => c.id === capaActivaId)) {
+      setCapaActivaId(capas[capas.length - 1].id);
+    }
+  }, [capas, capaActivaId]);
+  useEffect(() => {
+    if (rutaVisibleId && rutaVisibleId !== capaActivaId) setRutaVisibleId(null);
+  }, [capaActivaId, rutaVisibleId]);
 
   function metaCapas() {
     return capasRef.current.map((c) => ({ id: c.id, depth: c.depth }));
@@ -285,6 +304,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
       if (!prev.length) tam.current = { w: nuevas[0].img.naturalWidth, h: nuevas[0].img.naturalHeight };
       return repartirProfundidad(todas);
     });
+    setCapaActivaId(nuevas[nuevas.length - 1].id);
     setAviso(`${nuevas.length} imagen${nuevas.length > 1 ? "es" : ""} añadida${nuevas.length > 1 ? "s" : ""}. Ajusta la profundidad de cada una.`);
   }
 
@@ -302,7 +322,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         cola,
         capas: capas.map((c) => ({
           nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
-          via: c.via, vacio: c.vacio, mov: c.mov, spr: c.spr, img: c.img,
+          bloqueada: c.bloqueada, via: c.via, vacio: c.vacio, mov: c.mov, spr: c.spr, img: c.img,
         })),
       });
       setAviso(
@@ -329,6 +349,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         nuevas.push({
           ...hacerCapa(c.nombre, img),
           depth: c.depth, escala: c.escala, opacidad: c.opacidad, via: c.via, vacio: c.vacio,
+          bloqueada: c.bloqueada,
           mov: normalizarMov(c.mov),
           spr: normalizarSprite(c.spr),
         });
@@ -344,6 +365,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
       relojesSpriteRef.current.clear();
       setRutaVisibleId(null);
       setCapas(nuevas);
+      setCapaActivaId(nuevas[nuevas.length - 1].id);
 
       // Y lo demás, si el ZIP lo trae (los v1 no).
       const partes = [`${nuevas.length} capas`];
@@ -372,7 +394,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         try {
           nuevas.push({
             ...hacerCapa(s.nombre, await cargar(s.url)),
-            via: s.via, vacio: s.vacio, mov: s.mov, spr: s.spr,
+            via: s.via, vacio: s.vacio, mov: s.mov, spr: s.spr, bloqueada: s.bloqueada,
           });
         } catch {}
       }
@@ -380,6 +402,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
       relojesSpriteRef.current.clear();
       tam.current = { w: nuevas[0].img.naturalWidth, h: nuevas[0].img.naturalHeight };
       setCapas(repartirProfundidad(nuevas));
+      setCapaActivaId(nuevas[nuevas.length - 1].id);
       setAviso("Capas del mapa cargadas. Es el mapa, no la imagen final: sirve para ver el movimiento.");
     })();
     return () => { vivo = false; };
@@ -409,6 +432,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         };
         relojesSpriteRef.current.set(nueva.id, { inicio: performance.now() });
         setRutaVisibleId(nueva.id);
+        setCapaActivaId(nueva.id);
         setCapas((prev) => [...prev, { ...nueva, depth: prev.length ? 0.5 : 0 }]);
         // Empieza en A al entrar al montaje; si se conserva el reloj de la
         // sesión, una trayectoria corta aparecería ya terminada en B.
@@ -745,11 +769,27 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   const mover = (i: number, d: -1 | 1) =>
     setCapas((cs) => {
       const j = i + d;
-      if (j < 0 || j >= cs.length) return cs;
+      if (j < 0 || j >= cs.length || cs[i]?.bloqueada) return cs;
       const n = [...cs];
       [n[i], n[j]] = [n[j], n[i]];
       return n;
     });
+  const moverAlExtremo = (id: string, extremo: "fondo" | "frente") =>
+    setCapas((cs) => {
+      const i = cs.findIndex((c) => c.id === id);
+      if (i < 0 || cs[i].bloqueada) return cs;
+      const n = [...cs];
+      const [capa] = n.splice(i, 1);
+      n.splice(extremo === "fondo" ? 0 : n.length, 0, capa);
+      return n;
+    });
+  const eliminarCapa = (id: string) => {
+    const capa = capasRef.current.find((c) => c.id === id);
+    if (!capa || capa.bloqueada) return;
+    relojesSpriteRef.current.delete(id);
+    if (rutaVisibleId === id) setRutaVisibleId(null);
+    setCapas((cs) => cs.filter((c) => c.id !== id));
+  };
 
   const pistaIdle = ANIM_OPCIONES.find((o) => o.id === anim)?.pista;
   const pistaMov = MOV_COLA.find((o) => o.id === borrador.mov)?.pista;
@@ -808,15 +848,15 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
         </button>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <div className="card space-y-2 p-3">
+      <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="card order-2 space-y-2 self-start p-3 lg:order-1 lg:sticky lg:top-2">
           <div className="flex items-center gap-2">
-            <span className="label">Capas</span>
+            <span className="label">Capas · vista compacta</span>
             <span className="chip ml-auto bg-surface-2 text-muted">{capas.length}</span>
           </div>
           {!!capas.length && (
             <p className="text-[10px] text-muted">
-              Orden visual: arriba queda detrás; abajo queda delante. La profundidad solo controla el paralaje.
+              Elige una aquí y edítala junto a la vista. Arriba queda detrás; abajo, delante.
             </p>
           )}
           {!capas.length && (
@@ -825,71 +865,79 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
               con transparencia. Encadena acercar → pan → fade para controlar la toma a mano.
             </p>
           )}
-          {capas.map((c, i) => (
-            <div key={c.id} className="space-y-1.5 rounded-lg border border-border bg-surface-2/50 p-2">
-              <div className="flex items-center gap-1.5">
-                <span className="min-w-0 flex-1 truncate text-xs font-medium">{c.nombre}</span>
-                <button onClick={() => mover(i, -1)} disabled={i === 0} className="text-muted hover:text-fg disabled:opacity-30" title="Mover detrás" aria-label={`Mover ${c.nombre} detrás`}><ChevronUp className="h-3.5 w-3.5" /></button>
-                <button onClick={() => mover(i, 1)} disabled={i === capas.length - 1} className="text-muted hover:text-fg disabled:opacity-30" title="Mover delante" aria-label={`Mover ${c.nombre} delante`}><ChevronDown className="h-3.5 w-3.5" /></button>
-                <button onClick={() => upd(c.id, { visible: !c.visible })} className="text-muted hover:text-fg">
+          <div className="max-h-[28rem] space-y-1 overflow-y-auto pr-0.5">
+            {capas.map((c, i) => (
+              <div key={c.id} className={`flex items-center gap-1 rounded-lg border p-1 ${
+                c.id === capaActivaId ? "border-accent bg-accent/10" : "border-border bg-surface-2/50"
+              }`}>
+                <button type="button" onClick={() => setCapaActivaId(c.id)}
+                  className="min-w-0 flex-1 truncate px-1 py-1 text-left text-[11px] font-medium"
+                  title={c.nombre}>
+                  <span className={c.visible ? "" : "text-muted line-through"}>{c.nombre}</span>
+                  {c.spr && <span className="ml-1 text-[8px] text-accent">sprite</span>}
+                </button>
+                <button type="button" onClick={() => upd(c.id, { bloqueada: !c.bloqueada })}
+                  className={c.bloqueada ? "text-gold" : "text-muted hover:text-fg"}
+                  title={c.bloqueada ? "Desbloquear capa" : "Bloquear capa"}
+                  aria-label={`${c.bloqueada ? "Desbloquear" : "Bloquear"} ${c.nombre}`}>
+                  {c.bloqueada ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+                </button>
+                <button type="button" onClick={() => mover(i, -1)} disabled={i === 0 || c.bloqueada}
+                  className="text-muted hover:text-fg disabled:opacity-25" title="Una capa hacia detrás"
+                  aria-label={`Mover ${c.nombre} detrás`}><ChevronUp className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => mover(i, 1)} disabled={i === capas.length - 1 || c.bloqueada}
+                  className="text-muted hover:text-fg disabled:opacity-25" title="Una capa hacia delante"
+                  aria-label={`Mover ${c.nombre} delante`}><ChevronDown className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => upd(c.id, { visible: !c.visible })}
+                  disabled={c.bloqueada} className="text-muted hover:text-fg disabled:opacity-25"
+                  aria-label={`${c.visible ? "Ocultar" : "Mostrar"} ${c.nombre}`}>
                   {c.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </button>
-                <button onClick={() => {
-                  relojesSpriteRef.current.delete(c.id);
-                  if (rutaVisibleId === c.id) setRutaVisibleId(null);
-                  setCapas((cs) => cs.filter((x) => x.id !== c.id));
-                }} className="text-muted hover:text-danger"><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
-              {c.via && (
-                <p className={`text-[10px] ${c.via === "opaca" && i > 0 ? "text-gold" : "text-muted"}`}>
-                  {c.via === "transparente" && "vino con transparencia"}
-                  {c.via === "croma" && "se le quitó el color de fondo"}
-                  {c.via === "opaca" && (i === 0 ? "fondo opaco, como debe ser" : "opaca y sin fondo plano que quitar: tapará a las de atrás")}
-                  {typeof c.vacio === "number" ? ` · ${Math.round(c.vacio * 100)}% vacío` : ""}
-                </p>
-              )}
-              <Barra etiqueta="Profundidad" valor={c.depth} max={1} paso={0.01}
-                onCambio={(v) => upd(c.id, { depth: v })} formato={(v) => v.toFixed(2)} />
-              <Barra etiqueta="Zoom" valor={c.escala} min={1} max={1.4} paso={0.01}
-                onCambio={(v) => upd(c.id, { escala: v })} formato={(v) => `${Math.round((v - 1) * 100)}%`} />
-              <Barra etiqueta="Opacidad" valor={c.opacidad} max={1} paso={0.01}
-                onCambio={(v) => upd(c.id, { opacidad: v })} formato={(v) => `${Math.round(v * 100)}%`} />
-              {c.spr && (
-                <MandosSprite
-                  spr={c.spr}
-                  mov={c.mov}
-                  onSpr={(p) => upd(c.id, { spr: { ...c.spr!, ...p } })}
-                  onMov={(m) => upd(c.id, { mov: m })}
-                  onAtras={() => mover(i, -1)}
-                  onAdelante={() => mover(i, 1)}
-                  puedeAtras={i > 0}
-                  puedeAdelante={i < capas.length - 1}
-                  corriendo={spriteCorriendo(c.id)}
-                  rutaVisible={rutaVisibleId === c.id}
-                  onReproducir={() => reproducirSprite(c.id)}
-                  onPausar={() => pausarSprite(c.id)}
-                  onReiniciar={() => reiniciarSprite(c.id)}
-                  onRutaVisible={(visible) => setRutaVisibleId(visible ? c.id : null)}
-                />
-              )}
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
-        <div className="space-y-2">
+        <div className="order-1 space-y-2 lg:order-2">
           {/* La vista previa, arriba y pegada. Antes vivía debajo de toda la
               cola: para tocar un paso había que bajar, y se editaba a ciegas.
               Ahora se queda a la vista mientras se ajusta lo de abajo. */}
           {/* Pegada solo a partir de tablet. En un móvil la pantalla no da para
               tener la vista previa fija Y los controles: se comía los botones de
               abajo y no se podía ni añadir un paso a la cola. */}
-          <div className="z-10 space-y-2 rounded-xl border border-border bg-surface p-2 shadow-lg shadow-black/40 sm:sticky sm:top-2">
+          <div className="space-y-2 rounded-xl border border-border bg-surface p-2">
+            <div className="space-y-2 rounded-lg bg-surface">
+              <div className="sticky top-1 z-30 flex items-center gap-1.5 rounded-lg border border-border bg-surface-2/95 p-1.5 shadow-lg shadow-black/40 backdrop-blur">
+                <span className="hidden text-[10px] text-muted sm:inline">Editando</span>
+                <select value={capaActivaId ?? ""} onChange={(e) => setCapaActivaId(e.target.value || null)}
+                  className="input min-w-0 flex-1 py-1 text-[11px]" aria-label="Capa activa">
+                  {!capas.length && <option value="">Sin capas</option>}
+                  {capas.map((c) => (
+                    <option key={c.id} value={c.id}>{c.bloqueada ? "🔒 " : ""}{c.nombre}</option>
+                  ))}
+                </select>
+                <button type="button" onClick={() => setCapaActivaId(capas[indiceActivo - 1]?.id ?? capaActivaId)}
+                  disabled={indiceActivo <= 0} className="rounded border border-border p-1 text-muted disabled:opacity-25"
+                  title="Capa anterior" aria-label="Capa anterior"><ChevronUp className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => setCapaActivaId(capas[indiceActivo + 1]?.id ?? capaActivaId)}
+                  disabled={indiceActivo < 0 || indiceActivo >= capas.length - 1}
+                  className="rounded border border-border p-1 text-muted disabled:opacity-25"
+                  title="Capa siguiente" aria-label="Capa siguiente"><ChevronDown className="h-3.5 w-3.5" /></button>
+                {capaActiva && (
+                  <button type="button" onClick={() => upd(capaActiva.id, { bloqueada: !capaActiva.bloqueada })}
+                    className={`rounded border p-1 ${capaActiva.bloqueada ? "border-gold text-gold" : "border-border text-muted"}`}
+                    title={capaActiva.bloqueada ? "Desbloquear esta capa" : "Bloquear esta capa"}
+                    aria-label={capaActiva.bloqueada ? "Desbloquear esta capa" : "Bloquear esta capa"}>
+                    {capaActiva.bloqueada ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+                  </button>
+                )}
+              </div>
             <div
               ref={caja}
               // «touch-none» es lo que hace que en el móvil se pueda arrastrar:
               // sin ello el navegador se queda el gesto para desplazar la página
               // y el dedo no mueve nada.
-              className={`touch-none overflow-hidden rounded-lg border border-border bg-black ${
+              className={`z-20 touch-none overflow-hidden rounded-lg border border-border bg-black shadow-lg shadow-black/40 sm:sticky sm:top-12 ${
                 enSecuencia ? "" : arrastrando ? "cursor-grabbing" : "cursor-grab"
               }`}
               // Colocar la cámara a mano: se arrastra la escena y cada capa se
@@ -1008,6 +1056,86 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
                     className={`h-1 rounded-full ${enSecuencia && i === pasoActivo ? "bg-brand" : i < pasoActivo ? "bg-accent/50" : "bg-border"}`}
                   />
                 ))}
+              </div>
+            )}
+            </div>
+
+            {capaActiva && (
+              <div className={`space-y-2 rounded-lg border p-2 ${
+                capaActiva.bloqueada ? "border-gold/50 bg-gold/5" : "border-accent/35 bg-accent/5"
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold">{capaActiva.nombre}</p>
+                    <p className="text-[9px] text-muted">
+                      Capa {indiceActivo + 1} de {capas.length} · {indiceActivo === 0 ? "al fondo" : indiceActivo === capas.length - 1 ? "al frente" : "entre otras capas"}
+                    </p>
+                  </div>
+                  {capaActiva.bloqueada && <span className="chip bg-gold/15 text-[9px] text-gold">bloqueada</span>}
+                  <button type="button" onClick={() => upd(capaActiva.id, { bloqueada: !capaActiva.bloqueada })}
+                    className="btn-ghost px-2 py-1 text-[10px]">
+                    {capaActiva.bloqueada ? <LockOpen className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+                    {capaActiva.bloqueada ? "Desbloquear" : "Bloquear"}
+                  </button>
+                </div>
+
+                <fieldset disabled={!!capaActiva.bloqueada} className="space-y-2 disabled:opacity-60">
+                  <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+                    <button type="button" onClick={() => moverAlExtremo(capaActiva.id, "fondo")}
+                      disabled={indiceActivo === 0} className="btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-25"
+                      title="Enviar detrás de todas"><ChevronsUp className="h-3 w-3" /> Al fondo</button>
+                    <button type="button" onClick={() => mover(indiceActivo, -1)} disabled={indiceActivo <= 0}
+                      className="btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-25">
+                      <ChevronUp className="h-3 w-3" /> Detrás</button>
+                    <button type="button" onClick={() => mover(indiceActivo, 1)} disabled={indiceActivo >= capas.length - 1}
+                      className="btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-25">
+                      <ChevronDown className="h-3 w-3" /> Delante</button>
+                    <button type="button" onClick={() => moverAlExtremo(capaActiva.id, "frente")}
+                      disabled={indiceActivo === capas.length - 1} className="btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-25"
+                      title="Enviar delante de todas"><ChevronsDown className="h-3 w-3" /> Al frente</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => upd(capaActiva.id, { visible: !capaActiva.visible })}
+                      className="btn-ghost px-2 py-1 text-[10px]">
+                      {capaActiva.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                      {capaActiva.visible ? "Visible" : "Oculta"}
+                    </button>
+                    <button type="button" onClick={() => eliminarCapa(capaActiva.id)}
+                      className="btn-ghost ml-auto px-2 py-1 text-[10px] text-danger">
+                      <Trash2 className="h-3.5 w-3.5" /> Borrar capa
+                    </button>
+                  </div>
+                  {capaActiva.via && (
+                    <p className={`text-[10px] ${capaActiva.via === "opaca" && indiceActivo > 0 ? "text-gold" : "text-muted"}`}>
+                      {capaActiva.via === "transparente" && "Vino con transparencia"}
+                      {capaActiva.via === "croma" && "Se le quitó el color de fondo"}
+                      {capaActiva.via === "opaca" && (indiceActivo === 0 ? "Fondo opaco" : "Opaca: tapará las capas de atrás")}
+                      {typeof capaActiva.vacio === "number" ? ` · ${Math.round(capaActiva.vacio * 100)}% vacío` : ""}
+                    </p>
+                  )}
+                  <div className="grid gap-1 sm:grid-cols-3">
+                    <Barra etiqueta="Profundidad" valor={capaActiva.depth} max={1} paso={0.01}
+                      onCambio={(v) => upd(capaActiva.id, { depth: v })} formato={(v) => v.toFixed(2)} />
+                    <Barra etiqueta="Zoom capa" valor={capaActiva.escala} min={1} max={1.4} paso={0.01}
+                      onCambio={(v) => upd(capaActiva.id, { escala: v })} formato={(v) => `${Math.round((v - 1) * 100)}%`} />
+                    <Barra etiqueta="Opacidad" valor={capaActiva.opacidad} max={1} paso={0.01}
+                      onCambio={(v) => upd(capaActiva.id, { opacidad: v })} formato={(v) => `${Math.round(v * 100)}%`} />
+                  </div>
+                  {capaActiva.spr && (
+                    <MandosSprite
+                      spr={capaActiva.spr}
+                      mov={capaActiva.mov}
+                      onSpr={(p) => upd(capaActiva.id, { spr: { ...capaActiva.spr!, ...p } })}
+                      onMov={(m) => upd(capaActiva.id, { mov: m })}
+                      corriendo={spriteCorriendo(capaActiva.id)}
+                      rutaVisible={rutaVisibleId === capaActiva.id}
+                      onReproducir={() => reproducirSprite(capaActiva.id)}
+                      onPausar={() => pausarSprite(capaActiva.id)}
+                      onReiniciar={() => reiniciarSprite(capaActiva.id)}
+                      onRutaVisible={(visible) => setRutaVisibleId(visible ? capaActiva.id : null)}
+                    />
+                  )}
+                </fieldset>
               </div>
             )}
             {/* Colocar la toma a mano. Aquí y no abajo del todo porque se usa
@@ -1560,8 +1688,8 @@ function Num({ etiqueta, valor, min, max, paso, onCambio, disabled, sufijo, anch
 /** Dibuja A, destinos, pausas y posición viva sin contaminar ninguna exportación. */
 function pintarGuiaRuta(c: CanvasRenderingContext2D, spr: SpriteEnCapa, plano: Plano, tiempo: number) {
   if (!spr.trayectoria && !spr.ruta?.pasos.length) return;
-  const puntos: { x: number; y: number; etiqueta: string; pausas: number[] }[] = [
-    { x: spr.x, y: spr.y, etiqueta: "A", pausas: [] },
+  const puntos: { x: number; y: number; etiqueta: string; pausas: number[]; giros: number }[] = [
+    { x: spr.x, y: spr.y, etiqueta: "A", pausas: [], giros: 0 },
   ];
   if (spr.ruta?.pasos.length) {
     spr.ruta.pasos.forEach((paso, i) => {
@@ -1572,13 +1700,16 @@ function pintarGuiaRuta(c: CanvasRenderingContext2D, spr: SpriteEnCapa, plano: P
           y: paso.y ?? previo.y,
           etiqueta: String(i + 1),
           pausas: [],
+          giros: 0,
         });
-      } else {
+      } else if (paso.tipo === "pausa") {
         puntos[puntos.length - 1].pausas.push(paso.segundos);
+      } else {
+        puntos[puntos.length - 1].giros++;
       }
     });
   } else if (spr.trayectoria) {
-    puntos.push({ x: spr.trayectoria.x, y: spr.trayectoria.y, etiqueta: "B", pausas: [] });
+    puntos.push({ x: spr.trayectoria.x, y: spr.trayectoria.y, etiqueta: "B", pausas: [], giros: 0 });
   }
 
   const px = (x: number) => plano.x0 + x * plano.w;
@@ -1623,12 +1754,14 @@ function pintarGuiaRuta(c: CanvasRenderingContext2D, spr: SpriteEnCapa, plano: P
     c.stroke();
     c.fillStyle = "#ccfbf1";
     c.fillText(p.etiqueta, x, y + 0.5 * u);
-    if (p.pausas.length) {
+    if (p.pausas.length || p.giros) {
+      const nota = `${p.giros ? "↔ " : ""}${p.pausas.length ? `⏸ ${p.pausas.reduce((a, b) => a + b, 0).toFixed(1)}s` : ""}`.trim();
+      const ancho = Math.max(28, nota.length * 6.5) * u;
       c.fillStyle = "rgba(7,20,21,.9)";
-      c.fillRect(x + 11 * u, y - 10 * u, 44 * u, 17 * u);
+      c.fillRect(x + 11 * u, y - 10 * u, ancho, 17 * u);
       c.fillStyle = "#fbbf24";
       c.textAlign = "left";
-      c.fillText(`⏸ ${p.pausas.reduce((a, b) => a + b, 0).toFixed(1)}s`, x + 14 * u, y - 1 * u);
+      c.fillText(nota, x + 14 * u, y - 1 * u);
       c.textAlign = "center";
     }
   }
@@ -1668,17 +1801,13 @@ function Barra({ etiqueta, valor, min = 0, max, paso, onCambio, formato }: {
  * otro. Los demás movimientos se afinan luego, con el resto de la escena.
  */
 function MandosSprite({
-  spr, mov, onSpr, onMov, onAtras, onAdelante, puedeAtras, puedeAdelante,
+  spr, mov, onSpr, onMov,
   corriendo, rutaVisible, onReproducir, onPausar, onReiniciar, onRutaVisible,
 }: {
   spr: SpriteEnCapa;
   mov?: MovCapa;
   onSpr: (p: Partial<SpriteEnCapa>) => void;
   onMov: (m: MovCapa | undefined) => void;
-  onAtras: () => void;
-  onAdelante: () => void;
-  puedeAtras: boolean;
-  puedeAdelante: boolean;
   corriendo: boolean;
   rutaVisible: boolean;
   onReproducir: () => void;
@@ -1690,11 +1819,15 @@ function MandosSprite({
   const [pasoAbierto, setPasoAbierto] = useState<number | null>(0);
 
   function guardarPasos(pasos: PasoRutaSprite[]) {
-    onSpr({ ruta: { ...spr.ruta!, pasos } });
+    onSpr({ ruta: { ...spr.ruta!, pasos: pasos.slice(0, 24) } });
   }
 
   function cambiarPaso(i: number, patch: Partial<PasoRutaSprite>) {
     guardarPasos(spr.ruta!.pasos.map((p, j) => (i === j ? { ...p, ...patch } : p)));
+  }
+
+  function reemplazarPaso(i: number, paso: PasoRutaSprite) {
+    guardarPasos(spr.ruta!.pasos.map((p, j) => (i === j ? paso : p)));
   }
 
   function moverPaso(i: number, d: -1 | 1) {
@@ -1753,8 +1886,9 @@ function MandosSprite({
           bucle: true,
           pasos: [
             { tipo: "mover", x: bx, y: spr.y, segundos: 4, espejo: bx < spr.x },
-            { tipo: "pausa", segundos: 1, espejo: bx < spr.x },
-            { tipo: "mover", x: spr.x, y: spr.y, segundos: 4, espejo: bx >= spr.x },
+            { tipo: "pausa", segundos: 1 },
+            { tipo: "voltear", segundos: 0.1 },
+            { tipo: "mover", x: spr.x, y: spr.y, segundos: 4 },
           ],
         },
       });
@@ -1841,7 +1975,7 @@ function MandosSprite({
         >
           <option value="">— quieto en su sitio —</option>
           <option value="trayectoria">Punto A → punto B</option>
-          <option value="ruta">Ruta por pasos · mover, pausar y volver</option>
+          <option value="ruta">Secuencia encadenada · videojuego</option>
           {MOVS_CAPA.map((m) => (
             <option key={m.id} value={m.id}>{m.label}</option>
           ))}
@@ -1905,8 +2039,8 @@ function MandosSprite({
       {spr.ruta && (
         <div className="space-y-1.5 rounded border border-accent/30 bg-surface/40 p-1.5">
           <div className="flex items-center gap-1">
-            <span className="text-[9px] font-medium text-fg">Ruta por pasos</span>
-            <span className="ml-auto text-[8px] text-muted">A es la posición inicial</span>
+            <span className="text-[9px] font-medium text-fg">Secuencia encadenada</span>
+            <span className="ml-auto text-[8px] text-muted">mover · esperar · voltear</span>
           </div>
           {spr.ruta.pasos.map((paso, i) => (
             <div key={i} className="space-y-1 rounded border border-border/70 bg-surface-2/45 p-1">
@@ -1917,12 +2051,14 @@ function MandosSprite({
                   value={paso.tipo}
                   onChange={(e) => {
                     const tipo = e.target.value as PasoRutaSprite["tipo"];
-                    if (tipo === "pausa") cambiarPaso(i, { tipo: "pausa" });
-                    else cambiarPaso(i, { tipo: "mover", ...destinoAntes(i) });
+                    if (tipo === "mover") reemplazarPaso(i, { tipo, ...destinoAntes(i), segundos: 2 });
+                    else if (tipo === "pausa") reemplazarPaso(i, { tipo, segundos: 1 });
+                    else reemplazarPaso(i, { tipo, segundos: 0.1 });
                   }}
                 >
                   <option value="mover">Mover a un punto</option>
                   <option value="pausa">Detenerse aquí</option>
+                  <option value="voltear">Darse la vuelta</option>
                 </select>
                 <button type="button" onClick={() => moverPaso(i, -1)} disabled={i === 0}
                   className="rounded border border-border p-0.5 text-muted disabled:opacity-25" aria-label="Subir paso">
@@ -1953,14 +2089,27 @@ function MandosSprite({
                         onCambio={(v) => cambiarPaso(i, { y: v })} formato={(v) => v.toFixed(2)} />
                     </>
                   )}
-                  <Barra etiqueta={paso.tipo === "mover" ? "Duración" : "Espera"}
-                    valor={paso.segundos} min={0.1} max={120} paso={0.1}
-                    onCambio={(v) => cambiarPaso(i, { segundos: v })} formato={(v) => `${v.toFixed(1)}s`} />
-                  <label className="flex items-center gap-1 text-[8px] text-muted">
-                    <input type="checkbox" checked={paso.espejo ?? spr.espejo ?? false}
-                      onChange={(e) => cambiarPaso(i, { espejo: e.target.checked })} />
-                    Mirar al lado contrario durante este paso
-                  </label>
+                  {paso.tipo !== "voltear" ? (
+                    <>
+                      <Barra etiqueta={paso.tipo === "mover" ? "Duración" : "Espera"}
+                        valor={paso.segundos} min={0.1} max={120} paso={0.1}
+                        onCambio={(v) => cambiarPaso(i, { segundos: v })} formato={(v) => `${v.toFixed(1)}s`} />
+                      <label className="flex items-center gap-1 text-[8px] text-muted">
+                        <span>Sentido</span>
+                        <select className="input min-w-0 flex-1 py-0.5 text-[8px]"
+                          value={typeof paso.espejo === "boolean" ? (paso.espejo ? "invertido" : "normal") : "conservar"}
+                          onChange={(e) => cambiarPaso(i, {
+                            espejo: e.target.value === "conservar" ? undefined : e.target.value === "invertido",
+                          })}>
+                          <option value="conservar">Conservar el paso anterior</option>
+                          <option value="normal">Orientación original</option>
+                          <option value="invertido">Orientación invertida</option>
+                        </select>
+                      </label>
+                    </>
+                  ) : (
+                    <p className="text-[8px] text-muted">Invierte el sentido en este punto y los pasos siguientes lo conservan.</p>
+                  )}
                 </div>
               )}
             </div>
@@ -1978,6 +2127,11 @@ function MandosSprite({
               ...spr.ruta!.pasos, { tipo: "pausa", segundos: 1 },
             ])} className="btn-ghost px-1.5 py-0.5 text-[8px]">
               <Plus className="h-3 w-3" /> Pausa
+            </button>
+            <button type="button" onClick={() => guardarPasos([
+              ...spr.ruta!.pasos, { tipo: "voltear", segundos: 0.1 },
+            ])} className="btn-ghost px-1.5 py-0.5 text-[8px]">
+              <Plus className="h-3 w-3" /> Giro
             </button>
             <label className="ml-auto flex items-center gap-1 text-[8px] text-muted">
               <input type="checkbox" checked={!!spr.ruta.bucle}
@@ -2013,17 +2167,6 @@ function MandosSprite({
             onCambio={(v) => onMov({ ...mov, segundos: v })} formato={(v) => `${v.toFixed(1)}s`} />
         </div>
       )}
-      <div className="flex items-center gap-1 border-t border-border/60 pt-1 text-[9px] text-muted">
-        <span>Orden: quién lo tapa</span>
-        <button type="button" onClick={onAtras} disabled={!puedeAtras}
-          className="ml-auto rounded border border-border px-1.5 py-0.5 hover:text-fg disabled:opacity-30">
-          ↑ detrás
-        </button>
-        <button type="button" onClick={onAdelante} disabled={!puedeAdelante}
-          className="rounded border border-border px-1.5 py-0.5 hover:text-fg disabled:opacity-30">
-          ↓ delante
-        </button>
-      </div>
     </div>
   );
 }
