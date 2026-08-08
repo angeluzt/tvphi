@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Loader2, Sparkles, Download, AlertTriangle, Play, Pause } from "lucide-react";
-import { pedirJsonCrudo } from "@/lib/pedir-json";
-import { cortarHoja, nombreSprite, type Fotograma } from "@/lib/lab/sprites";
+import { useState } from "react";
+import {
+  Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check,
+} from "lucide-react";
+import { pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
+import { cortarHoja, nombreSprite, tiraDeFotogramas, type Fotograma } from "@/lib/lab/sprites";
 import { zip, bajar } from "@/lib/lab/exportar";
+import { VistaSprite } from "./vista-sprite";
+import { pesoLegible, type SpriteMeta } from "@/lib/lab/biblioteca";
 
 // Fabricar un sprite animado: un bicho, varios fotogramas, fondo fuera.
 //
@@ -13,6 +17,9 @@ import { zip, bajar } from "@/lib/lab/exportar";
 // porque cada llamada empieza de cero; en una sola, el modelo los ve todos a la
 // vez y los hace del mismo bicho. En calidad baja, un pájaro aleteando cuesta
 // lo mismo que una imagen suelta: $0.005, y se reutiliza para siempre.
+//
+// Y «para siempre» solo es verdad si se guarda. De ahí el botón de la
+// biblioteca: un ZIP bajado se pierde, y desde el móvil ni se baja.
 
 const IDEAS = [
   "bird flying, wings flapping",
@@ -27,21 +34,35 @@ const IDEAS = [
   "flag waving in the wind",
 ];
 
-export function GenerarSprite() {
+/** Lo que queda tras cortar la hoja: los fotogramas y la tira ya pegada. */
+interface Hecho {
+  fotos: Fotograma[];
+  /** La tira, para verla y para guardarla. */
+  url: string;
+  blob: Blob;
+  ancho: number;
+  alto: number;
+  descartados: number;
+}
+
+export function GenerarSprite({ onGuardado }: { onGuardado?: (s: SpriteMeta) => void }) {
   const [que, setQue] = useState("");
   const [n, setN] = useState(6);
   const [forma, setForma] = useState<"tira" | "columna">("tira");
   const [calidad, setCalidad] = useState<"low" | "medium" | "high">("low");
   const [paso, setPaso] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fotos, setFotos] = useState<Fotograma[]>([]);
+  const [hecho, setHecho] = useState<Hecho | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [fps, setFps] = useState(10);
   const [andando, setAndando] = useState(true);
+  const [nombre, setNombre] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
 
   async function generar() {
     if (que.trim().length < 3) return;
-    setError(null); setAviso(null); setFotos([]);
+    setError(null); setAviso(null); setHecho(null); setGuardado(false);
     setPaso("Dibujando la hoja…");
     try {
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/sprite", {
@@ -63,12 +84,25 @@ export function GenerarSprite() {
           + "Vuelve a intentarlo, o pide algo con una silueta más clara.",
         );
       }
-      setFotos(hoja.fotogramas);
+
+      // La tira se compone AQUÍ, nada más cortar, y es lo único que se enseña y
+      // se guarda a partir de este punto: así lo que se ve en la vista previa
+      // es exactamente lo que quedará en la biblioteca, byte a byte.
+      const tira = await tiraDeFotogramas(hoja.fotogramas);
+      setHecho({
+        fotos: hoja.fotogramas,
+        url: URL.createObjectURL(tira.blob),
+        blob: tira.blob,
+        ancho: tira.ancho,
+        alto: tira.alto,
+        descartados: hoja.descartados,
+      });
+      setNombre(nombreSprite(que));
       setPaso(null);
       setAviso(
         `${hoja.fotogramas.length} fotogramas listos`
         + (hoja.descartados ? ` · ${hoja.descartados} salieron vacíos y se tiraron` : "")
-        + ` · ${hoja.fotogramas[0].ancho}×${hoja.fotogramas[0].alto}`,
+        + ` · ${tira.ancho}×${tira.alto} · ${pesoLegible(tira.blob.size)}`,
       );
     } catch (e) {
       setError((e as Error).message);
@@ -76,9 +110,43 @@ export function GenerarSprite() {
     }
   }
 
+  async function guardar() {
+    if (!hecho || guardando) return;
+    setGuardando(true);
+    setError(null);
+    try {
+      const b64 = await new Promise<string>((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result).replace(/^data:[^,]+,/, ""));
+        fr.onerror = () => rej(new Error("No se pudo leer la tira."));
+        fr.readAsDataURL(hecho.blob);
+      });
+      const j = await pedirJson("/api/story/lab/sprites", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre: nombre.trim() || nombreSprite(que),
+          que: que.trim(),
+          fotogramas: hecho.fotos.length,
+          fps,
+          ancho: hecho.ancho,
+          alto: hecho.alto,
+          tira: b64,
+        }),
+      });
+      setGuardado(true);
+      setAviso("Guardado en la biblioteca. Ya se puede usar en cualquier montaje.");
+      if (j?.sprite) onGuardado?.(j.sprite as SpriteMeta);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
   async function descargar() {
-    if (!fotos.length) return;
-    const base = nombreSprite(que);
+    if (!hecho) return;
+    const base = nombreSprite(nombre || que);
+    const fotos = hecho.fotos;
     const archivos: { nombre: string; datos: Uint8Array<ArrayBuffer> }[] = [];
     for (let i = 0; i < fotos.length; i++) {
       const b = await (await fetch(fotos[i].url)).arrayBuffer();
@@ -88,10 +156,14 @@ export function GenerarSprite() {
       });
     }
     archivos.push({
+      nombre: `tira-${base}.png`,
+      datos: new Uint8Array(await hecho.blob.arrayBuffer()),
+    });
+    archivos.push({
       nombre: "sprite.json",
       datos: new TextEncoder().encode(JSON.stringify({
         version: 1, nombre: base, que, fotogramas: fotos.length, fps,
-        ancho: fotos[0].ancho, alto: fotos[0].alto,
+        ancho: hecho.ancho, alto: hecho.alto,
       }, null, 2)),
     });
     archivos.push({
@@ -99,6 +171,7 @@ export function GenerarSprite() {
       datos: new TextEncoder().encode(
         `Sprite «${base}» (${fotos.length} fotogramas, ${fps} por segundo).\n`
         + "PNG con transparencia, todos del mismo tamaño y alineados entre sí.\n"
+        + "«tira-…png» los lleva a todos en fila, que es como los guarda la app.\n"
         + "Hechos con el laboratorio de TVPHI en una sola llamada, para poder reutilizarlos.\n",
       ),
     });
@@ -113,7 +186,7 @@ export function GenerarSprite() {
           <span className="block text-sm font-semibold text-fg">Fabricar un sprite animado</span>
           <span className="block text-[11px] text-muted">
             Los fotogramas salen en UNA sola imagen, así que un pájaro aleteando cuesta lo mismo
-            que una imagen suelta. Se paga una vez y se reutiliza en todos los videos.
+            que una imagen suelta. Guárdalo en la biblioteca y ya no se vuelve a pagar.
           </span>
         </span>
       </div>
@@ -179,10 +252,10 @@ export function GenerarSprite() {
       )}
       {aviso && <p className="text-[11px] text-accent">{aviso}</p>}
 
-      {!!fotos.length && (
+      {hecho && (
         <>
           <div className="flex flex-wrap items-center gap-3">
-            <Vista fotos={fotos} fps={fps} andando={andando} />
+            <VistaSprite tira={hecho.url} fotogramas={hecho.fotos.length} fps={fps} andando={andando} />
             <div className="min-w-0 flex-1 space-y-2">
               <label className="block">
                 <span className="text-xs text-muted">Velocidad: {fps} por segundo</span>
@@ -201,9 +274,35 @@ export function GenerarSprite() {
             </div>
           </div>
 
+          {/* Guardarlo es el paso que hace que todo esto valga la pena: la
+              velocidad que se elija arriba se guarda con él, así que el sprite
+              ya llega al montaje andando como debe. */}
+          <div className="flex flex-wrap items-end gap-2 rounded-lg border border-accent/30 bg-accent/5 p-2">
+            <label className="min-w-[10rem] flex-1">
+              <span className="text-[11px] text-muted">Nombre en la biblioteca</span>
+              <input
+                className="input mt-0.5 w-full py-1 text-xs"
+                value={nombre}
+                maxLength={60}
+                onChange={(e) => { setNombre(e.target.value); setGuardado(false); }}
+                aria-label="Nombre en la biblioteca"
+              />
+            </label>
+            <button
+              onClick={() => void guardar()}
+              disabled={guardando || guardado || !nombre.trim()}
+              className="btn-brand text-xs disabled:opacity-40"
+            >
+              {guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : guardado ? <Check className="h-3.5 w-3.5" />
+                  : <Library className="h-3.5 w-3.5" />}
+              {guardado ? "Guardado" : "Guardar en la biblioteca"}
+            </button>
+          </div>
+
           {/* La tira, para ver de un vistazo si algún fotograma salió mal. */}
           <div className="flex gap-1 overflow-x-auto rounded-lg border border-border bg-surface-2/40 p-2">
-            {fotos.map((f, i) => (
+            {hecho.fotos.map((f, i) => (
               <span key={i} className="relative shrink-0">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={f.url} alt={`fotograma ${i + 1}`} className="h-16 w-auto" />
@@ -216,57 +315,5 @@ export function GenerarSprite() {
         </>
       )}
     </div>
-  );
-}
-
-/** El sprite en marcha, sobre un tablero de ajedrez para ver la transparencia. */
-function Vista({ fotos, fps, andando }: { fotos: Fotograma[]; fps: number; andando: boolean }) {
-  const [i, setI] = useState(0);
-  const imgs = useRef<HTMLImageElement[]>([]);
-  const lienzo = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    let vivo = true;
-    Promise.all(fotos.map((f) => new Promise<HTMLImageElement>((res) => {
-      const im = new Image();
-      im.onload = () => res(im);
-      im.src = f.url;
-    }))).then((cargadas) => { if (vivo) imgs.current = cargadas; });
-    return () => { vivo = false; };
-  }, [fotos]);
-
-  useEffect(() => {
-    if (!andando || fotos.length < 2) return;
-    const t = setInterval(() => setI((v) => (v + 1) % fotos.length), 1000 / Math.max(1, fps));
-    return () => clearInterval(t);
-  }, [andando, fps, fotos.length]);
-
-  useEffect(() => {
-    const cv = lienzo.current;
-    const im = imgs.current[i];
-    if (!cv || !im) return;
-    const c = cv.getContext("2d")!;
-    c.clearRect(0, 0, cv.width, cv.height);
-    // Tablero: sin él, un sprite oscuro sobre fondo oscuro parece que no está.
-    const p = 8;
-    for (let y = 0; y < cv.height; y += p) {
-      for (let x = 0; x < cv.width; x += p) {
-        c.fillStyle = ((x / p + y / p) % 2 === 0) ? "#171d20" : "#0f1416";
-        c.fillRect(x, y, p, p);
-      }
-    }
-    const e = Math.min(cv.width / im.naturalWidth, cv.height / im.naturalHeight);
-    const w = im.naturalWidth * e, h = im.naturalHeight * e;
-    c.drawImage(im, (cv.width - w) / 2, (cv.height - h) / 2, w, h);
-  }, [i, fotos]);
-
-  return (
-    <canvas
-      ref={lienzo}
-      width={160}
-      height={160}
-      className="shrink-0 rounded-lg border border-border"
-      aria-label="Vista previa del sprite"
-    />
   );
 }

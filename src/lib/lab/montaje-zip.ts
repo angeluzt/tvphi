@@ -25,6 +25,14 @@ export type CapaMontajeMeta = {
   vacio?: number;
   /** Movimiento propio de la capa, si lo tiene. */
   mov?: unknown;
+  /**
+   * Si la capa es un sprite de la biblioteca: cómo leer su PNG.
+   *
+   * El archivo que se guarda es la TIRA entera —los N fotogramas en fila—, así
+   * que sin esto el ZIP contendría una imagen larguísima con doce pájaros y al
+   * reimportarla se pintaría tal cual. Es lo que dice dónde cortar.
+   */
+  spr?: unknown;
 };
 
 export type MontajePack = {
@@ -74,6 +82,7 @@ export async function bajarMontajeZip(opts: {
     via?: CapaMontajeMeta["via"];
     vacio?: number;
     mov?: unknown;
+    spr?: unknown;
     img: HTMLImageElement;
   }[];
 }) {
@@ -93,6 +102,7 @@ export async function bajarMontajeZip(opts: {
       via: c.via,
       vacio: c.vacio,
       mov: c.mov,
+      spr: c.spr,
     });
   }
 
@@ -134,6 +144,7 @@ export type CapaImportada = {
   via?: CapaMontajeMeta["via"];
   vacio?: number;
   mov?: unknown;
+  spr?: unknown;
   url: string;
 };
 
@@ -181,6 +192,7 @@ export async function leerMontajeZip(file: Blob): Promise<{
         via: m.via,
         vacio: m.vacio,
         mov: m.mov,
+        spr: m.spr,
         url,
       });
     }

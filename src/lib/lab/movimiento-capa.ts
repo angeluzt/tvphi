@@ -12,8 +12,9 @@
 // un sticker pegado encima.
 //
 // LO QUE ESTO NO ES. No anima el CONTENIDO de la imagen: el pájaro se desplaza,
-// pero no bate las alas. Para eso harían falta varios fotogramas dibujados, que
-// es otra cosa y cuesta una imagen por fotograma.
+// pero no bate las alas. Para eso están los sprites de la biblioteca, que
+// llevan sus fotogramas dentro (ver sprite-capa.ts) y usan ESTE mismo
+// movimiento para cruzar el cuadro mientras aletean.
 
 export type TipoMovCapa = "deriva" | "flotar" | "vaiven" | "pulso";
 
@@ -139,6 +140,6 @@ export function reglasMovimientoCapa() {
     "«flotar» es para lo que se apoya en agua o cuelga; «vaiven» para ramas, hierba o telas; «pulso» para un resplandor.",
     "No le pongas movimiento al fondo ni al suelo: si se despega, se ve el borde y se rompe la escena.",
     "Dos capas con el mismo «segundos» se mecen a la vez y parecen una sola. Usa «desfase» distinto en cada una.",
-    "El movimiento NO anima el dibujo: el pájaro se desplaza pero no bate las alas. Descríbelo ya en vuelo, con las alas abiertas.",
+    "El movimiento NO anima el dibujo de una capa normal: el pájaro se desplaza pero no bate las alas. Descríbelo ya en vuelo, con las alas abiertas. (Los sprites de la biblioteca sí baten: llevan sus fotogramas dentro.)",
   ];
 }

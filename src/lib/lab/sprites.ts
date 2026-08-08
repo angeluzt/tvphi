@@ -154,6 +154,46 @@ export async function cortarHoja(opts: {
   return { fotogramas, descartados, color };
 }
 
+/**
+ * Pega los fotogramas en fila, en un solo PNG con transparencia.
+ *
+ * Es lo que se guarda en la biblioteca, y no la hoja original, por dos
+ * razones. Una: la hoja lleva el magenta puesto, así que habría que repetir el
+ * recorte en cada carga —y el recorte tiene umbrales, o sea que la misma hoja
+ * podría dar fotogramas distintos el día que se toque uno—. Y dos: al pintar,
+ * una tira se dibuja por trozos con un `drawImage` de seis argumentos, sin
+ * partir nada y sin gastar memoria en N imágenes sueltas.
+ *
+ * Los fotogramas ya vienen todos del mismo tamaño porque se recortaron con una
+ * caja común, así que la tira es exactamente `n × ancho`.
+ */
+export async function tiraDeFotogramas(fotos: Fotograma[]): Promise<{
+  blob: Blob;
+  ancho: number;
+  alto: number;
+  fotogramas: number;
+}> {
+  if (!fotos.length) throw new Error("No hay fotogramas que pegar.");
+  const imgs = await Promise.all(fotos.map((f) => cargarImagen(f.url)));
+  const ancho = imgs[0].naturalWidth;
+  const alto = imgs[0].naturalHeight;
+  const cv = lienzo(ancho * imgs.length, alto);
+  const c = cv.getContext("2d")!;
+  // Si alguno viniera con otro tamaño, se centra en su celda en vez de
+  // deformarlo: estirar un fotograma para que cuadre es justo lo que hace que
+  // la animación palpite.
+  imgs.forEach((im, i) => {
+    c.drawImage(
+      im,
+      i * ancho + Math.round((ancho - im.naturalWidth) / 2),
+      Math.round((alto - im.naturalHeight) / 2),
+    );
+  });
+  const blob = await new Promise<Blob | null>((r) => cv.toBlob(r, "image/png"));
+  if (!blob) throw new Error("No se pudo componer la tira.");
+  return { blob, ancho, alto, fotogramas: imgs.length };
+}
+
 /** Nombre de archivo para un sprite, a partir de lo que se pidió. */
 export const nombreSprite = (que: string) =>
   (que || "sprite").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
