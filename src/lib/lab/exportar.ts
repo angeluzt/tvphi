@@ -5,11 +5,17 @@ import { PALETA, SEMANTICO_LABEL, nombreArchivo } from "./escena";
 import { dibujarEscena } from "./dibujar";
 
 /** Un PNG de la escena, o solo de algunas capas, al tamaño real. */
-export function lienzoDeCapas(esc: Escena, capas: string[] | null, transparente: boolean, etiquetas: boolean) {
+export function lienzoDeCapas(
+  esc: Escena,
+  capas: string[] | null,
+  transparente: boolean,
+  etiquetas: boolean,
+  fondoMapa?: string,
+) {
   const cv = document.createElement("canvas");
   cv.width = esc.scene.width;
   cv.height = esc.scene.height;
-  dibujarEscena(cv, esc, { capas: capas ?? undefined, transparente, etiquetas });
+  dibujarEscena(cv, esc, { capas: capas ?? undefined, transparente, etiquetas, fondoMapa });
   return cv;
 }
 

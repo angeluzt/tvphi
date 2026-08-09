@@ -72,6 +72,8 @@ LA ANIMACIÓN Y LOS EFECTOS
 REGLAS DE LAS CAPAS
 - De atrás hacia delante. La PRIMERA es el fondo: cubre el cuadro entero y es opaca.
 - Las demás llevan solo lo suyo y van sobre fondo transparente.
+- No elijas un color de croma, magenta o fucsia como mapBackground. Ese color
+  queda reservado exclusivamente para recortar capas y nunca forma parte del arte.
 - "depth" reparte la profundidad: la del fondo cerca de 0.05, la de delante cerca de 0.95.
 - Nunca pongas en una capa que no sea la primera una forma que cubra todo el cuadro:
   esa capa saldría sin transparencia y taparía las de atrás. Lo que ocupa todo se
@@ -259,7 +261,14 @@ export async function POST(req: Request) {
     // cuando se pidió vertical, las capas no encajarían con lo que luego se
     // genera, y eso solo se descubre al apilarlas.
     const d = data as any;
-    if (d?.scene) { d.scene.width = w; d.scene.height = h; }
+    if (d?.scene) {
+      d.scene.width = w;
+      d.scene.height = h;
+      // mapBackground solo pinta el MAPA semántico, no la escena terminada. Se
+      // fija a un neutro para que una ocurrencia del director no mande una guía
+      // magenta al modelo de imagen y este la confunda con cielo real.
+      d.scene.mapBackground = "#101522";
+    }
 
     const revisado = revisar(d);
     if ("error" in revisado) {
