@@ -37,10 +37,12 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
     const urls = esc.layers
       .filter((c) => c.visible !== false)
       .map((c) => ({
+        id: c.id,
         nombre: c.name,
         url: lienzoDeCapas(esc, [c.id], true, false).toDataURL("image/png"),
         depth: c.depth,
         escala: 1 + c.depth * 0.12,
+        mov: c.mov,
       }));
     setSemilla(urls);
     setPestana("compositor");
@@ -154,6 +156,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
             const montaje: Semilla[] = [];
             for (const capa of cs) {
               montaje.push({
+                id: capa.id,
                 nombre: capa.nombre,
                 url: capa.url,
                 via: capa.via,
@@ -164,6 +167,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
               });
               const despues = (porCapa.get(capa.id) ?? []).sort((a, b) => a.depth - b.depth);
               despues.forEach((actor) => montaje.push({
+                id: actor.id,
                 nombre: actor.nombre,
                 url: actor.url,
                 depth: actor.depth,
@@ -176,6 +180,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
             // queda delante y se avisa visualmente en el editor para recolocarlo.
             for (const pendientes of porCapa.values()) {
               pendientes.forEach((actor) => montaje.push({
+                id: actor.id,
                 nombre: actor.nombre,
                 url: actor.url,
                 depth: actor.depth,

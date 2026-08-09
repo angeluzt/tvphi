@@ -16,18 +16,34 @@
 // llevan sus fotogramas dentro (ver sprite-capa.ts) y usan ESTE mismo
 // movimiento para cruzar el cuadro mientras aletean.
 
-export type TipoMovCapa = "deriva" | "flotar" | "vaiven" | "pulso";
+export type TipoMovCapa = "trayectoria" | "deriva" | "flotar" | "vaiven" | "pulso";
+export type EspacioMovCapa = "capa" | "pantalla";
+export type SuavizadoMovCapa = "lineal" | "suave";
 
 export interface MovCapa {
   tipo: TipoMovCapa;
   /**
-   * deriva: velocidad en ANCHOS (o altos) de pantalla por segundo.
+   * capa: el recorrido vive dentro del plano 2.5D y hereda zoom/paralaje.
+   * pantalla: la imagen completa ignora la cámara, como una sobreimpresión.
+   */
+  espacio?: EspacioMovCapa;
+  /** Capa física —vía, agua, pasarela— cuya profundidad debe heredar. */
+  referenciaCapaId?: string;
+  /**
+   * deriva: velocidad en ANCHOS (o altos) de su espacio por segundo.
    * 0.05 es una nube; 0.25, un pájaro; 1.2, un meteoro.
    */
   x?: number;
   y?: number;
+  /** trayectoria: punto A como desplazamiento desde la alineación generada. */
+  desdeX?: number;
+  desdeY?: number;
   /** deriva: al salir por un borde, vuelve a entrar por el contrario. */
   bucle?: boolean;
+  /** trayectoria: regresa suavemente de B a A en vez de saltar. */
+  volver?: boolean;
+  /** trayectoria: velocidad constante o aceleración/frenado suaves. */
+  suavizado?: SuavizadoMovCapa;
   /** flotar / vaiven / pulso: cuánto se aparta del sitio (0..1). */
   amplitud?: number;
   /** flotar / vaiven / pulso: lo que tarda un ciclo completo, en segundos. */
@@ -37,6 +53,7 @@ export interface MovCapa {
 }
 
 export const MOVS_CAPA: { id: TipoMovCapa; label: string; pista: string }[] = [
+  { id: "trayectoria", label: "Punto A → punto B", pista: "Recorrido exacto integrado al plano: un tren sobre su vía, una puerta o una plataforma" },
   { id: "deriva", label: "Se desplaza", pista: "Cruza el cuadro a velocidad constante: un pájaro, un barco, una nube, un meteoro" },
   { id: "flotar", label: "Flota", pista: "Sube y baja despacio: una barca en el agua, un farolillo" },
   { id: "vaiven", label: "Vaivén", pista: "Se mece de lado a lado: ramas, una cortina, hierba alta" },
@@ -62,7 +79,25 @@ export function normalizarMov(m: any): MovCapa | undefined {
   if (!MOVS_CAPA.some((o) => o.id === tipo)) return undefined;
 
   const base: MovCapa = { tipo };
-  if (tipo === "deriva") {
+  if (m.espacio === "pantalla") base.espacio = "pantalla";
+  else base.espacio = "capa";
+  if (typeof m.referenciaCapaId === "string" && m.referenciaCapaId.trim()) {
+    base.referenciaCapaId = m.referenciaCapaId.trim().slice(0, 80);
+    // Una referencia física y una capa fija a pantalla se contradicen. Gana la
+    // referencia: es la que evita que un tren se despegue de su vía al hacer zoom.
+    base.espacio = "capa";
+  }
+  if (tipo === "trayectoria") {
+    base.desdeX = acotar(num(m.desdeX, 0), -3, 3);
+    base.desdeY = acotar(num(m.desdeY, 0), -3, 3);
+    base.x = acotar(num(m.x, 0.5), -3, 3);
+    base.y = acotar(num(m.y, 0), -3, 3);
+    base.segundos = acotar(num(m.segundos, 4), 0.1, 120);
+    base.bucle = m.bucle === true;
+    base.volver = m.volver === true;
+    base.suavizado = m.suavizado === "lineal" ? "lineal" : "suave";
+    if (base.desdeX === base.x && base.desdeY === base.y) return undefined;
+  } else if (tipo === "deriva") {
     base.x = acotar(num(m.x, 0), -3, 3);
     base.y = acotar(num(m.y, 0), -3, 3);
     // Una deriva de cero no es un movimiento, es una capa quieta con ceremonia.
@@ -79,7 +114,7 @@ export function normalizarMov(m: any): MovCapa | undefined {
 }
 
 export interface Desplazamiento {
-  /** En anchos / altos de pantalla, ya listo para sumar al dibujo. */
+  /** En anchos / altos del espacio elegido; el compositor aplica la transformación. */
   dx: number;
   dy: number;
   /** Multiplicador de escala. 1 = tal cual. */
@@ -102,10 +137,30 @@ export function desplazamientoCapa(mov: MovCapa | undefined, t: number): Desplaz
       // El ciclo es DOS anchos, no uno: con uno, una capa que ocupa todo el
       // cuadro salta al reaparecer. Con dos y una copia detrás, entra por un
       // lado mientras la otra sale por el otro y no se ve el corte.
-      if (mov.x) dx = ((dx % 2) + 2) % 2 - 1;
-      if (mov.y) dy = ((dy % 2) + 2) % 2 - 1;
+      // El +1 conserva el fotograma cero en cero. Antes la fórmula arrancaba
+      // en −1: una capa recién reproducida comenzaba fuera del cuadro y podía
+      // tardar muchos segundos en aparecer.
+      if (mov.x) dx = ((((dx + 1) % 2) + 2) % 2) - 1;
+      if (mov.y) dy = ((((dy + 1) % 2) + 2) % 2) - 1;
     }
     return { dx, dy, escala: 1, repetir: mov.bucle !== false };
+  }
+
+  if (mov.tipo === "trayectoria") {
+    const dur = Math.max(0.1, mov.segundos ?? 4);
+    const idaYVuelta = mov.volver === true;
+    const total = dur * (idaYVuelta ? 2 : 1);
+    const tiempo = mov.bucle ? ((Math.max(0, t) % total) + total) % total : Math.min(Math.max(0, t), total);
+    let p = Math.min(1, tiempo / dur);
+    if (idaYVuelta && tiempo > dur) p = 1 - (tiempo - dur) / dur;
+    if ((mov.suavizado ?? "suave") === "suave") p = p * p * (3 - 2 * p);
+    const ax = mov.desdeX ?? 0, ay = mov.desdeY ?? 0;
+    return {
+      dx: ax + ((mov.x ?? 0) - ax) * p,
+      dy: ay + ((mov.y ?? 0) - ay) * p,
+      escala: 1,
+      repetir: false,
+    };
   }
 
   const w = (Math.PI * 2 * t) / (mov.segundos ?? 4) + fase;
@@ -125,15 +180,21 @@ export function movimientosCapaParaIA() {
   return MOVS_CAPA.map((m) => ({
     tipo: m.id,
     hace: m.pista,
-    campos: m.id === "deriva"
-      ? { x: "anchos de pantalla por segundo (−3..3)", y: "igual, en vertical", bucle: "reaparece por el otro lado (por defecto sí)" }
+    espacio: "capa = integrado al zoom/paralaje (por defecto); pantalla = sobreimpresión que ignora cámara",
+    referenciaCapaId: "id de la vía, agua o superficie física; obliga espacio capa y hereda su profundidad",
+    campos: m.id === "trayectoria"
+      ? { desdeX: "A horizontal (−3..3)", desdeY: "A vertical", x: "B horizontal", y: "B vertical", segundos: "duración A→B", volver: "regresa B→A", bucle: "repite", suavizado: "suave|lineal" }
+      : m.id === "deriva"
+      ? { x: "anchos de su plano por segundo (−3..3)", y: "igual, en vertical", bucle: "reaparece por el otro lado (por defecto sí)" }
       : { amplitud: "cuánto se aparta (0..0.5)", segundos: "lo que tarda un ciclo", desfase: "0..1, para desacompasar capas" },
   }));
 }
 
 export function reglasMovimientoCapa() {
   return [
-    "Una capa con «mov» se mueve SOLA, además de moverse con la cámara. Los sprites anclados al lienzo son la excepción: su ruta queda independiente de la cámara.",
+    "Una capa con «mov» se mueve SOLA. Usa espacio «capa» para que el recorrido se transforme junto con zoom/paralaje; «pantalla» solo para una sobreimpresión que debe ignorar la cámara.",
+    "Si el objeto se apoya en otra capa —tren sobre vía, barco sobre agua, puerta en muro— escribe referenciaCapaId con el id de esa capa. La aplicación igualará su profundidad para que no se despegue al mover la cámara.",
+    "Para un recorrido preciso usa «trayectoria»: A=(desdeX,desdeY), B=(x,y), segundos, suavizado; volver hace B→A y bucle repite.",
     "Para que algo cruce el cuadro —un pájaro, un barco, un meteoro, una nube— dale una capa PARA ÉL SOLO, con el resto transparente, y ponle «deriva».",
     "Velocidades que funcionan: nube 0.02, barco 0.04, pájaro 0.2, meteoro 1.5 (con «y» positivo para que caiga).",
     "«bucle» hace que reaparezca por el lado contrario: bien para nubes y pájaros de fondo, mal para un meteoro que debe pasar UNA vez.",

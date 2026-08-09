@@ -140,6 +140,14 @@ export function leerSpritesPlaneados(
     const fotogramas = biblioteca?.fotogramas
       ?? Math.round(acotar(numero(p.fotogramas, 6), 2, 12));
     const fps = biblioteca?.fps ?? Math.round(acotar(numero(p.fps, 10), 1, 60));
+    const ligadoASuperficie = !!superficie && (
+      anclaje === "pies"
+      || accion === "nadar"
+      || (accion === "flotar" && superficie.tipo === "agua")
+    );
+    if (ligadoASuperficie && p.espacio === "pantalla") {
+      avisos.push(`${baseNombre}: se fijó a su superficie para que el zoom/paralaje no lo despegue de ella.`);
+    }
     const normalizado = normalizarSprite({
       id: biblioteca?.id,
       fotogramas,
@@ -152,7 +160,7 @@ export function leerSpritesPlaneados(
       x: p.x,
       y: p.y,
       alto: p.alto,
-      espacio: p.espacio === "capa" ? "capa" : "pantalla",
+      espacio: ligadoASuperficie || p.espacio === "capa" ? "capa" : "pantalla",
       sincronizar: p.sincronizar !== false,
       espejo: p.espejo,
       ruta: p.ruta,

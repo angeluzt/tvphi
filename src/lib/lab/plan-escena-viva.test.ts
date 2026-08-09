@@ -50,14 +50,14 @@ describe("director de sprites", () => {
       ] },
     }] }, escena, [raton]);
 
-    expect(plan.avisos).toEqual([]);
+    expect(plan.avisos.join(" ")).toContain("se fijó a su superficie");
     expect(plan.sprites).toHaveLength(1);
     expect(plan.sprites[0]).toMatchObject({
       nombre: raton.nombre,
       despuesDe: "medio",
       depth: 0.48,
       biblioteca: raton,
-      spr: { id: raton.id, fotogramas: 3, fps: 9, espacio: "pantalla" },
+      spr: { id: raton.id, fotogramas: 3, fps: 9, espacio: "capa" },
     });
     expect(plan.sprites[0].spr.ruta?.pasos.map((p) => p.tipo))
       .toEqual(["mover", "pausa", "voltear"]);

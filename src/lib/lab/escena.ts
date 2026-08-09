@@ -249,6 +249,28 @@ export function revisar(data: unknown): { escena: Escena } | { error: string } {
 
 /** Rellena lo que se puede dar por hecho, para que dibujar no tenga que dudar. */
 export function normalizar(d: Escena): Escena {
+  const capas = d.layers
+    .map((c) => {
+      const capa = {
+        ...c,
+        visible: c.visible !== false,
+        objects: c.objects ?? [],
+        // Se acota aquí y no al pintar: un número disparatado saca la capa
+        // del cuadro en el primer fotograma y parece que ha desaparecido.
+        mov: normalizarMov((c as any).mov),
+      };
+      return { ...capa, guia: esGuia(capa) };
+    });
+  const porId = new Map(capas.map((c) => [c.id, c]));
+  // Una capa ligada físicamente a otra hereda su profundidad. Esta igualdad es
+  // la que evita que tren y vía se separen cuando cambia el zoom/paralaje.
+  const enlazadas = capas
+    .map((c) => {
+      const ref = c.mov?.referenciaCapaId ? porId.get(c.mov.referenciaCapaId) : undefined;
+      return ref && ref.id !== c.id ? { ...c, depth: ref.depth } : c;
+    })
+    .sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0));
+
   const base: Escena = {
     $schema: d.$schema ?? ESQUEMA,
     scene: {
@@ -261,24 +283,10 @@ export function normalizar(d: Escena): Escena {
     // Se conserva temporalmente para que superficiesDeEscena valide sus
     // coordenadas. El resultado validado reemplaza este bloque más abajo.
     ...(d.navegacion ? { navegacion: d.navegacion } : {}),
-    layers: d.layers
-      .map((c) => {
-        const capa = {
-          ...c,
-          visible: c.visible !== false,
-          objects: c.objects ?? [],
-          // Se acota aquí y no al pintar: un número disparatado saca la capa
-          // del cuadro en el primer fotograma y parece que ha desaparecido.
-          mov: normalizarMov((c as any).mov),
-        };
-        // La marca se deja puesta aquí y no en cada sitio que la necesite: así
-        // el editor la enseña y el que dibuja la salta, mirando lo mismo.
-        return { ...capa, guia: esGuia(capa) };
-      })
-      // De atrás hacia delante: el orden de pintado es el de profundidad, y
-      // depender de que quien escribe el JSON los ponga en orden es pedir un
-      // fallo que además es invisible.
-      .sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0)),
+    // De atrás hacia delante: el orden de pintado es el de profundidad, y
+    // depender de que quien escribe el JSON los ponga en orden es pedir un
+    // fallo que además es invisible.
+    layers: enlazadas,
   };
   const superficies = superficiesDeEscena(base);
   return superficies.length
@@ -296,7 +304,11 @@ export function normalizar(d: Escena): Escena {
  */
 export function pegas(esc: Escena): string[] {
   const out: string[] = [];
+  const ids = new Set(esc.layers.map((c) => c.id));
   esc.layers.forEach((capa, i) => {
+    if (capa.mov?.referenciaCapaId && !ids.has(capa.mov.referenciaCapaId)) {
+      out.push(`«${capa.name}» se apoya en «${capa.mov.referenciaCapaId}», pero esa capa no existe.`);
+    }
     if (i === 0) return; // la del fondo SÍ debe cubrirlo todo
     const tapa = capa.objects.find((o) =>
       (o.shape === "rect" || o.shape === "roundedRect")
@@ -308,8 +320,11 @@ export function pegas(esc: Escena): string[] {
     }
     if (!capa.objects.length) out.push(`«${capa.name}» no tiene ninguna forma.`);
   });
-  const profundidades = esc.layers.map((c) => c.depth);
-  if (new Set(profundidades).size < profundidades.length) {
+  const repetidaSinRelacion = esc.layers.some((a, i) => esc.layers.slice(i + 1).some((b) =>
+    a.depth === b.depth
+    && a.mov?.referenciaCapaId !== b.id
+    && b.mov?.referenciaCapaId !== a.id));
+  if (repetidaSinRelacion) {
     out.push("Hay capas con la misma profundidad: se moverán igual y no se notará el paralaje entre ellas.");
   }
   return out;

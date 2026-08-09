@@ -40,6 +40,8 @@ export interface PasoRutaSprite {
   y?: number;
   /** Duración del movimiento, la espera o el giro (normalmente 0.1 s). */
   segundos: number;
+  /** mover: lineal conserva pasos constantes; suave acelera y frena. */
+  suavizado?: "lineal" | "suave";
   /** Sentido durante este paso. En voltear, si falta, invierte el anterior. */
   espejo?: boolean;
 }
@@ -137,6 +139,7 @@ export function normalizarSprite(s: any): SpriteEnCapa | undefined {
       const comun = {
         tipo: p.tipo,
         segundos: acotar(num(p.segundos, p.tipo === "mover" ? 4 : p.tipo === "pausa" ? 1 : 0.1), 0.1, 120),
+        ...(p.tipo === "mover" && p.suavizado === "suave" ? { suavizado: "suave" as const } : {}),
         ...(typeof p.espejo === "boolean" ? { espejo: p.espejo } : {}),
       } as PasoRutaSprite;
       if (p.tipo === "mover") {
@@ -187,7 +190,10 @@ export function estadoSpriteEn(spr: SpriteEnCapa, t: number): EstadoSprite {
         ? paso.espejo
         : paso.tipo === "voltear" ? !espejo : espejo;
       if (tiempo < dur) {
-        const avance = paso.tipo === "mover" ? tiempo / dur : 0;
+        const crudo = paso.tipo === "mover" ? tiempo / dur : 0;
+        const avance = paso.tipo === "mover" && paso.suavizado === "suave"
+          ? crudo * crudo * (3 - 2 * crudo)
+          : crudo;
         return {
           x: paso.tipo === "mover" ? x + ((paso.x ?? x) - x) * avance : x,
           y: paso.tipo === "mover" ? y + ((paso.y ?? y) - y) * avance : y,
@@ -312,13 +318,14 @@ export function rutasSpriteParaIA() {
     ruta: {
       bucle: "opcional",
       pasos: [
-        { tipo: "mover", x: 1.2, y: 0.5, segundos: 4, espejo: false },
+        { tipo: "mover", x: 1.2, y: 0.5, segundos: 4, suavizado: "lineal", espejo: false },
         { tipo: "pausa", segundos: 1 },
         { tipo: "voltear", segundos: 0.1 },
         { tipo: "mover", x: -0.2, y: 0.5, segundos: 4 },
       ],
     },
     sincronizar: "true reinicia la ruta al reproducir cámara/transiciones; false usa su reloj independiente",
+    espacio: "capa si usa suelo/vía/agua y debe conservar el apoyo durante zoom/paralaje; pantalla solo para ruta absoluta que ignora cámara",
     compatibilidad: "spr.trayectoria sigue admitida para un único recorrido A→B",
   };
 }

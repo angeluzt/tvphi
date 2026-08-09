@@ -57,4 +57,21 @@ describe("navegación semántica de sprites", () => {
     const agua: SuperficieNavegable = { id: "canal", tipo: "agua", puntos: [[0, 0.7], [1, 0.7]], acciones: ["nadar"] };
     expect(elegirSuperficie([agua, rampa], "canal", "caminar", 0.4, 0.7)?.id).toBe("rampa");
   });
+
+  it("iguala la profundidad de un objeto móvil con su vía de referencia", () => {
+    const escena: Escena = {
+      scene: { id: "tren", title: "Tren", width: 100, height: 100 },
+      layers: [
+        { id: "via", name: "Vía", depth: 0.22, objects: [] },
+        { id: "tren", name: "Tren", depth: 0.7, mov: {
+          tipo: "trayectoria", referenciaCapaId: "via",
+          desdeX: -0.5, desdeY: 0, x: 0.5, y: 0, segundos: 4,
+        }, objects: [] },
+      ],
+    };
+    const normalizada = normalizar(escena);
+    expect(normalizada.layers.find((c) => c.id === "tren")?.depth).toBe(0.22);
+    expect(normalizada.layers.find((c) => c.id === "tren")?.mov)
+      .toMatchObject({ espacio: "capa", referenciaCapaId: "via" });
+  });
 });
