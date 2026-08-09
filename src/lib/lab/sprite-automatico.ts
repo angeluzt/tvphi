@@ -5,7 +5,7 @@ import { urlSprite, type SpriteMeta } from "./biblioteca";
 import type { SpriteEnCapa } from "./sprite-capa";
 import type { SpritePlaneado } from "./plan-escena-viva";
 import { cargarImagen } from "./quitar-fondo";
-import { celdasSpritePorDefecto, cortarHoja, nombreSprite, tiraDeFotogramas } from "./sprites";
+import { celdasSpriteEnRejilla, cortarHoja, nombreSprite, tiraDeFotogramas } from "./sprites";
 
 export interface SpriteMontado {
   id: string;
@@ -66,12 +66,14 @@ export async function resolverSpritePlaneado(
   const imagen = await cargarImagen(dataUrl);
   const forma = (generado.forma ?? plan.forma) as "tira" | "columna";
   const esperados = Number(generado.fotogramas ?? plan.spr.fotogramas);
+  const columnas = Number(generado.columnas) || (forma === "columna" ? 1 : esperados);
+  const filas = Number(generado.filas) || (forma === "columna" ? esperados : 1);
   const cortada = await cortarHoja({
     dataUrl,
     fotogramas: esperados,
     forma,
     croma: generado.croma,
-    celdas: celdasSpritePorDefecto(imagen.naturalWidth, imagen.naturalHeight, esperados, forma),
+    celdas: celdasSpriteEnRejilla(imagen.naturalWidth, imagen.naturalHeight, esperados, { columnas, filas }),
   });
   if (!cortada.fotogramas.length) {
     throw new Error("La hoja del sprite salió sin ningún fotograma recortable.");
