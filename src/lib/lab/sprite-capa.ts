@@ -15,6 +15,10 @@
 // cuadro con las alas congeladas —está escrito como limitación en
 // movimiento-capa.ts—. Con los fotogramas de la biblioteca, cruza aleteando.
 
+import type {
+  AccionSprite, AnclajeSprite, DireccionSprite, VistaSprite,
+} from "./biblioteca";
+
 export type EspacioSprite = "pantalla" | "capa";
 
 export interface TrayectoriaSprite {
@@ -51,7 +55,15 @@ export interface SpriteEnCapa {
   fotogramas: number;
   /** Fotogramas por segundo del ciclo. */
   fps: number;
-  /** Centro del bicho, 0..1 sobre el plano de la capa. */
+  /** Cómo está dibujado el PNG original; permite orientar su ruta sin adivinar. */
+  vista?: VistaSprite;
+  direccionBase?: DireccionSprite;
+  accion?: AccionSprite;
+  /** `pies` interpreta x/y como el punto donde pisa, no como el centro. */
+  anclaje?: AnclajeSprite;
+  /** Superficie semántica del mapa a la que se ajustó su ruta. */
+  superficieId?: string;
+  /** Posición 0..1: centro visual o punto de apoyo, según `anclaje`. */
   x: number;
   y: number;
   /** Alto del bicho como fracción del alto del plano. 0.1 = una décima. */
@@ -91,6 +103,13 @@ export function normalizarSprite(s: any): SpriteEnCapa | undefined {
   const spr: SpriteEnCapa = {
     fotogramas,
     fps: Math.round(acotar(num(s.fps, 10), 1, 60)),
+    vista: ["lateral", "frontal", "trasera", "superior", "libre"].includes(s.vista)
+      ? s.vista : "lateral",
+    direccionBase: ["derecha", "izquierda", "frente", "espaldas", "arriba", "abajo", "ninguna"].includes(s.direccionBase)
+      ? s.direccionBase : "derecha",
+    accion: ["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"].includes(s.accion)
+      ? s.accion : "otro",
+    anclaje: s.anclaje === "pies" ? "pies" : "centro",
     x: acotar(num(s.x, 0.5), -0.5, 1.5),
     y: acotar(num(s.y, 0.5), -0.5, 1.5),
     alto: acotar(num(s.alto, 0.2), 0.01, 2),
@@ -99,6 +118,7 @@ export function normalizarSprite(s: any): SpriteEnCapa | undefined {
     espacio: s.espacio === "pantalla" ? "pantalla" : "capa",
   };
   if (typeof s.id === "string" && s.id) spr.id = s.id;
+  if (typeof s.superficieId === "string" && s.superficieId) spr.superficieId = s.superficieId.slice(0, 80);
   if (s.espejo) spr.espejo = true;
   // Los recorridos de las versiones anteriores ya se reiniciaban al reproducir
   // la cámara. Ausente, por tanto, significa sincronizado.
@@ -247,7 +267,7 @@ export function cajaSprite(
   const dw = altoFot > 0 ? dh * (anchoFot / altoFot) : dh;
   return {
     dx: plano.x0 + pos.x * plano.w - dw / 2,
-    dy: plano.y0 + pos.y * plano.h - dh / 2,
+    dy: plano.y0 + pos.y * plano.h - (spr.anclaje === "pies" ? dh : dh / 2),
     dw,
     dh,
   };
@@ -286,7 +306,8 @@ export function pintarSprite(
 /** Referencia compacta para el JSON declarativo que puede escribir la IA. */
 export function rutasSpriteParaIA() {
   return {
-    posicionInicial: "spr.x y spr.y (−0.5..1.5; 0.5 es el centro)",
+    posicionInicial: "spr.x y spr.y (−0.5..1.5); con anclaje pies, y es el suelo bajo sus pies; con centro, es el centro visual",
+    semantica: "vista + direccionBase describen el PNG; accion + superficieId describen cómo se usa en la escena",
     tamano: "spr.alto (0.01..2; proporción del alto del lienzo)",
     ruta: {
       bucle: "opcional",

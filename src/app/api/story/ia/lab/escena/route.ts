@@ -50,6 +50,7 @@ Estructura:
    "ai":{"prompt":"lo que hay que DIBUJAR en esta capa, en inglés","exclude":"lo que NO, en inglés"},
    "mov":{"tipo":"deriva","x":0.2,"bucle":true},
    "objects":[{"id":"x","shape":"rect","semantic":"sky","x":0,"y":0,"w":1,"h":1,"label":"CIELO"}]}],
+ "navegacion":{"superficies":[{"id":"pasarela","tipo":"suelo","puntos":[[-0.05,0.82],[0.45,0.78],[1.05,0.86]],"acciones":["caminar","correr"],"depth":0.62,"despuesDe":"id-capa"}]},
  "animacion":{"pasos":[{"mov":"acercar","segundos":3,"intensidad":45,"nota":"para qué es este tramo"}]},
  "efectos":[{"id":"humo","espacio":"imagen","x":0.5,"y":0.7,"escala":0.4}]}
 
@@ -106,7 +107,7 @@ const INSTRUCCION_VIVA = `MODO DIRECTOR DE ESCENA VIVA
 Además de scene, layers, animacion y efectos, devuelve "sprites": una lista de actores animados.
 
 Cada sprite tiene exactamente esta forma:
-{"id":"kebab","nombre":"nombre corto","bibliotecaId":"id exacto o ausente","que":"descripción visual completa en inglés, máximo 400 caracteres","vista":"lateral|frontal|trasera|superior|libre","forma":"tira|columna","fotogramas":6,"fps":10,"despuesDe":"id de una capa dibujable","depth":0.55,"x":-0.15,"y":0.65,"alto":0.18,"espacio":"pantalla","sincronizar":true,"espejo":false,"ruta":{"bucle":false,"pasos":[{"tipo":"mover","x":1.15,"y":0.65,"segundos":5}]}}
+{"id":"kebab","nombre":"nombre corto","bibliotecaId":"id exacto o ausente","que":"descripción visual completa en inglés, máximo 400 caracteres","vista":"lateral|frontal|trasera|superior|libre","direccion":"derecha|izquierda|frente|espaldas|arriba|abajo|ninguna","accion":"quieto|caminar|correr|volar|flotar|nadar|caer|girar|otro","anclaje":"centro|pies","forma":"tira|columna","fotogramas":6,"fps":10,"superficieId":"id de navegacion.superficies","despuesDe":"id de una capa dibujable","depth":0.55,"x":-0.15,"y":0.65,"alto":0.18,"espacio":"pantalla","sincronizar":true,"espejo":false,"ruta":{"bucle":false,"pasos":[{"tipo":"mover","x":1.15,"y":0.65,"segundos":5}]}}
 
 REGLAS DEL DIRECTOR
 - Un sprite es algo cuya POSE cambia: personas, animales, vehículos, humo vivo, fuego, meteoros. La decoración quieta sigue siendo una capa.
@@ -114,12 +115,17 @@ REGLAS DEL DIRECTOR
 - Reutiliza un sprite del CATÁLOGO solo si coincide de verdad con personaje, vista y estilo. Copia su bibliotecaId EXACTO. Si no coincide, omite bibliotecaId y describe uno nuevo en "que".
 - "que" debe conservar el mismo estilo, paleta, iluminación y ángulo de cámara de la escena. No pidas fondo, texto, marco, suelo ni sombra.
 - Máximo 6 sprites; normalmente 1 a 4 dan una escena más legible.
-- La posición y cada destino son coordenadas del lienzo: (0,0) arriba a la izquierda, (1,1) abajo a la derecha. Pueden empezar o terminar un poco fuera.
+- Escribe navegacion.superficies aunque los actores sean nuevos. Cada superficie es una polilínea lógica: suelo/escalera para caminar o correr, agua para nadar o flotar, aire para volar. Sus puntos siguen el piso, pasarela, escalera, agua o corredor REAL que ya definiste en layers.objects.
+- La posición y cada destino son coordenadas del lienzo: (0,0) arriba a la izquierda, (1,1) abajo a la derecha. Pueden empezar o terminar un poco fuera. Con anclaje "pies", y es el punto exacto donde apoyan los pies, no el centro del dibujo.
+- Todo actor con caminar/correr/nadar debe indicar superficieId y sus destinos x deben recorrer esa superficie. La aplicación ajustará automáticamente cada y a la polilínea. Un actor volador usa una superficie de aire o una ruta libre coherente.
+- direccion describe hacia dónde apunta el DIBUJO ORIGINAL en su hoja, no el destino. En vista lateral usa derecha o izquierda explícitamente. La aplicación calcula el espejo de cada tramo usando ese dato; no compenses inventando un espejo permanente.
+- anclaje es "pies" para animales, personas y vehículos apoyados; es "centro" para vuelo, humo, fuego, objetos suspendidos o caídas.
 - "despuesDe" es el id de la ÚLTIMA capa que queda detrás del sprite. La aplicación inserta al actor inmediatamente después. Para ocultarlo tras una columna de primer plano, usa el id de la capa anterior a esa columna, NO el id de la propia columna. No pongas todo al frente.
 - Usa "pantalla" para trayectorias absolutas que no deben deformarse con paneos/transiciones. Usa "capa" solo cuando el actor esté pegado físicamente al decorado y deba heredar paralaje y zoom.
 - Una ruta puede encadenar mover, pausa y voltear. Para ir, girar y volver: mover, pausa opcional, voltear, mover. Usa bucle solo si debe repetirse.
 - El fotograma interno y la ruta espacial son cosas distintas: fotogramas/fps animan patas o alas; ruta mueve el actor por la escena.
 - Para movimiento horizontal usa vista lateral y espejo/voltear. Para avanzar hacia cámara usa frontal; alejarse usa trasera; para movimiento cenital usa superior. Objetos que giran o caen libremente pueden usar libre.
+- No hagas volver horizontalmente un sprite frontal o trasero: para ida y vuelta horizontal usa vista lateral y deja que cada tramo lo voltee. No hagas caminar en el aire ni atravesar muros, columnas o tuberías.
 - Coordina duración de rutas y pasos de cámara para que haya una pequeña historia visual, no movimientos aleatorios.
 - Si la petición no necesita actores animados, devuelve "sprites": [].`;
 
@@ -159,7 +165,8 @@ export async function POST(req: Request) {
       take: 120,
       select: {
         id: true, nombre: true, que: true, fotogramas: true, fps: true,
-        ancho: true, alto: true, bytes: true, createdAt: true,
+        ancho: true, alto: true, bytes: true, vista: true, direccion: true,
+        accion: true, anclaje: true, createdAt: true,
       },
     });
     catalogo = filas.map((f) => ({
@@ -171,6 +178,10 @@ export async function POST(req: Request) {
       ancho: f.ancho,
       alto: f.alto,
       bytes: f.bytes,
+      vista: f.vista as SpriteMeta["vista"],
+      direccion: f.direccion as SpriteMeta["direccion"],
+      accion: f.accion as SpriteMeta["accion"],
+      anclaje: f.anclaje as SpriteMeta["anclaje"],
       creadoEn: f.createdAt.toISOString(),
     }));
   }
@@ -206,7 +217,8 @@ export async function POST(req: Request) {
               "CATÁLOGO REUTILIZABLE. Usa únicamente ids de esta lista; si nada coincide, genera uno nuevo:\n"
               + JSON.stringify(catalogo.map((s) => ({
                 id: s.id, nombre: s.nombre, que: s.que.slice(0, 220),
-                fotogramas: s.fotogramas, fps: s.fps,
+                fotogramas: s.fotogramas, fps: s.fps, vista: s.vista,
+                direccion: s.direccion, accion: s.accion, anclaje: s.anclaje,
               }))) },
           ] : []),
           { role: "user", content:

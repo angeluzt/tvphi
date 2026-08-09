@@ -23,6 +23,10 @@ const raton: SpriteMeta = {
   alto: 90,
   bytes: 1234,
   creadoEn: "2026-08-08T00:00:00.000Z",
+  vista: "lateral",
+  direccion: "izquierda",
+  accion: "caminar",
+  anclaje: "pies",
 };
 
 describe("director de sprites", () => {
@@ -51,11 +55,16 @@ describe("director de sprites", () => {
     expect(plan.sprites[0]).toMatchObject({
       nombre: raton.nombre,
       despuesDe: "medio",
+      depth: 0.48,
       biblioteca: raton,
       spr: { id: raton.id, fotogramas: 3, fps: 9, espacio: "pantalla" },
     });
     expect(plan.sprites[0].spr.ruta?.pasos.map((p) => p.tipo))
       .toEqual(["mover", "pausa", "voltear"]);
+    expect(plan.sprites[0].spr).toMatchObject({
+      direccionBase: "izquierda", accion: "caminar", anclaje: "pies", y: 0.6,
+    });
+    expect(plan.sprites[0].spr.ruta?.pasos[0]).toMatchObject({ y: 0.6, espejo: true });
   });
 
   it("convierte una referencia inexistente en generación y acota valores peligrosos", () => {

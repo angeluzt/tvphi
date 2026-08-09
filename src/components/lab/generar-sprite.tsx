@@ -16,7 +16,10 @@ import { VistaSprite } from "./vista-sprite";
 import { EditorSprite } from "./editor-sprite";
 import { EditorCortesSprite } from "./editor-cortes-sprite";
 import { EditorHojaSprite } from "./editor-hoja-sprite";
-import { esPng, pesoLegible, type SpriteMeta } from "@/lib/lab/biblioteca";
+import {
+  esPng, pesoLegible, type AccionSprite, type AnclajeSprite, type DireccionSprite,
+  type SpriteMeta, type VistaSprite as TipoVistaSprite,
+} from "@/lib/lab/biblioteca";
 import {
   ARCHIVO_HOJA_SPRITE, ARCHIVO_META_SPRITE, ARCHIVO_TIRA_SPRITE,
   archivosProyectoSprite, crearProyectoSprite, normalizarProyectoSprite,
@@ -80,6 +83,10 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
   const [que, setQue] = useState("");
   const [n, setN] = useState(6);
   const [forma, setForma] = useState<"tira" | "columna">("tira");
+  const [vista, setVista] = useState<TipoVistaSprite>("lateral");
+  const [direccion, setDireccion] = useState<DireccionSprite>("derecha");
+  const [accion, setAccion] = useState<AccionSprite>("otro");
+  const [anclaje, setAnclaje] = useState<AnclajeSprite>("centro");
   const [calidad, setCalidad] = useState<"low" | "medium" | "high">("low");
   const [paso, setPaso] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +125,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
     try {
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/sprite", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ que: que.trim(), fotogramas: n, forma, calidad }),
+        body: JSON.stringify({ que: que.trim(), fotogramas: n, forma, vista, direccion, accion, calidad }),
       });
       if (!r.ok) throw new Error(j.error || "No se pudo");
 
@@ -330,6 +337,10 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
           que: que.trim(),
           fotogramas: hecho.fotos.length,
           fps,
+          vista,
+          direccion,
+          accion,
+          anclaje,
           ancho: hecho.ancho,
           alto: hecho.alto,
           tira: b64,
@@ -352,6 +363,10 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       nombre: nombre.trim() || base,
       que: que.trim() || base,
       fps,
+      vista,
+      direccion,
+      accion,
+      anclaje,
       forma: hecho.hoja.forma,
       croma: hecho.hoja.croma,
       anchoHoja: hecho.hoja.ancho,
@@ -444,6 +459,10 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       setQue(proyecto.que);
       setNombre(proyecto.nombre);
       setFps(proyecto.fps);
+      setVista(proyecto.vista);
+      setDireccion(proyecto.direccion);
+      setAccion(proyecto.accion);
+      setAnclaje(proyecto.anclaje);
       setForma(proyecto.forma);
       setN(proyecto.celdas.length);
       setGuardado(false);
@@ -521,6 +540,52 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
         </label>
       </div>
 
+      <div className="grid gap-2 rounded-lg border border-border bg-surface-2/35 p-2 sm:grid-cols-4">
+        <label className="block">
+          <span className="text-[10px] text-muted">Vista</span>
+          <select value={vista} onChange={(e) => {
+            const v = e.target.value as TipoVistaSprite;
+            setVista(v);
+            if (v === "lateral" && !["derecha", "izquierda"].includes(direccion)) setDireccion("derecha");
+            else if (v === "frontal") setDireccion("frente");
+            else if (v === "trasera") setDireccion("espaldas");
+            else if (v === "superior" && !["arriba", "abajo"].includes(direccion)) setDireccion("abajo");
+            else if (v === "libre") setDireccion("ninguna");
+          }} className="input mt-1 w-full py-1 text-xs">
+            <option value="lateral">Lateral</option><option value="frontal">Frontal</option>
+            <option value="trasera">Trasera</option><option value="superior">Desde arriba</option><option value="libre">Libre</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[10px] text-muted">Apunta originalmente</span>
+          <select value={direccion} onChange={(e) => setDireccion(e.target.value as DireccionSprite)} className="input mt-1 w-full py-1 text-xs">
+            <option value="derecha">Derecha</option><option value="izquierda">Izquierda</option>
+            <option value="frente">Frente</option><option value="espaldas">Espaldas</option>
+            <option value="arriba">Arriba</option><option value="abajo">Abajo</option><option value="ninguna">Sin dirección</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[10px] text-muted">Acción</span>
+          <select value={accion} onChange={(e) => {
+            const a = e.target.value as AccionSprite;
+            setAccion(a);
+            if (a === "caminar" || a === "correr") setAnclaje("pies");
+          }} className="input mt-1 w-full py-1 text-xs">
+            {(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"] as const)
+              .map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[10px] text-muted">Punto de colocación</span>
+          <select value={anclaje} onChange={(e) => setAnclaje(e.target.value as AnclajeSprite)} className="input mt-1 w-full py-1 text-xs">
+            <option value="centro">Centro</option><option value="pies">Pies / apoyo</option>
+          </select>
+        </label>
+        <p className="text-[9px] leading-snug text-muted sm:col-span-4">
+          Esto queda guardado: la IA sabrá cómo orientarlo, voltearlo y apoyarlo en el escenario.
+        </p>
+      </div>
+
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
         <button onClick={() => void generar()} disabled={!puedeGenerar || !!paso || que.trim().length < 3}
           className="btn-brand w-full text-sm disabled:opacity-40">
@@ -578,6 +643,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
               anchoHoja={hecho.hoja.ancho}
               altoHoja={hecho.hoja.alto}
               forma={hecho.hoja.forma}
+              croma={hecho.hoja.croma}
               celdas={hecho.hoja.celdas}
               procesando={actualizando}
               bloqueado={hojaPendiente}

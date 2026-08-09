@@ -1,8 +1,10 @@
-import type { SpriteMeta } from "./biblioteca";
+import type {
+  AccionSprite, AnclajeSprite, DireccionSprite, SpriteMeta, VistaSprite,
+} from "./biblioteca";
 import { esGuia, type Escena } from "./escena";
 import { normalizarSprite, type SpriteEnCapa } from "./sprite-capa";
+import { ajustarSpriteALaEscena, elegirSuperficie, superficiesDeEscena } from "./navegacion-escena";
 
-export type VistaSprite = "lateral" | "frontal" | "trasera" | "superior" | "libre";
 export type FormaHojaSprite = "tira" | "columna";
 
 /** Un actor animado decidido por el director global. */
@@ -12,6 +14,9 @@ export interface SpritePlaneado {
   /** Descripción visual completa; también se guarda para reutilizarlo después. */
   que: string;
   vista: VistaSprite;
+  direccion: DireccionSprite;
+  accion: AccionSprite;
+  anclaje: AnclajeSprite;
   forma: FormaHojaSprite;
   /** Capa tras la que se inserta. Permite poner actores detrás del primer plano. */
   despuesDe: string;
@@ -27,6 +32,8 @@ export interface PlanSprites {
 }
 
 const VISTAS = new Set<VistaSprite>(["lateral", "frontal", "trasera", "superior", "libre"]);
+const DIRECCIONES = new Set<DireccionSprite>(["derecha", "izquierda", "frente", "espaldas", "arriba", "abajo", "ninguna"]);
+const ACCIONES = new Set<AccionSprite>(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"]);
 const FORMAS = new Set<FormaHojaSprite>(["tira", "columna"]);
 const acotar = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 const numero = (v: unknown, defecto: number) => {
@@ -40,13 +47,7 @@ const slug = (v: string, defecto: string) =>
   v.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || defecto;
 
-/**
- * Endereza la parte de sprites del JSON de IA antes de que llegue al montaje.
- *
- * Es deliberadamente tolerante: una ruta demasiado larga se recorta, las
- * posiciones se acotan y un id inexistente de biblioteca pasa a generación.
- * Perder toda una escena por un solo campo creativo sería mucho peor.
- */
+/** Endereza la parte de sprites del JSON de IA antes de que llegue al montaje. */
 export function leerSpritesPlaneados(
   crudo: unknown,
   escena: Escena,
@@ -56,6 +57,7 @@ export function leerSpritesPlaneados(
   const pedidos = Array.isArray(raiz?.sprites) ? raiz.sprites.slice(0, 6) : [];
   const catalogoPorId = new Map(catalogo.map((s) => [s.id, s]));
   const capas = escena.layers.filter((c) => c.visible !== false && !esGuia(c));
+  const superficies = superficiesDeEscena(escena);
   const idsCapa = new Set(capas.map((c) => c.id));
   const avisos: string[] = [];
   const ids = new Set<string>();
@@ -81,8 +83,50 @@ export function leerSpritesPlaneados(
       avisos.push(`${baseNombre}: «${bibliotecaId}» ya no está en la biblioteca; se generará de nuevo.`);
     }
 
-    const depth = acotar(numero(p.depth, 0.55), 0, 1);
-    let despuesDe = texto(p.despuesDe ?? p.despues_de, "", 80);
+    let depth = acotar(numero(p.depth, 0.55), 0, 1);
+    const vista = biblioteca?.vista ?? (VISTAS.has(p.vista) ? p.vista as VistaSprite : "lateral");
+    let accion = biblioteca?.accion ?? (ACCIONES.has(p.accion) ? p.accion as AccionSprite : "otro");
+    if (accion === "otro") {
+      const pista = `${p.que ?? ""} ${baseNombre}`.toLowerCase();
+      if (/walk|camin/.test(pista)) accion = "caminar";
+      else if (/run|corr/.test(pista)) accion = "correr";
+      else if (/fly|vola|drone|nave/.test(pista)) accion = "volar";
+      else if (/float|flot/.test(pista)) accion = "flotar";
+      else if (/swim|nad/.test(pista)) accion = "nadar";
+      else if (/fall|cae|falling/.test(pista)) accion = "caer";
+    }
+    const anclaje: AnclajeSprite = biblioteca?.anclaje
+      ?? (p.anclaje === "pies" || accion === "caminar" || accion === "correr" ? "pies" : "centro");
+
+    const primerMovimiento = Array.isArray(p.ruta?.pasos)
+      ? p.ruta.pasos.find((paso: any) => paso?.tipo === "mover")
+      : p.trayectoria;
+    const dx = numero(primerMovimiento?.x, numero(p.x, 0.5)) - numero(p.x, 0.5);
+    const dy = numero(primerMovimiento?.y, numero(p.y, 0.5)) - numero(p.y, 0.5);
+    const inferida: DireccionSprite = vista === "lateral" ? (dx < 0 ? "izquierda" : "derecha")
+      : vista === "frontal" ? "frente"
+        : vista === "trasera" ? "espaldas"
+          : vista === "superior" ? (dy < 0 ? "arriba" : "abajo") : "ninguna";
+    const direccion = biblioteca?.direccion
+      ?? (DIRECCIONES.has(p.direccion) ? p.direccion as DireccionSprite : inferida);
+    const superficie = elegirSuperficie(
+      superficies,
+      p.superficieId,
+      accion,
+      numero(p.x, 0.5),
+      numero(p.y, 0.5),
+    );
+    if (typeof p.superficieId === "string" && superficie?.id !== p.superficieId) {
+      avisos.push(`${baseNombre}: la superficie «${p.superficieId}» no admite ${accion}; se eligió ${superficie ? `«${superficie.id}»` : "una ruta libre"}.`);
+    }
+    if (superficie?.depth !== undefined) depth = acotar(superficie.depth, 0, 1);
+    const despuesPedido = texto(p.despuesDe ?? p.despues_de, "", 80);
+    let despuesDe = superficie?.despuesDe && idsCapa.has(superficie.despuesDe)
+      ? superficie.despuesDe
+      : despuesPedido;
+    if (despuesPedido && despuesDe !== despuesPedido) {
+      avisos.push(`${baseNombre}: la superficie «${superficie?.id}» corrigió su orden de capas a «${despuesDe}».`);
+    }
     if (!idsCapa.has(despuesDe)) {
       const cercana = capas.reduce<(typeof capas)[number] | undefined>((mejor, capa) =>
         !mejor || Math.abs(capa.depth - depth) < Math.abs(mejor.depth - depth) ? capa : mejor,
@@ -96,10 +140,15 @@ export function leerSpritesPlaneados(
     const fotogramas = biblioteca?.fotogramas
       ?? Math.round(acotar(numero(p.fotogramas, 6), 2, 12));
     const fps = biblioteca?.fps ?? Math.round(acotar(numero(p.fps, 10), 1, 60));
-    const spr = normalizarSprite({
+    const normalizado = normalizarSprite({
       id: biblioteca?.id,
       fotogramas,
       fps,
+      vista,
+      direccionBase: direccion,
+      accion,
+      anclaje,
+      superficieId: superficie?.id,
       x: p.x,
       y: p.y,
       alto: p.alto,
@@ -109,18 +158,24 @@ export function leerSpritesPlaneados(
       ruta: p.ruta,
       trayectoria: p.trayectoria,
     });
-    if (!spr) {
+    if (!normalizado) {
       avisos.push(`${baseNombre}: no tenía fotogramas válidos y se ignoró.`);
       return [];
     }
+    const spr = ajustarSpriteALaEscena(normalizado, superficie);
+    if (anclaje === "pies" && !superficie) {
+      avisos.push(`${baseNombre}: no se encontró una superficie transitable; conserva sus coordenadas para ajuste manual.`);
+    }
 
-    const vista = VISTAS.has(p.vista) ? p.vista as VistaSprite : "lateral";
     const forma = FORMAS.has(p.forma) ? p.forma as FormaHojaSprite : "tira";
     return [{
       id,
       nombre: biblioteca?.nombre ?? baseNombre,
       que: texto(p.que ?? p.prompt, biblioteca?.que ?? baseNombre),
       vista,
+      direccion,
+      accion,
+      anclaje,
       forma,
       despuesDe,
       depth,

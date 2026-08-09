@@ -1,4 +1,5 @@
 import { normalizarCeldasSprite, type CeldaSprite } from "./sprites";
+import type { AccionSprite, AnclajeSprite, DireccionSprite, VistaSprite } from "./biblioteca";
 
 // El ZIP de un sprite es un PROYECTO, no una carpeta con N PNG repetidos.
 // Lleva dos imágenes: la hoja original que pagó la llamada y la tira final que
@@ -14,6 +15,10 @@ export interface ProyectoSpriteV2 {
   nombre: string;
   que: string;
   fps: number;
+  vista: VistaSprite;
+  direccion: DireccionSprite;
+  accion: AccionSprite;
+  anclaje: AnclajeSprite;
   forma: "tira" | "columna";
   croma: string;
   hoja: {
@@ -43,6 +48,10 @@ export function crearProyectoSprite(opts: {
   nombre: string;
   que: string;
   fps: number;
+  vista: VistaSprite;
+  direccion: DireccionSprite;
+  accion: AccionSprite;
+  anclaje: AnclajeSprite;
   forma: "tira" | "columna";
   croma?: string;
   anchoHoja: number;
@@ -58,6 +67,10 @@ export function crearProyectoSprite(opts: {
     nombre: opts.nombre,
     que: opts.que,
     fps: opts.fps,
+    vista: opts.vista,
+    direccion: opts.direccion,
+    accion: opts.accion,
+    anclaje: opts.anclaje,
     forma: opts.forma,
     croma: opts.croma ?? "#FF00FF",
     hoja: {
@@ -102,6 +115,10 @@ export function normalizarProyectoSprite(v: unknown): ProyectoSpriteV2 {
     nombre: texto(p.nombre, "sprite", 60),
     que: texto(p.que, "sprite", 400),
     fps: entero(p.fps, 1, 60, "fps"),
+    vista: ["lateral", "frontal", "trasera", "superior", "libre"].includes(p.vista) ? p.vista : "lateral",
+    direccion: ["derecha", "izquierda", "frente", "espaldas", "arriba", "abajo", "ninguna"].includes(p.direccion) ? p.direccion : "derecha",
+    accion: ["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"].includes(p.accion) ? p.accion : "otro",
+    anclaje: p.anclaje === "pies" ? "pies" : "centro",
     forma: p.forma === "columna" ? "columna" : "tira",
     croma,
     hoja: {
@@ -138,6 +155,7 @@ export function archivosProyectoSprite(
     nombre: "leeme.txt",
     datos: new TextEncoder().encode(
       `Proyecto de sprite «${proyecto.nombre}» (${proyecto.tira.fotogramas} fotogramas, ${proyecto.fps}/s).\n\n`
+      + `Vista ${proyecto.vista}; apunta hacia ${proyecto.direccion}; acción ${proyecto.accion}; anclaje ${proyecto.anclaje}.\n\n`
       + `${ARCHIVO_HOJA_SPRITE}: la hoja de trabajo completa previa al corte, con sus correcciones.\n`
       + `${ARCHIVO_TIRA_SPRITE}: el resultado final exacto que reproduce TVPhi.\n`
       + `${ARCHIVO_META_SPRITE}: posición x/y/ancho/alto de cada celda y metadatos.\n\n`

@@ -34,6 +34,9 @@ const cuerpo = z.object({
   forma: z.enum(["tira", "columna"]).default("tira"),
   /** Ángulo coherente con la ruta que el director escribió. */
   vista: z.enum(["lateral", "frontal", "trasera", "superior", "libre"]).default("lateral"),
+  /** Hacia dónde apunta el dibujo original; luego el montaje puede espejarlo. */
+  direccion: z.enum(["derecha", "izquierda", "frente", "espaldas", "arriba", "abajo", "ninguna"]).default("derecha"),
+  accion: z.enum(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"]).default("otro"),
   calidad: z.enum(["low", "medium", "high"]).optional(),
   modelo: z.string().max(80).optional(),
 });
@@ -53,12 +56,16 @@ function prompt(
   n: number,
   columna: boolean,
   vista: "lateral" | "frontal" | "trasera" | "superior" | "libre",
+  direccion: "derecha" | "izquierda" | "frente" | "espaldas" | "arriba" | "abajo" | "ninguna",
+  accion: "quieto" | "caminar" | "correr" | "volar" | "flotar" | "nadar" | "caer" | "girar" | "otro",
 ) {
   const rejilla = columna
     ? `Arrange them in ONE VERTICAL COLUMN of exactly ${n} equal cells, top to bottom.`
     : `Arrange them in ONE HORIZONTAL ROW of exactly ${n} equal cells, left to right.`;
   const angulo = {
-    lateral: "Strict side view; the subject faces horizontally.",
+    lateral: direccion === "izquierda"
+      ? "Strict side view; the subject faces LEFT in every frame."
+      : "Strict side view; the subject faces RIGHT in every frame.",
     frontal: "Strict front view; the subject faces the viewer.",
     trasera: "Strict back view; the subject faces away from the viewer.",
     superior: "Strict top-down view, seen vertically from above.",
@@ -66,8 +73,11 @@ function prompt(
   }[vista];
   return [
     `SPRITE SHEET for 2D animation: ${n} frames of one single ${que}, in motion.`,
+    `Animation action: ${accion}. Intrinsic facing direction: ${direccion}.`,
     rejilla,
     "Each cell shows the SAME character/object at the SAME size and the SAME position within its cell, only the pose changes across frames — it is one animation cycle that loops back to the first frame.",
+    "CRITICAL SAFE AREA: the complete subject, including feet, tails, wings, antennae, smoke and loose parts, must fit inside the central 60% of EACH cell. Leave at least 15% empty pure-magenta margin on all four sides of every cell.",
+    "No subject pixel may touch or cross a cell edge. Never borrow space from a neighboring cell. If the subject is long or tall, SHRINK the entire subject uniformly until every extremity fits with the safe margin.",
     `BACKGROUND: every pixel that is not the subject must be flat pure magenta ${CROMA} (R255 G0 B255), perfectly uniform.`,
     "No gradient, no shading, no vignette, no glow, no reflection of the magenta on the subject.",
     "No ground, no shadow, no scenery, no frame borders, no grid lines, no numbers, no text, no watermark.",
@@ -103,7 +113,7 @@ export async function POST(req: Request) {
   // Esta ruta es solo de admin, así que se le respeta la calidad que pida; si
   // no dice ninguna, manda la del panel, que en pruebas es la barata.
   const calidad = calidadEfectiva(await leerAjustes(), true, parsed.data.calidad);
-  const { que, fotogramas, forma, vista } = parsed.data;
+  const { que, fotogramas, forma, vista, direccion, accion } = parsed.data;
 
   try {
     const r = await fetch(OPENAI("/v1/images/generations"), {
@@ -112,7 +122,7 @@ export async function POST(req: Request) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model: modelo,
-        prompt: prompt(que, fotogramas, forma === "columna", vista),
+        prompt: prompt(que, fotogramas, forma === "columna", vista, direccion, accion),
         size: TAMANOS[forma],
         n: 1,
         quality: calidad,
@@ -143,6 +153,8 @@ export async function POST(req: Request) {
       fotogramas,
       forma,
       vista,
+      direccion,
+      accion,
       calidad,
       croma: CROMA,
       size: TAMANOS[forma],

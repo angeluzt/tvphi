@@ -67,6 +67,15 @@ describe("trayectoria A a B", () => {
     expect(caja.dw).toBe(100);
     expect(caja.dh).toBe(100);
   });
+
+  it("coloca por los pies sin cambiar el comportamiento de sprites antiguos", () => {
+    const caja = cajaSprite({ ...base, x: 0.5, y: 0.8, anclaje: "pies" }, 100, 100,
+      { x0: 0, y0: 0, w: 1000, h: 500 }, 0);
+
+    expect(caja.dx).toBe(450);
+    expect(caja.dy).toBe(300);
+    expect(caja.dy + caja.dh).toBe(400);
+  });
 });
 
 describe("ruta de varios pasos", () => {
