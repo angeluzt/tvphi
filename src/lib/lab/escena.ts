@@ -16,6 +16,7 @@
 // Así el mismo mapa sirve para 1920×1080 y para vertical sin tocar un número.
 
 import { normalizarMov, type MovCapa } from "./movimiento-capa";
+import { superficiesDeEscena } from "./navegacion-escena";
 
 export type Semantico =
   | "sky" | "terrain" | "wall" | "floor" | "door" | "window" | "column" | "arch"
@@ -154,6 +155,20 @@ export interface Capa {
   objects: Objeto[];
 }
 
+export type TipoSuperficie = "suelo" | "escalera" | "agua" | "aire" | "libre";
+
+/** Línea semántica por la que un actor puede desplazarse sin caminar en el aire. */
+export interface SuperficieNavegable {
+  id: string;
+  tipo: TipoSuperficie;
+  /** Polilínea de izquierda a derecha en coordenadas 0..1 del lienzo. */
+  puntos: [number, number][];
+  acciones?: ("caminar" | "correr" | "volar" | "flotar" | "nadar" | "caer" | "otro")[];
+  depth?: number;
+  /** Última capa situada detrás del actor que usa esta superficie. */
+  despuesDe?: string;
+}
+
 export interface Escena {
   $schema?: string;
   scene: {
@@ -167,6 +182,8 @@ export interface Escena {
   };
   palette?: Partial<Record<Semantico, string>>;
   layers: Capa[];
+  /** Geometría transitable para colocar y mover sprites con lógica espacial. */
+  navegacion?: { superficies: SuperficieNavegable[] };
 }
 
 export const ESQUEMA = "tvphi.semantic-scene-map/v2";
@@ -232,7 +249,7 @@ export function revisar(data: unknown): { escena: Escena } | { error: string } {
 
 /** Rellena lo que se puede dar por hecho, para que dibujar no tenga que dudar. */
 export function normalizar(d: Escena): Escena {
-  return {
+  const base: Escena = {
     $schema: d.$schema ?? ESQUEMA,
     scene: {
       mapBackground: "#101522",
@@ -241,6 +258,9 @@ export function normalizar(d: Escena): Escena {
       ...d.scene,
     },
     palette: { ...PALETA, ...(d.palette ?? {}) },
+    // Se conserva temporalmente para que superficiesDeEscena valide sus
+    // coordenadas. El resultado validado reemplaza este bloque más abajo.
+    ...(d.navegacion ? { navegacion: d.navegacion } : {}),
     layers: d.layers
       .map((c) => {
         const capa = {
@@ -260,6 +280,10 @@ export function normalizar(d: Escena): Escena {
       // fallo que además es invisible.
       .sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0)),
   };
+  const superficies = superficiesDeEscena(base);
+  return superficies.length
+    ? { ...base, navegacion: { superficies } }
+    : base;
 }
 
 /**

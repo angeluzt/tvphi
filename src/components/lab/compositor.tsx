@@ -14,6 +14,7 @@ import {
   cajaSprite, estadoSpriteEn, fotogramaEn, normalizarSprite, pintarSprite, spriteSigueCamara,
   type PasoRutaSprite, type Plano, type SpriteEnCapa,
 } from "@/lib/lab/sprite-capa";
+import { ajustarSpriteALaEscena } from "@/lib/lab/navegacion-escena";
 import {
   ANIM_OPCIONES, MOV_COLA, vistaAnim, estadoNeutro, clonarEstado, pasoPorDefecto,
   planificarCola, interpolarTramo, escalaPerspectiva, visibilidadPorAvance,
@@ -1837,6 +1838,11 @@ function MandosSprite({
 }) {
   const modo = spr.ruta ? "ruta" : spr.trayectoria ? "trayectoria" : (mov?.tipo ?? "");
   const [pasoAbierto, setPasoAbierto] = useState<number | null>(0);
+  const espejoHacia = (desde: number, hasta: number) => {
+    if (spr.vista !== "lateral" || Math.abs(hasta - desde) < 0.005) return !!spr.espejo;
+    const originalDerecha = spr.direccionBase !== "izquierda";
+    return (hasta > desde) !== originalDerecha;
+  };
 
   function guardarPasos(pasos: PasoRutaSprite[]) {
     onSpr({ ruta: { ...spr.ruta!, pasos: pasos.slice(0, 24) } });
@@ -1887,6 +1893,7 @@ function MandosSprite({
       onMov(undefined);
       onSpr({
         ruta: undefined,
+        espejo: espejoHacia(spr.x, spr.x < 0.9 ? 1.2 : -0.2),
         trayectoria: {
           x: spr.x < 0.9 ? 1.2 : -0.2,
           y: spr.y,
@@ -1905,7 +1912,7 @@ function MandosSprite({
         ruta: {
           bucle: true,
           pasos: [
-            { tipo: "mover", x: bx, y: spr.y, segundos: 4, espejo: bx < spr.x },
+            { tipo: "mover", x: bx, y: spr.y, segundos: 4, espejo: espejoHacia(spr.x, bx) },
             { tipo: "pausa", segundos: 1 },
             { tipo: "voltear", segundos: 0.1 },
             { tipo: "mover", x: spr.x, y: spr.y, segundos: 4 },
@@ -1978,6 +1985,41 @@ function MandosSprite({
           ? "Su ruta no cambia con paneos, zooms ni fundidos de cámara."
           : "Hereda cámara y profundidad: sirve si forma parte del decorado 2.5D."}
       </p>
+      <div className="grid grid-cols-3 gap-1">
+        <label className="text-[9px] text-muted">
+          <span className="block">Vista del dibujo</span>
+          <select value={spr.vista ?? "lateral"}
+            onChange={(e) => onSpr({ vista: e.target.value as SpriteEnCapa["vista"] })}
+            className="input mt-0.5 w-full py-0.5 text-[9px]">
+            <option value="lateral">Lateral</option><option value="frontal">Frontal</option>
+            <option value="trasera">Trasera</option><option value="superior">Superior</option><option value="libre">Libre</option>
+          </select>
+        </label>
+        <label className="text-[9px] text-muted">
+          <span className="block">Dibujo apunta a</span>
+          <select value={spr.direccionBase ?? "derecha"}
+            onChange={(e) => {
+              const direccionBase = e.target.value as SpriteEnCapa["direccionBase"];
+              const orientado = ajustarSpriteALaEscena({ ...spr, direccionBase });
+              onSpr({ direccionBase, espejo: orientado.espejo, ruta: orientado.ruta });
+              onReiniciar();
+            }}
+            className="input mt-0.5 w-full py-0.5 text-[9px]">
+            <option value="derecha">Derecha</option><option value="izquierda">Izquierda</option>
+            <option value="frente">Frente</option><option value="espaldas">Espaldas</option>
+            <option value="arriba">Arriba</option><option value="abajo">Abajo</option><option value="ninguna">Sin dirección</option>
+          </select>
+        </label>
+        <label className="text-[9px] text-muted">
+          <span className="block">Posición se mide por</span>
+          <select value={spr.anclaje ?? "centro"}
+            onChange={(e) => onSpr({ anclaje: e.target.value as SpriteEnCapa["anclaje"] })}
+            className="input mt-0.5 w-full py-0.5 text-[9px]">
+            <option value="centro">Centro</option><option value="pies">Pies / apoyo</option>
+          </select>
+        </label>
+      </div>
+      {spr.superficieId && <p className="truncate text-[8px] text-accent" title={spr.superficieId}>Superficie: {spr.superficieId}</p>}
       <Barra etiqueta={spr.trayectoria || spr.ruta ? "A · X" : "Izq · der"} valor={spr.x} min={-0.5} max={1.5} paso={0.01}
         onCambio={(v) => { onSpr({ x: v }); if (spr.trayectoria || spr.ruta) onReiniciar(); }} formato={(v) => v.toFixed(2)} />
       <Barra etiqueta={spr.trayectoria || spr.ruta ? "A · Y" : "Arr · abj"} valor={spr.y} min={-0.5} max={1.5} paso={0.01}

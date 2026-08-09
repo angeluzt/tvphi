@@ -558,6 +558,10 @@ model Sprite {
   fotogramas Int
   /// A cuántos por segundo se ve bien. Se decide al fabricarlo, mirándolo.
   fps        Int
+  vista      String   @default("lateral")
+  direccion  String   @default("derecha")
+  accion     String   @default("otro")
+  anclaje    String   @default("centro")
   /// Tamaño de UN fotograma, no de la tira.
   ancho      Int
   alto       Int

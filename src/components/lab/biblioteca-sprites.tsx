@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Library, Loader2, Trash2, Plus, AlertTriangle, RefreshCw } from "lucide-react";
+import { Library, Loader2, Trash2, Plus, AlertTriangle, RefreshCw, Compass, Check } from "lucide-react";
 import { pedirJson } from "@/lib/pedir-json";
 import { pesoLegible, urlSprite, type SpriteMeta } from "@/lib/lab/biblioteca";
 import { VistaSprite } from "./vista-sprite";
@@ -24,6 +24,8 @@ export function BibliotecaSprites({ recargar, onUsar }: {
   const [puedeEditar, setPuedeEditar] = useState(false);
   const [borrando, setBorrando] = useState<string | null>(null);
   const [confirmar, setConfirmar] = useState<string | null>(null);
+  const [editando, setEditando] = useState<string | null>(null);
+  const [guardandoMeta, setGuardandoMeta] = useState<string | null>(null);
 
   const leer = useCallback(async () => {
     setError(null);
@@ -49,6 +51,30 @@ export function BibliotecaSprites({ recargar, onUsar }: {
       setError((e as Error).message);
     } finally {
       setBorrando(null);
+    }
+  }
+
+  async function cambiarMeta(s: SpriteMeta, patch: Partial<SpriteMeta>) {
+    const siguiente = { ...s, ...patch };
+    setSprites((lista) => (lista ?? []).map((x) => x.id === s.id ? siguiente : x));
+  }
+
+  async function guardarMeta(s: SpriteMeta) {
+    setGuardandoMeta(s.id);
+    setError(null);
+    try {
+      await pedirJson(urlSprite(s.id), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vista: s.vista, direccion: s.direccion, accion: s.accion, anclaje: s.anclaje,
+        }),
+      });
+      setEditando(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setGuardandoMeta(null);
     }
   }
 
@@ -106,8 +132,30 @@ export function BibliotecaSprites({ recargar, onUsar }: {
                     <p className="truncate text-[10px] text-muted">
                       {s.fotogramas} fotogramas · {s.fps}/s · {s.ancho}×{s.alto} · {pesoLegible(s.bytes)}
                     </p>
+                    <p className="truncate text-[9px] text-accent">
+                      {s.vista} · apunta {s.direccion} · {s.accion} · {s.anclaje}
+                    </p>
                   </div>
                 </div>
+                {puedeEditar && editando === s.id && (
+                  <div className="grid grid-cols-2 gap-1 rounded-md border border-accent/30 bg-accent/5 p-1.5">
+                    <select value={s.vista} onChange={(e) => void cambiarMeta(s, { vista: e.target.value as SpriteMeta["vista"] })} className="input min-w-0 py-1 text-[10px]">
+                      <option value="lateral">Lateral</option><option value="frontal">Frontal</option><option value="trasera">Trasera</option><option value="superior">Superior</option><option value="libre">Libre</option>
+                    </select>
+                    <select value={s.direccion} onChange={(e) => void cambiarMeta(s, { direccion: e.target.value as SpriteMeta["direccion"] })} className="input min-w-0 py-1 text-[10px]">
+                      <option value="derecha">Apunta derecha</option><option value="izquierda">Apunta izquierda</option><option value="frente">Apunta al frente</option><option value="espaldas">Apunta atrás</option><option value="arriba">Apunta arriba</option><option value="abajo">Apunta abajo</option><option value="ninguna">Sin dirección</option>
+                    </select>
+                    <select value={s.accion} onChange={(e) => void cambiarMeta(s, { accion: e.target.value as SpriteMeta["accion"] })} className="input min-w-0 py-1 text-[10px]">
+                      {(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"] as const).map((a) => <option value={a} key={a}>{a}</option>)}
+                    </select>
+                    <select value={s.anclaje} onChange={(e) => void cambiarMeta(s, { anclaje: e.target.value as SpriteMeta["anclaje"] })} className="input min-w-0 py-1 text-[10px]">
+                      <option value="centro">Ancla al centro</option><option value="pies">Ancla por los pies</option>
+                    </select>
+                    <button type="button" onClick={() => void guardarMeta(s)} disabled={guardandoMeta === s.id} className="btn-brand col-span-2 py-1 text-[10px]">
+                      {guardandoMeta === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Guardar orientación
+                    </button>
+                  </div>
+                )}
                 <div className="flex min-w-0 gap-1.5 overflow-hidden">
                   <button
                     onClick={() => onUsar?.(s)}
@@ -143,6 +191,16 @@ export function BibliotecaSprites({ recargar, onUsar }: {
                         <Trash2 className="h-3 w-3" />
                       </button>
                     )
+                  )}
+                  {puedeEditar && confirmar !== s.id && (
+                    <button type="button" onClick={() => {
+                      if (editando === s.id) { setEditando(null); void leer(); }
+                      else setEditando(s.id);
+                    }}
+                      className="rounded-md border border-border px-2 py-1 text-muted hover:border-accent/50 hover:text-accent"
+                      title="Corregir vista, dirección y anclaje">
+                      <Compass className="h-3 w-3" />
+                    </button>
                   )}
                 </div>
               </div>

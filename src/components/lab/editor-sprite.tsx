@@ -407,6 +407,17 @@ export function EditorSprite({
         </label>
       )}
 
+      <div className="grid grid-cols-2 gap-1 lg:hidden">
+        <button type="button" onClick={() => void centrarUno()} disabled={procesando}
+          className="btn-ghost px-2 py-1 text-xs">
+          <Crosshair className="h-3.5 w-3.5 text-accent" /> Centrar este
+        </button>
+        <button type="button" onClick={() => void centrarTodos()} disabled={procesando}
+          className="btn-ghost px-2 py-1 text-xs">
+          <Crosshair className="h-3.5 w-3.5 text-brand" /> Centrar todos
+        </button>
+      </div>
+
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_13rem]">
         <div className="flex min-h-56 items-center justify-center overflow-hidden rounded-lg border border-border bg-black/30 p-2">
           <canvas

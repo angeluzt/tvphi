@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { esAdminHistorias } from "@/lib/story/cupo";
+import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
@@ -55,4 +56,35 @@ export async function DELETE(
     return NextResponse.json({ error: "Ese sprite ya no está." }, { status: 404 });
   }
   return NextResponse.json({ ok: true });
+}
+
+const metadatos = z.object({
+  vista: z.enum(["lateral", "frontal", "trasera", "superior", "libre"]).optional(),
+  direccion: z.enum(["derecha", "izquierda", "frente", "espaldas", "arriba", "abajo", "ninguna"]).optional(),
+  accion: z.enum(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"]).optional(),
+  anclaje: z.enum(["centro", "pies"]).optional(),
+}).refine((v) => Object.keys(v).length > 0, "No hay cambios");
+
+/** Corrige cómo está dibujado un sprite sin volver a generarlo ni tocar su PNG. */
+export async function PATCH(
+  req: Request,
+  { params }: { params: { id: string } },
+) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  if (!esAdminHistorias(user.email)) {
+    return NextResponse.json({ error: "Solo administradores" }, { status: 403 });
+  }
+  const parsed = metadatos.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Metadatos de sprite inválidos." }, { status: 400 });
+  }
+  const actualizado = await prisma.sprite.updateMany({
+    where: { id: params.id },
+    data: parsed.data,
+  });
+  if (!actualizado.count) {
+    return NextResponse.json({ error: "Ese sprite ya no está." }, { status: 404 });
+  }
+  return NextResponse.json({ ok: true, ...parsed.data });
 }

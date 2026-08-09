@@ -4,6 +4,11 @@
 // tipos y estos topes estuvieran en la ruta, no se podrían importar desde el
 // panel, y acabarían copiados en dos sitios que se separan a la primera.
 
+export type VistaSprite = "lateral" | "frontal" | "trasera" | "superior" | "libre";
+export type DireccionSprite = "derecha" | "izquierda" | "frente" | "espaldas" | "arriba" | "abajo" | "ninguna";
+export type AccionSprite = "quieto" | "caminar" | "correr" | "volar" | "flotar" | "nadar" | "caer" | "girar" | "otro";
+export type AnclajeSprite = "centro" | "pies";
+
 /** Un sprite de la biblioteca, sin los bytes. Es lo que va en el listado. */
 export interface SpriteMeta {
   id: string;
@@ -15,6 +20,12 @@ export interface SpriteMeta {
   alto: number;
   bytes: number;
   creadoEn: string;
+  /** Cómo está dibujado, no hacia dónde lo moverá una escena concreta. */
+  vista: VistaSprite;
+  direccion: DireccionSprite;
+  accion: AccionSprite;
+  /** Centro para objetos voladores; pies para personajes apoyados en superficies. */
+  anclaje: AnclajeSprite;
 }
 
 /**

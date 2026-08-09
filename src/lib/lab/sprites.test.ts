@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  celdasSpritePorDefecto, desplazamientoParaCentrar, limitesCelda, normalizarCeldasSprite,
+  celdasSpritePorDefecto, centrarCeldasEnContenido, desplazamientoParaCentrar, limitesCelda, normalizarCeldasSprite,
   limpiarResiduosLinealesBorde, tamanoComunCeldasSprite,
 } from "./sprites";
 
@@ -77,6 +77,19 @@ describe("celdas de la hoja original", () => {
     ], 300, 200, 140, 100)).toEqual([
       { x: 10, y: 10, ancho: 140, alto: 100 },
       { x: 160, y: 100, ancho: 140, alto: 100 },
+    ]);
+  });
+
+  it("centra todas por contenido y conserva un solo tamaño", () => {
+    expect(centrarCeldasEnContenido([
+      { x: 0, y: 0, ancho: 100, alto: 80 },
+      { x: 100, y: 0, ancho: 100, alto: 80 },
+    ], [
+      { x0: 10, y0: 20, x1: 49, y1: 59 },
+      { x0: 140, y0: 10, x1: 179, y1: 49 },
+    ], 240, 100)).toEqual([
+      { x: 0, y: 0, ancho: 100, alto: 80 },
+      { x: 110, y: 0, ancho: 100, alto: 80 },
     ]);
   });
 });

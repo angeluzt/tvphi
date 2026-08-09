@@ -210,6 +210,31 @@ export function tamanoComunCeldasSprite(
   );
 }
 
+/**
+ * Centra recortes de igual tamaño alrededor de lo detectado en cada celda.
+ * No escala ni deforma ningún dibujo: solo mueve las ventanas sobre la hoja
+ * original, que es la operación recuperable antes de cortar.
+ */
+export function centrarCeldasEnContenido(
+  celdas: CeldaSprite[],
+  cajas: (CajaContenido | null)[],
+  anchoHoja: number,
+  altoHoja: number,
+): CeldaSprite[] {
+  const ancho = Math.max(...celdas.map((c) => c.ancho), 1);
+  const alto = Math.max(...celdas.map((c) => c.alto), 1);
+  return normalizarCeldasSprite(celdas.map((c, i) => {
+    const caja = cajas[i];
+    if (!caja) return { ...c, ancho, alto };
+    return {
+      x: Math.round((caja.x0 + caja.x1 + 1) / 2 - ancho / 2),
+      y: Math.round((caja.y0 + caja.y1 + 1) / 2 - alto / 2),
+      ancho,
+      alto,
+    };
+  }), anchoHoja, altoHoja);
+}
+
 /** Cuanto hay que mover una silueta para que su caja quede en el centro. */
 export function desplazamientoParaCentrar(
   caja: CajaContenido,

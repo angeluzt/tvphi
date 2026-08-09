@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Crop, Loader2, RotateCcw } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Crosshair, Crop, Loader2, RotateCcw } from "lucide-react";
 import {
-  celdasSpritePorDefecto, normalizarCeldasSprite, tamanoComunCeldasSprite, type CeldaSprite,
+  celdasSpritePorDefecto, centrarCeldasEnContenido, normalizarCeldasSprite,
+  tamanoComunCeldasSprite, type CajaContenido, type CeldaSprite,
 } from "@/lib/lab/sprites";
+import { cargarImagen, colorDelFondo, parseHex } from "@/lib/lab/quitar-fondo";
 import { RangoPreciso } from "./rango-preciso";
 
 // Editor de la hoja ORIGINAL. Aquí todavía existen los píxeles que quedaron al
@@ -42,6 +44,7 @@ export function EditorCortesSprite({
   anchoHoja,
   altoHoja,
   forma,
+  croma,
   celdas,
   procesando,
   bloqueado = false,
@@ -52,6 +55,7 @@ export function EditorCortesSprite({
   anchoHoja: number;
   altoHoja: number;
   forma: "tira" | "columna";
+  croma: string;
   celdas: CeldaSprite[];
   procesando: boolean;
   bloqueado?: boolean;
@@ -62,6 +66,8 @@ export function EditorCortesSprite({
   const [elegida, setElegida] = useState(0);
   const [sucio, setSucio] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ajustando, setAjustando] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
   const imagenRef = useRef<HTMLImageElement | null>(null);
   const gestoRef = useRef<Gesto | null>(null);
   const localesRef = useRef(locales);
@@ -150,6 +156,49 @@ export function EditorCortesSprite({
     }
   }
 
+  async function centrarAutomaticamente() {
+    if (procesando || bloqueado || ajustando) return;
+    setAjustando(true);
+    setError(null);
+    setAviso(null);
+    try {
+      const img = await cargarImagen(hojaUrl);
+      const cv = document.createElement("canvas");
+      cv.width = anchoHoja; cv.height = altoHoja;
+      const ctx = cv.getContext("2d", { willReadFrequently: true });
+      if (!ctx) throw new Error("No se pudo analizar la hoja.");
+      ctx.drawImage(img, 0, 0, anchoHoja, altoHoja);
+      const data = ctx.getImageData(0, 0, anchoHoja, altoHoja).data;
+      const fondo = colorDelFondo(data, anchoHoja, altoHoja) ?? parseHex(croma) ?? [255, 0, 255];
+      let tocando = 0;
+      const cajas = localesRef.current.map((celda): CajaContenido | null => {
+        let x0 = celda.x + celda.ancho, y0 = celda.y + celda.alto, x1 = -1, y1 = -1;
+        for (let y = celda.y; y < celda.y + celda.alto; y++) {
+          for (let x = celda.x; x < celda.x + celda.ancho; x++) {
+            const i = (y * anchoHoja + x) * 4;
+            if (data[i + 3] < 24) continue;
+            const dr = data[i] - fondo[0], dg = data[i + 1] - fondo[1], db = data[i + 2] - fondo[2];
+            if (dr * dr + dg * dg + db * db < 72 * 72) continue;
+            if (x < x0) x0 = x; if (x > x1) x1 = x;
+            if (y < y0) y0 = y; if (y > y1) y1 = y;
+          }
+        }
+        if (x1 < 0) return null;
+        if (x0 <= celda.x + 2 || y0 <= celda.y + 2
+          || x1 >= celda.x + celda.ancho - 3 || y1 >= celda.y + celda.alto - 3) tocando++;
+        return { x0, y0, x1, y1 };
+      });
+      poner(centrarCeldasEnContenido(localesRef.current, cajas, anchoHoja, altoHoja));
+      setAviso(tocando
+        ? `Se centraron todas con el mismo tamaño. ${tocando} tocan una división: revísalas y, si hay una parte cruzada, muévela en «Hoja».`
+        : "Todas las casillas se centraron por su contenido y conservaron un tamaño común.");
+    } catch (e) {
+      setError((e as Error).message || "No se pudo ajustar automáticamente.");
+    } finally {
+      setAjustando(false);
+    }
+  }
+
   const actual = locales[elegida];
   const iniciales = celdasSpritePorDefecto(anchoHoja, altoHoja, locales.length, forma);
 
@@ -213,6 +262,14 @@ export function EditorCortesSprite({
           </button>
         ))}
       </div>
+
+      <button type="button" onClick={() => void centrarAutomaticamente()}
+        disabled={bloqueado || procesando || ajustando}
+        className="btn-ghost w-full text-xs disabled:opacity-40">
+        {ajustando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Crosshair className="h-3.5 w-3.5 text-accent" />}
+        {ajustando ? "Analizando la hoja…" : "Ajustar todas automáticamente"}
+      </button>
+      {aviso && <p className="text-[10px] leading-snug text-accent">{aviso}</p>}
 
       {actual && (
         <div className="grid gap-3 rounded-lg border border-border bg-surface/45 p-2 sm:grid-cols-[minmax(0,1fr)_9rem]">

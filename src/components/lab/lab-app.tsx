@@ -122,6 +122,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
                 url: urlSprite(s.id),
                 spr: {
                   id: s.id, fotogramas: s.fotogramas, fps: s.fps,
+                  vista: s.vista, direccionBase: s.direccion, accion: s.accion, anclaje: s.anclaje,
                   x: 0.5, y: 0.45, alto: 0.2,
                   // Un sprite nuevo tiene coordenadas propias del lienzo. Solo
                   // seguirá paneos y zooms si la persona lo elige en Montaje.
