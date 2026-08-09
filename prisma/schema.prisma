@@ -240,8 +240,9 @@ model StoryCharacter {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  series StorySeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  series          StorySeries?     @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  spriteCharacter SpriteCharacter?
 
   @@index([userId])
   @@index([seriesId])
@@ -582,16 +583,18 @@ model Sprite {
 }
 
 model SpriteCharacter {
-  id              String   @id @default(cuid())
-  userId          String
-  nombre          String
-  descripcion     String   @db.Text
-  referencia      Bytes
-  bytesReferencia Int
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  animaciones SpriteAnimation[]
+  id               String  @id @default(cuid())
+  userId           String
+  storyCharacterId String? @unique
+  nombre           String
+  descripcion      String  @db.Text
+  referencia       Bytes
+  bytesReferencia  Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storyCharacter StoryCharacter? @relation(fields: [storyCharacterId], references: [id], onDelete: SetNull)
+  animaciones      SpriteAnimation[]
   @@index([userId, updatedAt])
 }
 
