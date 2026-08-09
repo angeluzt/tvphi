@@ -5,10 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { esPng } from "@/lib/lab/biblioteca";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
 import type { PersonajeSprite } from "@/lib/lab/personajes-sprite";
+import { normalizeCharacterData } from "@/lib/story/characters";
 export const dynamic="force-dynamic";
 const MAX_HOJA=6*1024*1024,MAX_TIRA=4*1024*1024,MAX_REF=2*1024*1024,MAX_P=20,MAX_A=30,MAX_TOTAL=120*1024*1024;
 const celda=z.object({x:z.number().int().min(0).max(8192),y:z.number().int().min(0).max(8192),ancho:z.number().int().min(1).max(8192),alto:z.number().int().min(1).max(8192)});
-const cuerpo=z.object({personajeId:z.string().cuid().optional(),animacionId:z.string().cuid().optional(),nombrePersonaje:z.string().trim().min(1).max(60),
+const cuerpo=z.object({personajeId:z.string().cuid().optional(),storyCharacterId:z.string().cuid().optional(),animacionId:z.string().cuid().optional(),nombrePersonaje:z.string().trim().min(1).max(60),
  descripcionPersonaje:z.string().trim().min(1).max(600),nombre:z.string().trim().min(1).max(60),que:z.string().trim().min(1).max(400),
  fotogramas:z.number().int().min(1).max(24),fps:z.number().int().min(1).max(60),vista:z.enum(["lateral","frontal","trasera","superior","libre"]),
  direccion:z.enum(["derecha","izquierda","frente","espaldas","arriba","abajo","ninguna"]),accion:z.enum(["quieto","caminar","correr","volar","flotar","nadar","caer","girar","otro"]),
@@ -18,12 +19,20 @@ const cuerpo=z.object({personajeId:z.string().cuid().optional(),animacionId:z.st
  tira:z.string().min(100).max(6_000_000),referencia:z.string().min(100).max(3_000_000).optional()});
 function png(v:string,max:number){try{const b=Buffer.from(v.replace(/^data:image\/png;base64,/,"").replace(/\s+/g,""),"base64");return b.length>=100&&b.length<=max&&esPng(b)?b:null;}catch{return null;}}
 export async function GET(){const u=await getCurrentUser();if(!u)return NextResponse.json({error:"No autorizado"},{status:401});
- const rows=await prisma.spriteCharacter.findMany({where:{userId:u.id},orderBy:{updatedAt:"desc"},take:MAX_P,include:{animaciones:{orderBy:{updatedAt:"desc"},
- select:{id:true,nombre:true,que:true,fotogramas:true,fps:true,vista:true,direccion:true,accion:true,anclaje:true,ancho:true,alto:true,columnas:true,filas:true,bytesOriginal:true,bytesTrabajo:true,bytesTira:true,updatedAt:true}}}});
- const personajes:PersonajeSprite[]=rows.map(p=>({id:p.id,nombre:p.nombre,descripcion:p.descripcion,actualizadoEn:p.updatedAt.toISOString(),animaciones:p.animaciones.map(a=>({
+ const [rows,fichas]=await Promise.all([prisma.spriteCharacter.findMany({where:{userId:u.id},orderBy:{updatedAt:"desc"},take:MAX_P,include:{animaciones:{orderBy:{updatedAt:"desc"},
+ select:{id:true,nombre:true,que:true,fotogramas:true,fps:true,vista:true,direccion:true,accion:true,anclaje:true,ancho:true,alto:true,columnas:true,filas:true,bytesOriginal:true,bytesTrabajo:true,bytesTira:true,updatedAt:true}}}}),
+ prisma.storyCharacter.findMany({where:{userId:u.id},orderBy:{updatedAt:"desc"},take:100,select:{id:true,name:true,data:true,updatedAt:true}})]);
+ const animaciones=(p:typeof rows[number])=>p.animaciones.map(a=>({
  id:a.id,nombre:a.nombre,que:a.que,fotogramas:a.fotogramas,fps:a.fps,vista:a.vista as any,direccion:a.direccion as any,accion:a.accion as any,anclaje:a.anclaje as any,
  ancho:a.ancho,alto:a.alto,columnas:a.columnas,filas:a.filas,bytes:a.bytesOriginal+a.bytesTrabajo+a.bytesTira,actualizadoEn:a.updatedAt.toISOString(),
- tiraUrl:`/api/story/sprite-characters/animations/${a.id}/image?v=${a.updatedAt.getTime()}`}))}));return NextResponse.json({personajes});}
+ tiraUrl:`/api/story/sprite-characters/animations/${a.id}/image?v=${a.updatedAt.getTime()}`}));
+ const porFicha=new Map(rows.filter(p=>p.storyCharacterId).map(p=>[p.storyCharacterId!,p]));
+ const desdeFichas:PersonajeSprite[]=fichas.map(f=>{const d=normalizeCharacterData(f.data),p=porFicha.get(f.id);return{
+  id:`historia:${f.id}`,spriteId:p?.id??null,storyCharacterId:f.id,origen:"historias",nombre:f.name,
+  descripcion:d.description||d.prompt||"Sin descripción",prompt:d.prompt,actualizadoEn:(p?.updatedAt??f.updatedAt).toISOString(),animaciones:p?animaciones(p):[]};});
+ const independientes:PersonajeSprite[]=rows.filter(p=>!p.storyCharacterId).map(p=>({id:`sprite:${p.id}`,spriteId:p.id,storyCharacterId:null,origen:"sprites",
+  nombre:p.nombre,descripcion:p.descripcion,prompt:p.descripcion,actualizadoEn:p.updatedAt.toISOString(),animaciones:animaciones(p)}));
+ return NextResponse.json({personajes:[...desdeFichas,...independientes]});}
 export async function POST(req:Request){const u=await getCurrentUser();if(!u)return NextResponse.json({error:"No autorizado"},{status:401});const userId=u.id;
  const p=cuerpo.safeParse(await req.json().catch(()=>null));if(!p.success)return NextResponse.json({error:"Proyecto incompleto o inválido."},{status:400});const d=p.data;
  if(d.columnas*d.filas<d.fotogramas||d.celdas.length!==d.fotogramas)return NextResponse.json({error:"La rejilla no coincide."},{status:400});
@@ -46,5 +55,6 @@ export async function POST(req:Request){const u=await getCurrentUser();if(!u)ret
  if(c._count.animaciones>=MAX_A)return NextResponse.json({error:`Ese personaje ya tiene ${MAX_A} animaciones.`},{status:409});const a=await prisma.spriteAnimation.create({data:{...data,characterId:c.id}});
  await prisma.spriteCharacter.update({where:{id:c.id},data:{nombre:d.nombrePersonaje,descripcion:d.descripcionPersonaje}});return NextResponse.json({ok:true,personajeId:c.id,animacionId:a.id,enAtlas:await pack(a.id)});}
  if(propios.length>=MAX_P)return NextResponse.json({error:`Ya tienes ${MAX_P} personajes.`},{status:409});if(!ref)return NextResponse.json({error:"Falta el cuadro de referencia."},{status:400});
- const c=await prisma.spriteCharacter.create({data:{userId,nombre:d.nombrePersonaje,descripcion:d.descripcionPersonaje,referencia:ref,bytesReferencia:ref.length,animaciones:{create:data}},include:{animaciones:{select:{id:true}}}});
+ if(d.storyCharacterId){const ficha=await prisma.storyCharacter.findFirst({where:{id:d.storyCharacterId,userId},select:{id:true}});if(!ficha)return NextResponse.json({error:"La ficha de personaje no existe."},{status:404});}
+ const c=await prisma.spriteCharacter.create({data:{userId,storyCharacterId:d.storyCharacterId,nombre:d.nombrePersonaje,descripcion:d.descripcionPersonaje,referencia:ref,bytesReferencia:ref.length,animaciones:{create:data}},include:{animaciones:{select:{id:true}}}});
  const id=c.animaciones[0].id;return NextResponse.json({ok:true,personajeId:c.id,animacionId:id,enAtlas:await pack(id)});}
