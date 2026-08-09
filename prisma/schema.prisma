@@ -39,6 +39,8 @@ model User {
   storyProjects  StoryProject[]
   storyCharacters StoryCharacter[]
   storySeries     StorySeries[]
+  spriteCharacters SpriteCharacter[]
+  spriteAtlases    SpriteAtlas[]
   aiCredential    AiCredential?
   chatMessages   ChatMessage[]
   pointsBalances PointsBalance[]
@@ -577,4 +579,67 @@ model Sprite {
   createdAt  DateTime @default(now())
 
   @@index([createdAt])
+}
+
+model SpriteCharacter {
+  id              String   @id @default(cuid())
+  userId          String
+  nombre          String
+  descripcion     String   @db.Text
+  referencia      Bytes
+  bytesReferencia Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  animaciones SpriteAnimation[]
+  @@index([userId, updatedAt])
+}
+
+model SpriteAnimation {
+  id String @id @default(cuid())
+  characterId String
+  nombre String
+  que String @db.Text
+  fotogramas Int
+  fps Int
+  vista String
+  direccion String
+  accion String
+  anclaje String
+  croma String
+  columnas Int
+  filas Int
+  anchoHoja Int
+  altoHoja Int
+  ancho Int
+  alto Int
+  celdas Json
+  hojaOriginal Bytes
+  hojaTrabajo Bytes?
+  tira Bytes?
+  atlasFrames Json?
+  bytesOriginal Int
+  bytesTrabajo Int
+  bytesTira Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  character SpriteCharacter @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  @@index([characterId, updatedAt])
+}
+
+model SpriteAtlas {
+  id String @id @default(cuid())
+  userId String
+  ancho Int @default(2048)
+  alto Int @default(2048)
+  png Bytes
+  bytes Int
+  cursorX Int @default(2)
+  cursorY Int @default(2)
+  altoFila Int @default(0)
+  usados Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
 }

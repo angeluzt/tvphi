@@ -102,6 +102,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
         <div className="space-y-4">
           <GenerarSprite
             puedeGenerar={hayIa}
+            puedePublicar
             onGuardado={() => setTandaSprites((v) => v + 1)}
           />
           {!hayIa && (

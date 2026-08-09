@@ -40,6 +40,8 @@ export interface CeldaSprite {
   alto: number;
 }
 
+export interface RejillaSprite { columnas: number; filas: number; }
+
 export interface CajaContenido {
   x0: number;
   y0: number;
@@ -165,6 +167,38 @@ export function celdasSpritePorDefecto(
     const ly = forma === "columna"
       ? limitesCelda(alto, n, i)
       : { inicio: 0, tam: alto };
+    return { x: lx.inicio, y: ly.inicio, ancho: lx.tam, alto: ly.tam };
+  });
+}
+
+/** Reparte cuadros en celdas casi cuadradas; permite huecos al final. */
+export function rejillaSpriteEquilibrada(
+  fotogramas: number,
+  forma: "tira" | "columna" = "tira",
+): RejillaSprite {
+  const n = Math.max(1, Math.min(24, Math.round(fotogramas)));
+  const relacionHoja = forma === "columna" ? 2 / 3 : 3 / 2;
+  let mejor = { columnas: n, filas: 1, coste: Number.POSITIVE_INFINITY };
+  for (let columnas = 1; columnas <= n; columnas++) {
+    const filas = Math.ceil(n / columnas);
+    const coste = Math.abs(Math.log(relacionHoja * filas / columnas))
+      + ((columnas * filas - n) / n) * 0.22;
+    if (coste < mejor.coste - 1e-9) mejor = { columnas, filas, coste };
+  }
+  return { columnas: mejor.columnas, filas: mejor.filas };
+}
+
+/** Rejilla rectangular en orden de lectura, sin repetir ni perder píxeles. */
+export function celdasSpriteEnRejilla(
+  ancho: number, alto: number, fotogramas: number, rejilla: RejillaSprite,
+): CeldaSprite[] {
+  const n = Math.max(1, Math.round(fotogramas));
+  const columnas = Math.max(1, Math.round(rejilla.columnas));
+  const filas = Math.max(1, Math.round(rejilla.filas));
+  if (columnas * filas < n) return celdasSpritePorDefecto(ancho, alto, n, "tira");
+  return Array.from({ length: n }, (_, i) => {
+    const lx = limitesCelda(ancho, columnas, i % columnas);
+    const ly = limitesCelda(alto, filas, Math.floor(i / columnas));
     return { x: lx.inicio, y: ly.inicio, ancho: lx.tam, alto: ly.tam };
   });
 }

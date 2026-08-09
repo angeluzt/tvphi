@@ -20,6 +20,8 @@ export interface ProyectoSpriteV2 {
   accion: AccionSprite;
   anclaje: AnclajeSprite;
   forma: "tira" | "columna";
+  columnas: number;
+  filas: number;
   croma: string;
   hoja: {
     archivo: string;
@@ -53,6 +55,8 @@ export function crearProyectoSprite(opts: {
   accion: AccionSprite;
   anclaje: AnclajeSprite;
   forma: "tira" | "columna";
+  columnas?: number;
+  filas?: number;
   croma?: string;
   anchoHoja: number;
   altoHoja: number;
@@ -72,6 +76,8 @@ export function crearProyectoSprite(opts: {
     accion: opts.accion,
     anclaje: opts.anclaje,
     forma: opts.forma,
+    columnas: opts.columnas,
+    filas: opts.filas,
     croma: opts.croma ?? "#FF00FF",
     hoja: {
       archivo: ARCHIVO_HOJA_SPRITE,
@@ -108,6 +114,9 @@ export function normalizarProyectoSprite(v: unknown): ProyectoSpriteV2 {
   const croma = /^#[0-9a-f]{6}$/i.test(String(p.croma ?? ""))
     ? String(p.croma).toUpperCase()
     : "#FF00FF";
+  const columnas = p.columnas == null ? (p.forma === "columna" ? 1 : celdas.length) : entero(p.columnas, 1, 24, "columnas");
+  const filas = p.filas == null ? (p.forma === "columna" ? celdas.length : 1) : entero(p.filas, 1, 24, "filas");
+  if (columnas * filas < celdas.length) throw new Error("La rejilla no contiene todas las celdas.");
 
   return {
     version: 2,
@@ -120,6 +129,8 @@ export function normalizarProyectoSprite(v: unknown): ProyectoSpriteV2 {
     accion: ["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"].includes(p.accion) ? p.accion : "otro",
     anclaje: p.anclaje === "pies" ? "pies" : "centro",
     forma: p.forma === "columna" ? "columna" : "tira",
+    columnas,
+    filas,
     croma,
     hoja: {
       archivo: texto(p.hoja?.archivo, ARCHIVO_HOJA_SPRITE, 120),

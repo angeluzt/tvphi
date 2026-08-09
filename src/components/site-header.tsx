@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
-import { LogOut, User, Sparkles, BarChart3, FlaskConical } from "lucide-react";
+import { LogOut, User, Sparkles, BarChart3, FlaskConical, Bird } from "lucide-react";
 
 interface HeaderUser {
   username: string;
@@ -26,6 +26,7 @@ export function SiteHeader({ user }: { user: HeaderUser | null }) {
                 <Sparkles className="h-4 w-4" />
                 <span className="hidden sm:inline">Historias</span>
               </Link>
+              <Link href="/sprites" className="btn-ghost" title="Personajes animados"><Bird className="h-4 w-4 text-accent"/><span className="hidden lg:inline">Sprites</span></Link>
               {user.admin && (
                 <>
                   <Link

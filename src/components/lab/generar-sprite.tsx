@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check, FolderOpen,
+  Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check, FolderOpen, UserRound, Pencil, Plus,
 } from "lucide-react";
 import { pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
 import {
-  celdasSpritePorDefecto, cortarHoja, fotogramasDeTira, nombreSprite, tiraDeFotogramas,
+  celdasSpriteEnRejilla, cortarHoja, fotogramasDeTira, nombreSprite, tiraDeFotogramas,
   type CeldaSprite, type Fotograma,
 } from "@/lib/lab/sprites";
 import { cargarImagen } from "@/lib/lab/quitar-fondo";
@@ -25,6 +25,7 @@ import {
   archivosProyectoSprite, crearProyectoSprite, normalizarProyectoSprite,
 } from "@/lib/lab/sprite-proyecto";
 import { RangoPreciso } from "./rango-preciso";
+import type { PersonajeSprite, ProyectoAnimacionSprite } from "@/lib/lab/personajes-sprite";
 
 // Fabricar un sprite animado: un bicho, varios fotogramas, fondo fuera.
 //
@@ -49,6 +50,7 @@ const IDEAS = [
   "candle flame flickering",
   "flag waving in the wind",
 ];
+const blobABase64=(blob:Blob)=>new Promise<string>((res,rej)=>{const f=new FileReader();f.onload=()=>res(String(f.result).replace(/^data:[^,]+,/,""));f.onerror=()=>rej(new Error("No se pudo leer la imagen."));f.readAsDataURL(blob);});
 
 /** Lo que queda tras cortar la hoja: los fotogramas y la tira ya pegada. */
 interface Hecho {
@@ -70,19 +72,24 @@ interface Hecho {
     ancho: number;
     alto: number;
     forma: "tira" | "columna";
+    columnas: number;
+    filas: number;
     croma: string;
     celdas: CeldaSprite[];
+    originalBlob: Blob;
   };
 }
 
-export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
+export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar = true }: {
   onGuardado?: (s: SpriteMeta) => void;
   /** Importar y editar un ZIP no necesita IA y debe seguir disponible sin clave. */
   puedeGenerar?: boolean;
+  puedePublicar?: boolean;
 }) {
   const [que, setQue] = useState("");
   const [n, setN] = useState(6);
   const [forma, setForma] = useState<"tira" | "columna">("tira");
+  const [distribucion,setDistribucion]=useState<"equilibrada"|"fila"|"columna">("equilibrada");
   const [vista, setVista] = useState<TipoVistaSprite>("lateral");
   const [direccion, setDireccion] = useState<DireccionSprite>("derecha");
   const [accion, setAccion] = useState<AccionSprite>("otro");
@@ -97,12 +104,20 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
   const [nombre, setNombre] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
+  const [guardadoPrivado,setGuardadoPrivado]=useState(false);
+  const [personajes,setPersonajes]=useState<PersonajeSprite[]>([]);
+  const [personajeId,setPersonajeId]=useState("");
+  const [animacionId,setAnimacionId]=useState<string|null>(null);
+  const [nombrePersonaje,setNombrePersonaje]=useState("");
+  const [descripcionPersonaje,setDescripcionPersonaje]=useState("");
   const [actualizando, setActualizando] = useState(false);
   const [cortesPendientes, setCortesPendientes] = useState(false);
   const [hojaPendiente, setHojaPendiente] = useState(false);
   const [editorActivo, setEditorActivo] = useState<"hoja" | "cortes" | "fotogramas">("hoja");
   const revisionTira = useRef(0);
   const edicionPendiente = cortesPendientes || hojaPendiente;
+  async function releerPersonajes(){try{const j=await pedirJson("/api/story/sprite-characters");setPersonajes(j.personajes??[]);}catch{}}
+  useEffect(()=>{void releerPersonajes();},[]);
 
   // Cada correccion crea una URL nueva para la vista previa. La anterior deja
   // de hacer falta en cuanto React cambia de imagen.
@@ -120,12 +135,13 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
 
   async function generar() {
     if (!puedeGenerar || que.trim().length < 3) return;
-    setError(null); setAviso(null); setHecho(null); setGuardado(false);
+    setError(null); setAviso(null); setHecho(null); setGuardado(false);setGuardadoPrivado(false);setAnimacionId(null);
     setPaso("Dibujando la hoja…");
     try {
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/sprite", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ que: que.trim(), fotogramas: n, forma, vista, direccion, accion, calidad }),
+        body: JSON.stringify({que:que.trim(),fotogramas:n,forma:distribucion==="columna"||(distribucion==="equilibrada"&&accion==="caer")?"columna":"tira",
+          distribucion,vista,direccion,accion,calidad,personajeId:personajeId||undefined}),
       });
       if (!r.ok) throw new Error(j.error || "No se pudo");
 
@@ -135,9 +151,8 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       const imagenHoja = await cargarImagen(dataUrl);
       const formaHoja = (j.forma ?? forma) as "tira" | "columna";
       const cuantos = j.fotogramas ?? n;
-      const celdas = celdasSpritePorDefecto(
-        imagenHoja.naturalWidth, imagenHoja.naturalHeight, cuantos, formaHoja,
-      );
+      const columnas=Number(j.columnas)||(formaHoja==="columna"?1:cuantos),filas=Number(j.filas)||(formaHoja==="columna"?cuantos:1);
+      const celdas=celdasSpriteEnRejilla(imagenHoja.naturalWidth,imagenHoja.naturalHeight,cuantos,{columnas,filas});
 
       setPaso("Recortando los fotogramas…");
       const hoja = await cortarHoja({
@@ -173,19 +188,22 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
           ancho: imagenHoja.naturalWidth,
           alto: imagenHoja.naturalHeight,
           forma: formaHoja,
+          columnas,filas,
           croma: j.croma || "#FF00FF",
           celdas: hoja.celdas,
+          originalBlob:blobHoja,
         },
       });
       setCortesPendientes(false);
       setHojaPendiente(false);
       setEditorActivo("hoja");
       setNombre(nombreSprite(que));
+      if(!personajeId){setNombrePersonaje(nombreSprite(que));setDescripcionPersonaje(que.trim());}
       setPaso(null);
       setAviso(
         `${hoja.fotogramas.length} fotogramas listos`
         + (hoja.descartados ? ` · ${hoja.descartados} salieron vacíos y se tiraron` : "")
-        + ` · ${tira.ancho}×${tira.alto} · ${pesoLegible(tira.blob.size)}`,
+        + ` · rejilla ${columnas}×${filas} · ${tira.ancho}×${tira.alto} · ${pesoLegible(tira.blob.size)}`,
       );
     } catch (e) {
       setError((e as Error).message);
@@ -232,6 +250,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       } : prev);
       aceptada = true;
       setGuardado(false);
+      setGuardadoPrivado(false);
       setHojaPendiente(false);
       setEditorActivo("cortes");
       setAviso(
@@ -279,6 +298,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
         hoja: { ...prev.hoja, celdas: cortada.celdas },
       } : prev);
       setGuardado(false);
+      setGuardadoPrivado(false);
       setCortesPendientes(false);
       setEditorActivo("fotogramas");
       setAviso(
@@ -310,6 +330,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
         alto: tira.alto,
       } : prev);
       setGuardado(false);
+      setGuardadoPrivado(false);
       setAviso(
         `${fotos.length} fotogramas corregidos · ${tira.ancho}×${tira.alto}`
         + ` · ${pesoLegible(tira.blob.size)}`,
@@ -356,6 +377,30 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
     }
   }
 
+  async function guardarEnPersonaje(){if(!hecho||guardando||edicionPendiente||!nombrePersonaje.trim())return;setGuardando(true);setError(null);try{
+    const refBlob=await(await fetch(hecho.fotos[0].url)).blob();const [hojaOriginal,hojaTrabajo,tira,referencia]=await Promise.all([
+      blobABase64(hecho.hoja.originalBlob),blobABase64(hecho.hoja.blob),blobABase64(hecho.blob),blobABase64(refBlob)]);
+    const j=await pedirJson("/api/story/sprite-characters",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      personajeId:personajeId||undefined,animacionId:animacionId||undefined,nombrePersonaje:nombrePersonaje.trim(),descripcionPersonaje:descripcionPersonaje.trim()||que.trim(),
+      nombre:nombre.trim()||nombreSprite(que),que:que.trim(),fotogramas:hecho.fotos.length,fps,vista,direccion,accion,anclaje,croma:hecho.hoja.croma,
+      columnas:hecho.hoja.columnas,filas:hecho.hoja.filas,anchoHoja:hecho.hoja.ancho,altoHoja:hecho.hoja.alto,ancho:hecho.ancho,alto:hecho.alto,
+      celdas:hecho.hoja.celdas,hojaOriginal,hojaTrabajo,tira,referencia:personajeId?undefined:referencia})});
+    setPersonajeId(j.personajeId);setAnimacionId(j.animacionId);setGuardadoPrivado(true);await releerPersonajes();
+    setAviso(j.actualizada?`Cambios guardados${j.enAtlas?" y actualizados en el atlas.":"."}`:`Animación guardada${j.enAtlas?" y compactada en el atlas.":"."}`);
+  }catch(e){setError((e as Error).message);}finally{setGuardando(false);}}
+
+  async function editarAnimacion(id:string){if(paso)return;setPaso("Abriendo la animación…");setError(null);let uh:string|null=null,ut:string|null=null;try{
+    const j=await pedirJson(`/api/story/sprite-characters/animations/${id}`),a=j.animacion as ProyectoAnimacionSprite;
+    const bo=await(await fetch(`data:image/png;base64,${a.hojaOriginal}`)).blob(),bh=await(await fetch(`data:image/png;base64,${a.hojaTrabajo}`)).blob(),bt=await(await fetch(`data:image/png;base64,${a.tira}`)).blob();
+    uh=URL.createObjectURL(bh);ut=URL.createObjectURL(bt);const fotos=await fotogramasDeTira(ut,a.fotogramas);
+    setHecho({edicionId:Date.now(),fotos,url:ut,blob:bt,ancho:a.ancho,alto:a.alto,descartados:0,hoja:{sesionId:Date.now(),url:uh,blob:bh,originalBlob:bo,
+      ancho:a.anchoHoja,alto:a.altoHoja,forma:a.columnas>=a.filas?"tira":"columna",columnas:a.columnas,filas:a.filas,croma:a.croma,celdas:a.celdas}});uh=null;ut=null;
+    const p=personajes.find(x=>x.id===a.personajeId);setPersonajeId(a.personajeId);setAnimacionId(a.id);setNombrePersonaje(a.personajeNombre);setDescripcionPersonaje(p?.descripcion??a.que);
+    setQue(a.que);setNombre(a.nombre);setN(a.fotogramas);setFps(a.fps);setVista(a.vista);setDireccion(a.direccion);setAccion(a.accion);setAnclaje(a.anclaje);
+    setForma(a.columnas>=a.filas?"tira":"columna");setDistribucion(a.filas===1?"fila":a.columnas===1?"columna":"equilibrada");setGuardado(false);setGuardadoPrivado(true);
+    setCortesPendientes(false);setHojaPendiente(false);setEditorActivo("hoja");setAviso("Animación abierta para corregir.");
+  }catch(e){if(uh)URL.revokeObjectURL(uh);if(ut)URL.revokeObjectURL(ut);setError((e as Error).message);}finally{setPaso(null);}}
+
   async function descargar() {
     if (!hecho || edicionPendiente) return;
     const base = nombreSprite(nombre || que);
@@ -368,6 +413,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       accion,
       anclaje,
       forma: hecho.hoja.forma,
+      columnas:hecho.hoja.columnas,filas:hecho.hoja.filas,
       croma: hecho.hoja.croma,
       anchoHoja: hecho.hoja.ancho,
       altoHoja: hecho.hoja.alto,
@@ -449,8 +495,10 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
           ancho: proyecto.hoja.ancho,
           alto: proyecto.hoja.alto,
           forma: proyecto.forma,
+          columnas:proyecto.columnas,filas:proyecto.filas,
           croma: proyecto.croma,
           celdas: proyecto.celdas,
+          originalBlob:blobHoja,
         },
       });
       // Las URL ya pertenecen al estado; el efecto las liberará al reemplazarlo.
@@ -464,8 +512,11 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       setAccion(proyecto.accion);
       setAnclaje(proyecto.anclaje);
       setForma(proyecto.forma);
+      setDistribucion(proyecto.filas===1?"fila":proyecto.columnas===1?"columna":"equilibrada");
       setN(proyecto.celdas.length);
+      setAnimacionId(null);setPersonajeId("");setNombrePersonaje(proyecto.nombre);setDescripcionPersonaje(proyecto.que);
       setGuardado(false);
+      setGuardadoPrivado(false);
       setCortesPendientes(false);
       setHojaPendiente(false);
       setEditorActivo("hoja");
@@ -490,6 +541,15 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
             que una imagen suelta. Guárdalo en la biblioteca y ya no se vuelve a pagar.
           </span>
         </span>
+      </div>
+
+      <div className="rounded-lg border border-accent/25 bg-accent/5 p-2">
+        <div className="flex items-center gap-1.5 text-xs font-semibold"><UserRound className="h-3.5 w-3.5 text-accent"/> Identidad del personaje</div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2"><label><span className="text-[10px] text-muted">Generar para</span>
+          <select value={personajeId} onChange={e=>{const id=e.target.value;setPersonajeId(id);setAnimacionId(null);setGuardadoPrivado(false);const p=personajes.find(x=>x.id===id);if(p){setNombrePersonaje(p.nombre);setDescripcionPersonaje(p.descripcion);}}} className="input mt-1 w-full py-1 text-xs">
+            <option value="">Un personaje nuevo</option>{personajes.map(p=><option key={p.id} value={p.id}>{p.nombre} · {p.animaciones.length} anim.</option>)}</select></label>
+          <label><span className="text-[10px] text-muted">Nombre del personaje</span><input className="input mt-1 w-full py-1 text-xs" value={nombrePersonaje} maxLength={60} placeholder="Lumi, el zorro astral" onChange={e=>{setNombrePersonaje(e.target.value);setGuardadoPrivado(false);}}/></label></div>
+        <p className="mt-1 text-[10px] text-muted">Al elegir uno existente se reutiliza su cuadro maestro para conservar diseño, ropa y proporciones.</p>
       </div>
 
       <div>
@@ -518,15 +578,14 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="block">
           <span className="text-xs text-muted">Fotogramas: {n}</span>
-          <RangoPreciso valor={n} min={2} max={12} paso={1}
+          <RangoPreciso valor={n} min={1} max={12} paso={1}
             onCambio={setN} etiqueta="fotogramas" className="mt-1" />
         </label>
         <label className="block">
           <span className="text-xs text-muted">Cómo se reparten</span>
-          <select value={forma} onChange={(e) => setForma(e.target.value as any)}
+          <select value={distribucion} onChange={e=>{const d=e.target.value as "equilibrada"|"fila"|"columna";setDistribucion(d);if(d==="fila")setForma("tira");if(d==="columna")setForma("columna");}}
             className="input mt-1 w-full py-1 text-xs">
-            <option value="tira">En fila (vuela, camina)</option>
-            <option value="columna">En columna (cae)</option>
+            <option value="equilibrada">Rejilla equilibrada</option><option value="fila">Fila exacta · 1×N</option><option value="columna">Columna exacta · N×1</option>
           </select>
         </label>
         <label className="block">
@@ -690,10 +749,14 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
                 className="input mt-0.5 w-full py-1 text-xs"
                 value={nombre}
                 maxLength={60}
-                onChange={(e) => { setNombre(e.target.value); setGuardado(false); }}
+                onChange={(e) => { setNombre(e.target.value); setGuardado(false);setGuardadoPrivado(false); }}
                 aria-label="Nombre en la biblioteca"
               />
             </label>
+            <button onClick={()=>void guardarEnPersonaje()} disabled={guardando||guardadoPrivado||actualizando||edicionPendiente||!nombre.trim()||!nombrePersonaje.trim()} className="btn-brand text-xs disabled:opacity-40">
+              {guardando?<Loader2 className="h-3.5 w-3.5 animate-spin"/>:guardadoPrivado?<Check className="h-3.5 w-3.5"/>:<UserRound className="h-3.5 w-3.5"/>}
+              {guardadoPrivado?"Guardado":animacionId?"Guardar correcciones":"Guardar en mi personaje"}</button>
+            {puedePublicar&&(
             <button
               onClick={() => void guardar()}
               disabled={guardando || guardado || actualizando || edicionPendiente || !nombre.trim()}
@@ -702,8 +765,9 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
               {guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 : guardado ? <Check className="h-3.5 w-3.5" />
                   : <Library className="h-3.5 w-3.5" />}
-              {guardado ? "Guardado" : "Guardar en la biblioteca"}
+              {guardado ? "Publicado" : "Publicar para todos"}
             </button>
+            )}
           </div>
 
           {/* La tira, para ver de un vistazo si algún fotograma salió mal. */}
@@ -720,6 +784,11 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true }: {
           </div>
         </>
       )}
+      {!!personajes.length&&<div className="space-y-2 border-t border-border pt-3"><div className="flex items-center gap-1.5 text-xs font-semibold"><Library className="h-3.5 w-3.5 text-accent"/> Mis personajes y animaciones</div>
+        {personajes.map(p=><div key={p.id} className="rounded-lg border border-border p-2"><div className="flex items-center justify-between"><span className="text-xs font-semibold">{p.nombre}</span>
+          <button className="btn-ghost px-2 py-1 text-[10px]" onClick={()=>{setPersonajeId(p.id);setAnimacionId(null);setNombrePersonaje(p.nombre);setDescripcionPersonaje(p.descripcion);setHecho(null);}}><Plus className="h-3 w-3"/> Nueva animación</button></div>
+          <div className="mt-2 grid gap-1 sm:grid-cols-2">{p.animaciones.map(a=><button key={a.id} onClick={()=>void editarAnimacion(a.id)} className="flex items-center gap-2 rounded-md border border-border p-1.5 text-left hover:border-accent">
+            {/* eslint-disable-next-line @next/next/no-img-element */}<img src={a.tiraUrl} alt="" className="h-9 w-14 object-contain"/><span className="min-w-0 flex-1"><span className="block truncate text-[11px]">{a.nombre}</span><span className="block text-[9px] text-muted">{a.accion} · {a.fotogramas} · {a.columnas}×{a.filas}</span></span><Pencil className="h-3 w-3"/></button>)}</div></div>)}</div>}
     </div>
   );
 }

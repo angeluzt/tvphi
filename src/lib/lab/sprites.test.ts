@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
-  celdasSpritePorDefecto, centrarCeldasEnContenido, desplazamientoParaCentrar, limitesCelda, normalizarCeldasSprite,
-  limpiarResiduosLinealesBorde, tamanoComunCeldasSprite,
+  celdasSpriteEnRejilla, celdasSpritePorDefecto, centrarCeldasEnContenido,
+  desplazamientoParaCentrar, limitesCelda, normalizarCeldasSprite,
+  limpiarResiduosLinealesBorde, rejillaSpriteEquilibrada, tamanoComunCeldasSprite,
 } from "./sprites";
+
+describe("rejilla equilibrada", () => {
+  it("evita que muchos cuadros se conviertan en sellos", () => {
+    expect(rejillaSpriteEquilibrada(1, "tira")).toEqual({ columnas: 1, filas: 1 });
+    expect(rejillaSpriteEquilibrada(6, "tira")).toEqual({ columnas: 3, filas: 2 });
+    expect(rejillaSpriteEquilibrada(12, "tira")).toEqual({ columnas: 4, filas: 3 });
+    expect(rejillaSpriteEquilibrada(6, "columna")).toEqual({ columnas: 2, filas: 3 });
+  });
+
+  it("crea celdas en orden de lectura", () => {
+    expect(celdasSpriteEnRejilla(600, 400, 6, { columnas: 3, filas: 2 })).toEqual([
+      { x: 0, y: 0, ancho: 200, alto: 200 }, { x: 200, y: 0, ancho: 200, alto: 200 },
+      { x: 400, y: 0, ancho: 200, alto: 200 }, { x: 0, y: 200, ancho: 200, alto: 200 },
+      { x: 200, y: 200, ancho: 200, alto: 200 }, { x: 400, y: 200, ancho: 200, alto: 200 },
+    ]);
+  });
+});
 
 describe("limitesCelda", () => {
   it("reparte todos los pixeles sin huecos ni solapamientos", () => {
