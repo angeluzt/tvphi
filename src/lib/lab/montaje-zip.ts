@@ -16,6 +16,8 @@ import { zip, bajar } from "@/lib/lab/exportar";
 import { leerZip } from "@/lib/story/zip";
 
 export type CapaMontajeMeta = {
+  /** Id estable para relaciones entre capas (por ejemplo tren → vía). */
+  clave?: string;
   nombre: string;
   depth: number;
   escala: number;
@@ -77,6 +79,7 @@ export async function bajarMontajeZip(opts: {
   cola?: unknown[];
   efectos?: unknown[];
   capas: {
+    clave?: string;
     nombre: string;
     depth: number;
     escala: number;
@@ -97,6 +100,7 @@ export async function bajarMontajeZip(opts: {
     const archivo = `${String(i + 1).padStart(2, "0")}-${limpio(c.nombre)}.png`;
     archivos.push({ nombre: archivo, datos: await pngDeImg(c.img) });
     metas.push({
+      clave: c.clave,
       nombre: c.nombre,
       depth: c.depth,
       escala: c.escala,
@@ -142,6 +146,7 @@ export async function bajarMontajeZip(opts: {
 }
 
 export type CapaImportada = {
+  clave?: string;
   nombre: string;
   depth: number;
   escala: number;
@@ -191,6 +196,7 @@ export async function leerMontajeZip(file: Blob): Promise<{
       if (!ent) throw new Error(`Falta la imagen «${m.archivo}» en el ZIP.`);
       const url = URL.createObjectURL(new Blob([ent.datos.slice()], { type: "image/png" }));
       capas.push({
+        clave: m.clave,
         nombre: m.nombre,
         depth: m.depth,
         escala: m.escala ?? 1,

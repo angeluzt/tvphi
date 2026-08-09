@@ -125,6 +125,17 @@ describe("ruta de varios pasos", () => {
     expect(estadoSpriteEn(anterior, 4)).toMatchObject({ espejo: true, paso: 2 });
   });
 
+  it("permite acelerar y frenar un tramo sin perder precisión en sus extremos", () => {
+    const suave: SpriteEnCapa = {
+      ...base,
+      x: 0,
+      ruta: { pasos: [{ tipo: "mover", x: 1, y: base.y, segundos: 4, suavizado: "suave" }] },
+    };
+    expect(estadoSpriteEn(suave, 1).x).toBeCloseTo(0.15625);
+    expect(estadoSpriteEn(suave, 2).x).toBeCloseTo(0.5);
+    expect(estadoSpriteEn(suave, 4).x).toBe(1);
+  });
+
   it("normaliza el JSON sin romper trayectoria ni proyectos antiguos", () => {
     const actual = normalizarSprite({
       ...base,
@@ -132,7 +143,7 @@ describe("ruta de varios pasos", () => {
       ruta: {
         bucle: true,
         pasos: [
-          { tipo: "mover", x: 4, y: -4, segundos: 0 },
+        { tipo: "mover", x: 4, y: -4, segundos: 0, suavizado: "suave" },
           { tipo: "pausa", segundos: 500, espejo: true },
           { tipo: "voltear", segundos: 0 },
           { tipo: "inventado", segundos: 2 },
@@ -144,7 +155,7 @@ describe("ruta de varios pasos", () => {
     expect(actual?.ruta).toEqual({
       bucle: true,
       pasos: [
-        { tipo: "mover", x: 1.5, y: -0.5, segundos: 0.1 },
+        { tipo: "mover", x: 1.5, y: -0.5, segundos: 0.1, suavizado: "suave" },
         { tipo: "pausa", segundos: 120, espejo: true },
         { tipo: "voltear", segundos: 0.1 },
       ],

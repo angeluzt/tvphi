@@ -48,7 +48,7 @@ Estructura:
 {"scene":{"id":"kebab-case","title":"...","width":N,"height":N,"description":"qué se ve, en una frase","style":"estilo visual en inglés, sin texto ni letras"},
  "layers":[{"id":"kebab","name":"01 Nombre","depth":0.05,"blur":0.3,
    "ai":{"prompt":"lo que hay que DIBUJAR en esta capa, en inglés","exclude":"lo que NO, en inglés"},
-   "mov":{"tipo":"deriva","x":0.2,"bucle":true},
+   "mov":{"tipo":"trayectoria","espacio":"capa","referenciaCapaId":"id-via","desdeX":-0.4,"desdeY":0,"x":0.7,"y":0,"segundos":6,"suavizado":"lineal","bucle":false},
    "objects":[{"id":"x","shape":"rect","semantic":"sky","x":0,"y":0,"w":1,"h":1,"label":"CIELO"}]}],
  "navegacion":{"superficies":[{"id":"pasarela","tipo":"suelo","puntos":[[-0.05,0.82],[0.45,0.78],[1.05,0.86]],"acciones":["caminar","correr"],"depth":0.62,"despuesDe":"id-capa"}]},
  "animacion":{"pasos":[{"mov":"acercar","segundos":3,"intensidad":45,"nota":"para qué es este tramo"}]},
@@ -59,6 +59,8 @@ CAPAS QUE SE MUEVEN SOLAS (esto es lo que hace que la escena esté viva)
 - Si en la escena hay algo que debería estar EN MOVIMIENTO —un pájaro, un barco, una nube, un meteoro, una bandera— dale su PROPIA capa, con el resto del cuadro vacío, y ponle «mov».
 - EXCEPCIÓN: si está activo el MODO DIRECTOR DE ESCENA VIVA, los seres u objetos cuya pose cambia van en "sprites" y NO en una capa dibujada. «mov» queda para superficies o decoración que se desplazan como una imagen plana.
 - Los tipos, sus campos y las velocidades que funcionan van en la referencia. No inventes otros.
+- Si algo viaja SOBRE otra capa —tren sobre vía, barco sobre agua, plataforma sobre riel— usa trayectoria y referenciaCapaId. Su profundidad debe coincidir con esa referencia; la aplicación también la corregirá.
+- Usa espacio "capa" para objetos integrados al decorado. "pantalla" ignora la cámara y solo sirve para una sobreimpresión absoluta.
 - El fondo y el suelo NUNCA llevan «mov»: si se despegan se ve el borde.
 
 LA ANIMACIÓN Y LOS EFECTOS
@@ -107,7 +109,7 @@ const INSTRUCCION_VIVA = `MODO DIRECTOR DE ESCENA VIVA
 Además de scene, layers, animacion y efectos, devuelve "sprites": una lista de actores animados.
 
 Cada sprite tiene exactamente esta forma:
-{"id":"kebab","nombre":"nombre corto","bibliotecaId":"id exacto o ausente","que":"descripción visual completa en inglés, máximo 400 caracteres","vista":"lateral|frontal|trasera|superior|libre","direccion":"derecha|izquierda|frente|espaldas|arriba|abajo|ninguna","accion":"quieto|caminar|correr|volar|flotar|nadar|caer|girar|otro","anclaje":"centro|pies","forma":"tira|columna","fotogramas":6,"fps":10,"superficieId":"id de navegacion.superficies","despuesDe":"id de una capa dibujable","depth":0.55,"x":-0.15,"y":0.65,"alto":0.18,"espacio":"pantalla","sincronizar":true,"espejo":false,"ruta":{"bucle":false,"pasos":[{"tipo":"mover","x":1.15,"y":0.65,"segundos":5}]}}
+{"id":"kebab","nombre":"nombre corto","bibliotecaId":"id exacto o ausente","que":"descripción visual completa en inglés, máximo 400 caracteres","vista":"lateral|frontal|trasera|superior|libre","direccion":"derecha|izquierda|frente|espaldas|arriba|abajo|ninguna","accion":"quieto|caminar|correr|volar|flotar|nadar|caer|girar|otro","anclaje":"centro|pies","forma":"tira|columna","fotogramas":6,"fps":10,"superficieId":"id de navegacion.superficies","despuesDe":"id de una capa dibujable","depth":0.55,"x":-0.15,"y":0.65,"alto":0.18,"espacio":"capa","sincronizar":true,"espejo":false,"ruta":{"bucle":false,"pasos":[{"tipo":"mover","x":1.15,"y":0.65,"segundos":5,"suavizado":"lineal"}]}}
 
 REGLAS DEL DIRECTOR
 - Un sprite es algo cuya POSE cambia: personas, animales, vehículos, humo vivo, fuego, meteoros. La decoración quieta sigue siendo una capa.
@@ -121,8 +123,9 @@ REGLAS DEL DIRECTOR
 - direccion describe hacia dónde apunta el DIBUJO ORIGINAL en su hoja, no el destino. En vista lateral usa derecha o izquierda explícitamente. La aplicación calcula el espejo de cada tramo usando ese dato; no compenses inventando un espejo permanente.
 - anclaje es "pies" para animales, personas y vehículos apoyados; es "centro" para vuelo, humo, fuego, objetos suspendidos o caídas.
 - "despuesDe" es el id de la ÚLTIMA capa que queda detrás del sprite. La aplicación inserta al actor inmediatamente después. Para ocultarlo tras una columna de primer plano, usa el id de la capa anterior a esa columna, NO el id de la propia columna. No pongas todo al frente.
-- Usa "pantalla" para trayectorias absolutas que no deben deformarse con paneos/transiciones. Usa "capa" solo cuando el actor esté pegado físicamente al decorado y deba heredar paralaje y zoom.
+- Usa "capa" para todo actor apoyado en superficie —caminar, correr, nadar, vehículo sobre vía—: así sus pies/ruedas no se despegan durante zoom y paralaje. Usa "pantalla" solo para trayectorias verdaderamente absolutas como un meteoro, proyectil o sobreimpresión que debe ignorar la cámara.
 - Una ruta puede encadenar mover, pausa y voltear. Para ir, girar y volver: mover, pausa opcional, voltear, mover. Usa bucle solo si debe repetirse.
+- Cada paso mover admite suavizado "lineal" (caminar, tren, proyectil: velocidad constante) o "suave" (entrar, detenerse, plataforma: acelera y frena).
 - El fotograma interno y la ruta espacial son cosas distintas: fotogramas/fps animan patas o alas; ruta mueve el actor por la escena.
 - Para movimiento horizontal usa vista lateral y espejo/voltear. Para avanzar hacia cámara usa frontal; alejarse usa trasera; para movimiento cenital usa superior. Objetos que giran o caen libremente pueden usar libre.
 - No hagas volver horizontalmente un sprite frontal o trasero: para ida y vuelta horizontal usa vista lateral y deja que cada tramo lo voltee. No hagas caminar en el aire ni atravesar muros, columnas o tuberías.
