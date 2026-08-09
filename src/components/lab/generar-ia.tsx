@@ -114,34 +114,55 @@ export function GenerarIa({
         const capa = visibles[i];
         setPaso(`Dibujando ${i + 1} de ${visibles.length}: ${capa.name}…`);
         // El mapa de ESTA capa, sin etiquetas de las demás y sin fondo: es lo
-        // que se le da al modelo como referencia de dónde va cada cosa.
-        const mapa = lienzoDeCapas(escena, [capa.id], i > 0, true).toDataURL("image/png");
-        const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/capa", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mapa,
-            prompt: capa.ai?.prompt ?? `The content marked in the map for «${capa.name}».`,
-            excluir: capa.ai?.exclude,
-            estilo: escena.scene.style,
-            escena: escena.scene.description,
-            esFondo: i === 0,
-            formato,
-          }),
-        });
-        if (!r.ok) {
-          fallos.push(`${capa.name}: ${j.error ?? "no se pudo"}`);
+        // que se le da al modelo como referencia de dónde va cada cosa. Para el
+        // fondo se fuerza un gris azulado neutro: mapBackground puede venir de
+        // un JSON externo y jamás debe colarse como una pantalla magenta.
+        const mapa = lienzoDeCapas(
+          escena, [capa.id], i > 0, true, i === 0 ? "#101820" : undefined,
+        ).toDataURL("image/png");
+        let rec: Recorte | null = null;
+        let falloCapa = "";
+        for (let intento = 0; intento < 2; intento++) {
+          if (intento) {
+            setPaso(`Corrigiendo croma en ${i + 1} de ${visibles.length}: ${capa.name}…`);
+          }
+          const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/capa", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mapa,
+              prompt: capa.ai?.prompt ?? `The content marked in the map for «${capa.name}».`,
+              excluir: capa.ai?.exclude,
+              estilo: escena.scene.style,
+              escena: escena.scene.description,
+              esFondo: i === 0,
+              formato,
+              corregirCroma: intento > 0,
+            }),
+          });
+          if (!r.ok) {
+            falloCapa = j.error ?? "no se pudo";
+            break;
+          }
+
+          // Aquí se decide si hubo que quitar el fondo, MIRANDO la imagen: no
+          // se confía en que la API haya hecho lo que se le pidió. En la capa
+          // opaca el color se usa solo para validar; no se vuelve transparente.
+          rec = await prepararCapa(
+            `data:image/png;base64,${j.imagen}`,
+            i === 0,
+            i === 0 || j.porCroma ? (j.croma ?? undefined) : undefined,
+          );
+          if (!rec.problema) break;
+          falloCapa = rec.problema === "croma-en-fondo"
+            ? "la IA dejó el magenta técnico dentro del fondo"
+            : "quedaron residuos de magenta después del recorte";
+        }
+        // Una capa rosa opaca es peor que una capa ausente: tapa todas las de
+        // atrás y hace parecer que el montaje completo se perdió.
+        if (!rec || rec.problema) {
+          fallos.push(`${capa.name}: ${falloCapa || "no se pudo limpiar el fondo"}`);
           continue;
         }
-
-        // Aquí se decide si hubo que quitar el fondo, MIRANDO la imagen: no se
-        // confía en que la API haya hecho lo que se le pidió.
-        const rec = await prepararCapa(
-          `data:image/png;base64,${j.imagen}`,
-          i === 0,
-          // El servidor ya dice qué croma pidió; sin esto, si el dibujo tapa
-          // esquinas (capa delantera), el cliente cree que no hay fondo que quitar.
-          j.porCroma ? (j.croma ?? undefined) : undefined,
-        );
         out.push({
           id: capa.id, nombre: capa.name, url: rec.url, via: rec.via, vacio: rec.vacio, color: rec.color,
           // El movimiento propio viaja con la capa hasta el montaje: si se

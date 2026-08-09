@@ -42,6 +42,8 @@ const cuerpo = z.object({
   modelo: z.string().max(80).optional(),
   /** Si no se dice, manda la del panel. Esta ruta ya es solo de admin. */
   calidad: z.enum(["low", "medium", "high"]).optional(),
+  /** Segundo intento después de que el cliente detectó croma visible. */
+  corregirCroma: z.boolean().default(false),
   /**
    * Intentar primero la transparencia de verdad (alfa) y caer al croma si el
    * modelo la rechaza. Apagado por defecto A PROPÓSITO.
@@ -85,7 +87,11 @@ function instruccion(d: z.infer<typeof cuerpo>, croma = false) {
     "The input image is a SEMANTIC LAYOUT MAP, not artwork.",
     "Flat colors and written labels tell you WHAT goes WHERE. Never reproduce them:",
     "replace each marked area with the real thing it stands for, at the exact same position, size and proportion.",
+    `TECHNICAL COLOR RULE: pure magenta ${CROMA} and close fuchsia/pink variants are reserved for chroma keying. Never use them as artwork, lighting, reflections, smoke, sky, clothing or object color. Use blue-violet or red instead if necessary.`,
     "Never draw text, letters, labels, watermarks, borders or UI.",
+    d.corregirCroma
+      ? "CORRECTION ATTEMPT: the previous image leaked the technical magenta into the artwork. Replace every leaked guide/background area correctly; do not repeat it."
+      : "",
     d.escena ? `Scene: ${d.escena}` : "",
     d.estilo ? `Visual style, identical across all layers: ${d.estilo}` : "",
     `Draw: ${d.prompt}`,
@@ -95,12 +101,15 @@ function instruccion(d: z.infer<typeof cuerpo>, croma = false) {
   if (d.esFondo) {
     comun.push(
       "This is the BACKGROUND layer: it must be fully opaque and fill the entire frame edge to edge.",
+      `MAGENTA ${CROMA} IS FORBIDDEN EVERYWHERE IN THIS BACKGROUND IMAGE. No flat guide-color area may remain: turn every pixel into real scene content.`,
+      "Do not copy the input canvas color. Paint the complete sky, atmosphere, distant environment and every otherwise empty region.",
       "Everything that belongs to nearer layers is drawn later on top, so leave room for it but do not paint it.",
     );
   } else if (croma) {
     comun.push(
       "This is a FOREGROUND layer that will be cut out and stacked on top of others.",
       `CHROMA KEY BACKGROUND, MANDATORY: every pixel that is not part of the described content must be flat pure magenta ${CROMA} (R255 G0 B255).`,
+      "The technical magenta is allowed ONLY in empty background pixels. It is forbidden inside the subject and in its lights, reflections, shadows and texture.",
       "That magenta must be perfectly uniform: no gradient, no shading, no vignette, no texture, no glow, no reflection of it on the subject.",
       "Do not paint sky, ground, fog or scenery in the empty space — only the magenta.",
       "Do not extend the content to the frame edges unless the map says so.",

@@ -299,6 +299,8 @@ export interface OpcionesDibujo {
   capas?: string[];
   /** Sin fondo: para exportar un PNG que se pueda apilar. */
   transparente?: boolean;
+  /** Color neutro de guía; evita mandar a la IA un croma como si fuera cielo. */
+  fondoMapa?: string;
 }
 
 export function dibujarEscena(canvas: HTMLCanvasElement, esc: Escena, op: OpcionesDibujo = {}) {
@@ -307,7 +309,7 @@ export function dibujarEscena(canvas: HTMLCanvasElement, esc: Escena, op: Opcion
   const W = canvas.width, H = canvas.height;
   c.clearRect(0, 0, W, H);
   if (!op.transparente) {
-    c.fillStyle = esc.scene.mapBackground || "#101522";
+    c.fillStyle = op.fondoMapa || esc.scene.mapBackground || "#101522";
     c.fillRect(0, 0, W, H);
   }
   const solo = op.capas ? new Set(op.capas) : null;

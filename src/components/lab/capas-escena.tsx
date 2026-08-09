@@ -71,22 +71,37 @@ export function CapasEscena({
       for (let i = 0; i < visibles.length; i++) {
         const capa = visibles[i];
         setPaso(`Dibujando ${i + 1} de ${visibles.length}: ${capa.name}…`);
-        const mapa = lienzoDeCapas(esc, [capa.id], i > 0, true).toDataURL("image/png");
-        const rc = await fetch("/api/story/ia/lab/capa", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mapa, prompt: capa.ai?.prompt ?? capa.name, excluir: capa.ai?.exclude,
-            estilo: esc.scene.style, escena: esc.scene.description,
-            esFondo: i === 0, formato,
-          }),
-        });
-        const jc = await rc.json();
-        if (!rc.ok) { fallos.push(`${capa.name}: ${jc.error ?? "no se pudo"}`); continue; }
-        const rec = await prepararCapa(
-          `data:image/png;base64,${jc.imagen}`,
-          i === 0,
-          jc.porCroma ? (jc.croma ?? undefined) : undefined,
-        );
+        const mapa = lienzoDeCapas(
+          esc, [capa.id], i > 0, true, i === 0 ? "#101820" : undefined,
+        ).toDataURL("image/png");
+        let rec: Awaited<ReturnType<typeof prepararCapa>> | null = null;
+        let falloCapa = "";
+        for (let intento = 0; intento < 2; intento++) {
+          if (intento) setPaso(`Corrigiendo croma en ${i + 1} de ${visibles.length}: ${capa.name}…`);
+          const rc = await fetch("/api/story/ia/lab/capa", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mapa, prompt: capa.ai?.prompt ?? capa.name, excluir: capa.ai?.exclude,
+              estilo: esc.scene.style, escena: esc.scene.description,
+              esFondo: i === 0, formato, corregirCroma: intento > 0,
+            }),
+          });
+          const jc = await rc.json();
+          if (!rc.ok) { falloCapa = jc.error ?? "no se pudo"; break; }
+          rec = await prepararCapa(
+            `data:image/png;base64,${jc.imagen}`,
+            i === 0,
+            i === 0 || jc.porCroma ? (jc.croma ?? undefined) : undefined,
+          );
+          if (!rec.problema) break;
+          falloCapa = rec.problema === "croma-en-fondo"
+            ? "la IA dejó el magenta técnico dentro del fondo"
+            : "quedaron residuos de magenta después del recorte";
+        }
+        if (!rec || rec.problema) {
+          fallos.push(`${capa.name}: ${falloCapa || "no se pudo limpiar el fondo"}`);
+          continue;
+        }
         const id = await onGuardarImagen(rec.url, capa.name);
         // La profundidad viene del mapa, que es quien sabe qué está lejos.
         nuevas.push({

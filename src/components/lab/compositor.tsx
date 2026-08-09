@@ -6,9 +6,11 @@ import {
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
   Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
   MapPinned, Plus, RotateCcw, Square, Lock, LockOpen, ChevronsUp, ChevronsDown,
+  Paintbrush,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
+import { CROMA, prepararCapa } from "@/lib/lab/quitar-fondo";
 import { desplazamientoCapa, normalizarMov, MOVS_CAPA, type MovCapa } from "@/lib/lab/movimiento-capa";
 import { copiarPlanoBucle, moverPlano, planoCentrado } from "@/lib/lab/plano-movimiento";
 import {
@@ -25,6 +27,7 @@ import {
   type DesdePaso, type FadeAccion, type FadeCapa, type Tramo,
 } from "@/lib/lab/anim-paralaje";
 import { RangoPreciso } from "./rango-preciso";
+import { EditorCromaCapa, type CromaCorregido } from "./editor-croma-capa";
 
 // Paso 2: apilar las capas ya generadas y moverlas con profundidad.
 //
@@ -115,6 +118,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   const [rutaVisibleId, setRutaVisibleId] = useState<string | null>(null);
   /** Una sola capa abierta evita repetir todos sus controles en una lista interminable. */
   const [capaActivaId, setCapaActivaId] = useState<string | null>(null);
+  const [editandoCromaId, setEditandoCromaId] = useState<string | null>(null);
   // La cola de la IA se copia UNA vez y ya es tuya: si se volviera a copiar en
   // cada render, cualquier retoque a mano se perdería al respirar.
   const colaIaRef = useRef<PasoSecuencia[] | null>(null);
@@ -186,6 +190,9 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
 
   const indiceActivo = capas.findIndex((c) => c.id === capaActivaId);
   const capaActiva = indiceActivo >= 0 ? capas[indiceActivo] : null;
+  const capaEditandoCroma = editandoCromaId
+    ? capas.find((c) => c.id === editandoCromaId) ?? null
+    : null;
   const referenciaActiva = capaActiva?.mov?.referenciaCapaId
     ? capas.find((c) => c.clave === capaActiva.mov?.referenciaCapaId)
     : undefined;
@@ -418,12 +425,28 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
     try {
       const pack = await leerMontajeZip(file);
       const nuevas: CapaImg[] = [];
+      let cromasCorregidos = 0;
       for (const c of pack.capas) {
-        const img = await cargar(c.url);
+        let fuente = c.url;
+        let via = c.via;
+        let vacio = c.vacio;
+        // Los proyectos viejos pueden declarar «croma» y aun contener una
+        // plancha rosa. Se vuelven a revisar al importar; esto corrige de forma
+        // automática justamente el ZIP de vegetación que destapó el problema.
+        if (!c.spr && c.via === "croma") {
+          const limpia = await prepararCapa(c.url, false, CROMA);
+          if (!limpia.problema && limpia.vacio > (c.vacio ?? 0) + 0.002) {
+            fuente = limpia.url;
+            via = limpia.via;
+            vacio = limpia.vacio;
+            cromasCorregidos++;
+          }
+        }
+        const img = await cargar(fuente);
         nuevas.push({
           ...hacerCapa(c.nombre, img),
           ...(c.clave ? { clave: c.clave } : {}),
-          depth: c.depth, escala: c.escala, opacidad: c.opacidad, via: c.via, vacio: c.vacio,
+          depth: c.depth, escala: c.escala, opacidad: c.opacidad, via, vacio,
           bloqueada: c.bloqueada,
           mov: normalizarMov(c.mov),
           spr: normalizarSprite(c.spr),
@@ -451,6 +474,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
 
       // Y lo demás, si el ZIP lo trae (los v1 no).
       const partes = [`${nuevas.length} capas`];
+      if (cromasCorregidos) partes.push(`${cromasCorregidos} fondos corregidos`);
       if (Array.isArray(pack.cola) && pack.cola.length) {
         setCola((pack.cola as PasoSecuencia[]).map((p, i) => pasoPorDefecto({ ...p, id: `z${++pasoSeq}-${i}` })));
         partes.push(`${pack.cola.length} pasos de cámara`);
@@ -900,6 +924,15 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
 
   const upd = (id: string, p: Partial<CapaImg>) =>
     setCapas((cs) => cs.map((c) => (c.id === id ? { ...c, ...p } : c)));
+  async function aplicarCorreccionCroma(id: string, resultado: CromaCorregido) {
+    const img = await cargar(resultado.url);
+    upd(id, { img, via: "croma", vacio: resultado.vacio });
+    setEditandoCromaId(null);
+    setAviso(
+      `Fondo corregido: ${resultado.eliminados.toLocaleString("es-MX")} píxeles limpiados · `
+      + `${Math.round(resultado.vacio * 1000) / 10}% transparente.`,
+    );
+  }
   const mover = (i: number, d: -1 | 1) =>
     setCapas((cs) => {
       const j = i + d;
@@ -1240,6 +1273,12 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
                       {capaActiva.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                       {capaActiva.visible ? "Visible" : "Oculta"}
                     </button>
+                    {!capaActiva.spr && indiceActivo > 0 && (
+                      <button type="button" onClick={() => setEditandoCromaId(capaActiva.id)}
+                        className="btn-ghost px-2 py-1 text-[10px]">
+                        <Paintbrush className="h-3.5 w-3.5 text-accent" /> Corregir fondo
+                      </button>
+                    )}
                     <button type="button" onClick={() => eliminarCapa(capaActiva.id)}
                       className="btn-ghost ml-auto px-2 py-1 text-[10px] text-danger">
                       <Trash2 className="h-3.5 w-3.5" /> Borrar capa
@@ -1683,6 +1722,16 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
           </div>
         </div>
       </div>
+      {capaEditandoCroma && (
+        <EditorCromaCapa
+          key={`${capaEditandoCroma.id}-${capaEditandoCroma.img.src}`}
+          nombre={capaEditandoCroma.nombre}
+          url={capaEditandoCroma.img.src}
+          colorInicial={CROMA}
+          onCerrar={() => setEditandoCromaId(null)}
+          onAplicar={(resultado) => aplicarCorreccionCroma(capaEditandoCroma.id, resultado)}
+        />
+      )}
     </div>
   );
 }
