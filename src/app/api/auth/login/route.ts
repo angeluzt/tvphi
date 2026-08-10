@@ -44,11 +44,10 @@ export async function POST(req: Request) {
         { username: { equals: emailOrUsername, mode: "insensitive" } },
       ],
     },
-    include: { channel: true },
   });
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
     return NextResponse.json({ error: "Credenciales incorrectas" }, { status: 401 });
   }
   await createSession(user.id);
-  return NextResponse.json({ ok: true, slug: user.channel?.slug ?? null });
+  return NextResponse.json({ ok: true });
 }

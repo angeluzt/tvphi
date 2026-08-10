@@ -1,4 +1,4 @@
-# TVPHI — imagen de producción (Next.js + servidor Socket.IO)
+# TVPHI — imagen de producción (Next.js)
 FROM node:22-slim AS base
 
 ENV PNPM_HOME=/pnpm
@@ -14,8 +14,7 @@ RUN apt-get update -y && apt-get install -y openssl ca-certificates \
 
 WORKDIR /app
 
-# 1) Dependencias (capa cacheable). Los scripts de build permitidos en
-#    package.json (pnpm.onlyBuiltDependencies) se ejecutan sin interacción.
+# 1) Dependencias (capa cacheable).
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
@@ -24,8 +23,8 @@ COPY . .
 RUN pnpm build
 
 ENV NODE_ENV=production
-# Railway inyecta PORT; el servidor lo respeta (server.ts).
+# Railway inyecta PORT; Next lo respeta.
 EXPOSE 3000
 
-# Aplica migraciones y arranca el servidor (Next + Socket.IO).
+# Aplica migraciones y arranca Next.
 CMD ["pnpm", "start:prod"]

@@ -216,17 +216,63 @@ export function esGuia(c: Capa): boolean {
 // una IA, y «layers[2].objects[0]: falta «shape»» le sirve para corregir el
 // prompt; «invalid_type» no.
 
+/**
+ * Acepta el JSON «puro» del mapa y también envoltorios habituales:
+ * - montaje.json del ZIP del proyecto (`{ version, capas, escena: { scene, layers } }`)
+ * - respuestas `{ escena: … }` / `{ bruto: … }`
+ *
+ * Sin esto, reimportar montaje.json en la pestaña Mapa falla con
+ * «falta el bloque scene» aunque el mapa vaya sano dentro de `.escena`.
+ */
+export function desenrollarEntradaMapa(data: unknown): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const d = data as Record<string, unknown>;
+
+  const candidato =
+    (d.escena && typeof d.escena === "object" ? d.escena : null)
+    ?? (d.bruto && typeof d.bruto === "object" ? d.bruto : null)
+    ?? (d.map && typeof d.map === "object" ? d.map : null)
+    ?? data;
+
+  // Si el envoltorio traía el mapa anidado, desenróllalo una sola vez.
+  if (candidato !== data && candidato && typeof candidato === "object") {
+    const c = candidato as Record<string, unknown>;
+    if (c.scene || c.layers) return candidato;
+  }
+  return data;
+}
+
 export function revisar(data: unknown): { escena: Escena } | { error: string } {
   const fallos: string[] = [];
-  const d = data as Escena;
+  const crudo = data as Record<string, unknown> | null;
+  const d = desenrollarEntradaMapa(data) as Escena;
   if (!d || typeof d !== "object") return { error: "El JSON no es un objeto." };
-  if (!d.scene || typeof d.scene !== "object") fallos.push("falta el bloque «scene»");
-  else {
+
+  // Pista concreta cuando alguien sube montaje.json al importador del mapa.
+  const pareceMontaje =
+    !!crudo
+    && typeof crudo === "object"
+    && (Array.isArray(crudo.capas) || crudo.version === 1 || crudo.version === 2)
+    && !crudo.scene
+    && !crudo.layers;
+
+  if (!d.scene || typeof d.scene !== "object") {
+    fallos.push(
+      pareceMontaje && !(crudo as any)?.escena
+        ? "esto parece un montaje.json sin mapa dentro; recupéralo con «Importar todo» en Montaje y paralaje"
+        : "falta el bloque «scene»",
+    );
+  } else {
     if (!d.scene.id) fallos.push("scene.id está vacío");
     if (!(d.scene.width > 0) || !(d.scene.height > 0)) fallos.push("scene.width y scene.height tienen que ser números mayores que cero");
   }
-  if (!Array.isArray(d.layers) || !d.layers.length) fallos.push("«layers» tiene que ser una lista con al menos una capa");
-  else {
+  if (!Array.isArray(d.layers) || !d.layers.length) {
+    fallos.push(
+      pareceMontaje && (crudo as any)?.escena
+        ? "el mapa dentro de montaje.json no trae capas"
+        : "«layers» tiene que ser una lista con al menos una capa",
+    );
+  } else {
     const vistos = new Set<string>();
     d.layers.forEach((capa, i) => {
       if (!capa || typeof capa !== "object") { fallos.push(`layers[${i}] no es un objeto`); return; }
@@ -247,19 +293,40 @@ export function revisar(data: unknown): { escena: Escena } | { error: string } {
   return { escena: normalizar(d) };
 }
 
+/**
+ * Semánticos que son decorado/arquitectura quieta. Tener solo estos objetos
+ * implica que «mov» es casi siempre un error del modelo (islas flotando, etc.).
+ */
+const DECORADO_QUIETO = new Set<Semantico>([
+  "sky", "terrain", "wall", "floor", "column", "arch", "stairs",
+  "vegetation", "door", "window", "light_anchor",
+]);
+
+/** ¿Esta capa debería ignorar cualquier «mov» que haya inventado la IA? */
+export function capaDebeQuedarQuieta(c: Pick<Capa, "objects" | "guia">, esFondo: boolean): boolean {
+  if (esFondo || c.guia) return true;
+  const objs = c.objects ?? [];
+  if (!objs.length) return false;
+  return objs.every((o) => DECORADO_QUIETO.has(o.semantic));
+}
+
 /** Rellena lo que se puede dar por hecho, para que dibujar no tenga que dudar. */
 export function normalizar(d: Escena): Escena {
+  // Fondo = primera capa no-guía en el orden de llegada (de atrás a delante).
+  let vistaFondo = false;
   const capas = d.layers
     .map((c) => {
-      const capa = {
+      const esFondo = !vistaFondo && !esGuia({ ...c, objects: c.objects ?? [], guia: c.guia });
+      if (esFondo) vistaFondo = true;
+      const base = {
         ...c,
         visible: c.visible !== false,
         objects: c.objects ?? [],
-        // Se acota aquí y no al pintar: un número disparatado saca la capa
-        // del cuadro en el primer fotograma y parece que ha desaparecido.
-        mov: normalizarMov((c as any).mov),
       };
-      return { ...capa, guia: esGuia(capa) };
+      const guia = esGuia(base);
+      let mov = normalizarMov((c as any).mov);
+      if (mov && capaDebeQuedarQuieta({ ...base, guia }, esFondo)) mov = undefined;
+      return { ...base, guia, mov };
     });
   const porId = new Map(capas.map((c) => [c.id, c]));
   // Una capa ligada físicamente a otra hereda su profundidad. Esta igualdad es

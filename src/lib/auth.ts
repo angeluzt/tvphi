@@ -49,7 +49,6 @@ export async function getCurrentUser() {
 
   const user = await prisma.user.findUnique({
     where: { id: sesion.userId },
-    include: { channel: true },
   });
   if (!user) return null;
 

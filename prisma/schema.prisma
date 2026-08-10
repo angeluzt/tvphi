@@ -1,6 +1,11 @@
 // TVPHI — esquema de datos
-// Plataforma de streaming: cuentas, canales, sesiones de emisión, escenas del Studio,
-// chat + moderación, puntos (ledger), rewards, donaciones y suscripciones.
+//
+// Producto actual: cuentas, historias (Story*), sprites, cupos IA (AiCredential / AppSetting).
+//
+// Lo que sigue (Channel, chat, points, donations, subscriptions, Scene de Studio…)
+// es LEGADO de la etapa de streaming: se conserva en el schema para no romper
+// migraciones ya aplicadas en producción. No hay UI ni rutas que lo usen.
+// Una migración destructiva futura puede tirar esas tablas con cuidado.
 
 generator client {
   provider = "prisma-client-js"

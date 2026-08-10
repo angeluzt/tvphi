@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { createSession, hashPassword } from "@/lib/auth";
-import { slugify } from "@/lib/utils";
-import { defaultScenes } from "@/lib/scene";
 import { enviarVerificacion } from "@/lib/email-verify";
 import { comprobarCaptcha } from "@/lib/captcha";
 import { pasarse, origen } from "@/lib/rate-limit";
@@ -80,7 +78,6 @@ export async function POST(req: Request) {
   const username = parsed.data.username.trim().toLowerCase();
   const password = parsed.data.password;
   const displayName = parsed.data.displayName?.trim() || username;
-  const slug = slugify(username);
 
   const exists = await prisma.user.findFirst({
     where: {
@@ -95,6 +92,7 @@ export async function POST(req: Request) {
   }
 
   const passwordHash = await hashPassword(password);
+  // Canal/streaming antiguo: ya no se crea. El producto es historias narradas.
   let user;
   try {
     user = await prisma.user.create({
@@ -103,19 +101,6 @@ export async function POST(req: Request) {
         username,
         displayName,
         passwordHash,
-        channel: {
-          create: {
-            slug,
-            title: `Proyecto de ${displayName}`,
-            scenes: {
-              create: defaultScenes().map((s) => ({
-                name: s.name,
-                order: s.order,
-                layers: s.layers as any,
-              })),
-            },
-          },
-        },
       },
     });
   } catch (e: any) {
@@ -142,7 +127,7 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({
-    ok: true, username: user.username, slug,
+    ok: true, username: user.username,
     verificacion: { pendiente: true, correoEnviado, email: user.email },
   });
 }
