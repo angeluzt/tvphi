@@ -597,9 +597,13 @@ model Sprite {
   /// borrar una cuenta no debe llevarse por delante sprites que usa todo el
   /// mundo.
   creadoPor  String?
+  /// Animación editable (plantilla) cuando se guardó con hoja/celdas.
+  /// Sin FK: la plantilla es por usuario y el sprite público es compartido.
+  animationId String?
   createdAt  DateTime @default(now())
 
   @@index([createdAt])
+  @@index([animationId])
 }
 
 model SpriteCharacter {

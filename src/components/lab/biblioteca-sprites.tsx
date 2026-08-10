@@ -3,30 +3,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Library, Loader2, Trash2, Plus, AlertTriangle, RefreshCw, Compass, Check, Search, Pencil,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Film,
 } from "lucide-react";
 import { pedirJson } from "@/lib/pedir-json";
 import { pesoLegible, urlSprite, type SpriteMeta } from "@/lib/lab/biblioteca";
 import { VistaSprite } from "./vista-sprite";
 
-// La biblioteca compartida (admin): lo que ya está fabricado y no hay que volver a pagar.
-//
-// POR QUÉ EXISTE. Un sprite bajado en un ZIP se pierde en la carpeta de
-// descargas, y hay que volver a subirlo en cada montaje —desde el móvil, ni
-// eso—. Aquí un pájaro se paga UNA vez y entra en todos los vídeos que se
-// hagan, desde cualquier equipo. Es lo que convierte «generar imágenes» en
-// «tener un repertorio».
-
 const POR_PAGINA = 9;
 
-export function BibliotecaSprites({ recargar, onUsar }: {
-  /** Cambia cuando alguien guarda algo nuevo: es la señal para releer. */
+export function BibliotecaSprites({ recargar, onUsar, onEditarPlantilla, onNuevaAnimacion }: {
   recargar?: number;
   onUsar?: (s: SpriteMeta) => void;
+  onEditarPlantilla?: (animationId: string) => void;
+  onNuevaAnimacion?: (characterId: string) => void;
 }) {
   const [sprites, setSprites] = useState<SpriteMeta[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [puedeEditar, setPuedeEditar] = useState(false);
+  const [plantillas, setPlantillas] = useState<Record<string, string>>({});
   const [borrando, setBorrando] = useState<string | null>(null);
   const [confirmar, setConfirmar] = useState<string | null>(null);
   const [editando, setEditando] = useState<string | null>(null);
@@ -42,9 +36,11 @@ export function BibliotecaSprites({ recargar, onUsar }: {
       const j = await pedirJson("/api/story/lab/sprites");
       setSprites(j.sprites ?? []);
       setPuedeEditar(!!j.puedeEditar);
+      setPlantillas(j.plantillas ?? {});
     } catch (e) {
       setError((e as Error).message);
       setSprites([]);
+      setPlantillas({});
     }
   }, []);
 
@@ -166,123 +162,146 @@ export function BibliotecaSprites({ recargar, onUsar }: {
       {!!paginaSprites.length && (
         <>
           <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {paginaSprites.map((s) => (
-              <div key={s.id} className="min-w-0 space-y-1.5 overflow-hidden rounded-lg border border-border bg-surface-2/40 p-2">
-                <div className="flex min-w-0 items-start gap-2">
-                  <VistaSprite
-                    tira={urlSprite(s.id)}
-                    fotogramas={s.fotogramas}
-                    fps={s.fps}
-                    tam={72}
-                  />
-                  <div className="min-w-0 flex-1">
-                    {puedeEditar && renombrandoId === s.id ? (
-                      <div className="flex gap-1">
-                        <input
-                          className="input min-w-0 flex-1 py-0.5 text-[11px]"
-                          value={nombreEdit}
-                          maxLength={60}
-                          autoFocus
-                          onChange={(e) => setNombreEdit(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") void guardarNombre(s);
-                            if (e.key === "Escape") setRenombrandoId(null);
-                          }}
-                        />
-                        <button type="button" className="btn-brand px-1.5 py-0.5" onClick={() => void guardarNombre(s)}>
-                          <Check className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1">
-                        <p className="min-w-0 truncate text-xs font-medium text-fg" title={s.nombre}>{s.nombre}</p>
-                        {puedeEditar && (
-                          <button
-                            type="button"
-                            className="shrink-0 text-muted hover:text-accent"
-                            title="Renombrar"
-                            onClick={() => { setRenombrandoId(s.id); setNombreEdit(s.nombre); }}
-                          >
-                            <Pencil className="h-3 w-3" />
+            {paginaSprites.map((s) => {
+              const characterId = s.animationId ? plantillas[s.animationId] : undefined;
+              const tienePlantilla = !!characterId;
+              return (
+                <div key={s.id} className="min-w-0 space-y-1.5 overflow-hidden rounded-lg border border-border bg-surface-2/40 p-2">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <VistaSprite tira={urlSprite(s.id)} fotogramas={s.fotogramas} fps={s.fps} tam={72} />
+                    <div className="min-w-0 flex-1">
+                      {puedeEditar && renombrandoId === s.id ? (
+                        <div className="flex gap-1">
+                          <input
+                            className="input min-w-0 flex-1 py-0.5 text-[11px]"
+                            value={nombreEdit}
+                            maxLength={60}
+                            autoFocus
+                            onChange={(e) => setNombreEdit(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void guardarNombre(s);
+                              if (e.key === "Escape") setRenombrandoId(null);
+                            }}
+                          />
+                          <button type="button" className="btn-brand px-1.5 py-0.5" onClick={() => void guardarNombre(s)}>
+                            <Check className="h-3 w-3" />
                           </button>
-                        )}
-                      </div>
-                    )}
-                    <p className="truncate text-[10px] text-muted" title={s.que}>{s.que}</p>
-                    <p className="truncate text-[10px] text-muted">
-                      {s.fotogramas} fotogramas · {s.fps}/s · {s.ancho}×{s.alto} · {pesoLegible(s.bytes)}
-                    </p>
-                    <p className="truncate text-[9px] text-accent">
-                      {s.vista} · apunta {s.direccion} · {s.accion} · {s.anclaje}
-                    </p>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <p className="min-w-0 truncate text-xs font-medium text-fg" title={s.nombre}>{s.nombre}</p>
+                          {puedeEditar && (
+                            <button
+                              type="button"
+                              className="shrink-0 text-muted hover:text-accent"
+                              title="Renombrar"
+                              onClick={() => { setRenombrandoId(s.id); setNombreEdit(s.nombre); }}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      <p className="truncate text-[10px] text-muted" title={s.que}>{s.que}</p>
+                      <p className="truncate text-[10px] text-muted">
+                        {s.fotogramas} fotogramas · {s.fps}/s · {s.ancho}×{s.alto} · {pesoLegible(s.bytes)}
+                      </p>
+                      <p className="truncate text-[9px] text-accent">
+                        {s.vista} · apunta {s.direccion} · {s.accion} · {s.anclaje}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                {puedeEditar && editando === s.id && (
-                  <div className="grid grid-cols-2 gap-1 rounded-md border border-accent/30 bg-accent/5 p-1.5">
-                    <select value={s.vista} onChange={(e) => void cambiarMeta(s, { vista: e.target.value as SpriteMeta["vista"] })} className="input min-w-0 py-1 text-[10px]">
-                      <option value="lateral">Lateral</option><option value="frontal">Frontal</option><option value="trasera">Trasera</option><option value="superior">Superior</option><option value="libre">Libre</option>
-                    </select>
-                    <select value={s.direccion} onChange={(e) => void cambiarMeta(s, { direccion: e.target.value as SpriteMeta["direccion"] })} className="input min-w-0 py-1 text-[10px]">
-                      <option value="derecha">Apunta derecha</option><option value="izquierda">Apunta izquierda</option><option value="frente">Apunta al frente</option><option value="espaldas">Apunta atrás</option><option value="arriba">Apunta arriba</option><option value="abajo">Apunta abajo</option><option value="ninguna">Sin dirección</option>
-                    </select>
-                    <select value={s.accion} onChange={(e) => void cambiarMeta(s, { accion: e.target.value as SpriteMeta["accion"] })} className="input min-w-0 py-1 text-[10px]">
-                      {(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"] as const).map((a) => <option value={a} key={a}>{a}</option>)}
-                    </select>
-                    <select value={s.anclaje} onChange={(e) => void cambiarMeta(s, { anclaje: e.target.value as SpriteMeta["anclaje"] })} className="input min-w-0 py-1 text-[10px]">
-                      <option value="centro">Ancla al centro</option><option value="pies">Ancla por los pies</option>
-                    </select>
-                    <button type="button" onClick={() => void guardarMeta(s)} disabled={guardandoMeta === s.id} className="btn-brand col-span-2 py-1 text-[10px]">
-                      {guardandoMeta === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Guardar orientación
-                    </button>
-                  </div>
-                )}
-                <div className="flex min-w-0 gap-1.5 overflow-hidden">
-                  <button
-                    onClick={() => onUsar?.(s)}
-                    disabled={!onUsar}
-                    className="btn-brand min-w-0 flex-1 py-1 text-[11px] disabled:opacity-40"
-                  >
-                    <Plus className="h-3 w-3" /> Al montaje
-                  </button>
-                  {puedeEditar && (
-                    confirmar === s.id ? (
-                      <>
-                        <button
-                          onClick={() => void borrar(s.id)}
-                          disabled={borrando === s.id}
-                          className="rounded-md border border-danger/50 px-2 py-1 text-[11px] text-danger disabled:opacity-40"
-                        >
-                          {borrando === s.id
-                            ? <Loader2 className="h-3 w-3 animate-spin" />
-                            : "Sí, borrar"}
-                        </button>
-                        <button onClick={() => setConfirmar(null)} className="btn-ghost px-2 py-1 text-[11px]">
-                          No
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmar(s.id)}
-                        className="rounded-md border border-border px-2 py-1 text-muted hover:border-danger/50 hover:text-danger"
-                        title="Borrar de la biblioteca"
-                      >
-                        <Trash2 className="h-3 w-3" />
+                  {puedeEditar && editando === s.id && (
+                    <div className="grid grid-cols-2 gap-1 rounded-md border border-accent/30 bg-accent/5 p-1.5">
+                      <select value={s.vista} onChange={(e) => void cambiarMeta(s, { vista: e.target.value as SpriteMeta["vista"] })} className="input min-w-0 py-1 text-[10px]">
+                        <option value="lateral">Lateral</option><option value="frontal">Frontal</option><option value="trasera">Trasera</option><option value="superior">Superior</option><option value="libre">Libre</option>
+                      </select>
+                      <select value={s.direccion} onChange={(e) => void cambiarMeta(s, { direccion: e.target.value as SpriteMeta["direccion"] })} className="input min-w-0 py-1 text-[10px]">
+                        <option value="derecha">Apunta derecha</option><option value="izquierda">Apunta izquierda</option><option value="frente">Apunta al frente</option><option value="espaldas">Apunta atrás</option><option value="arriba">Apunta arriba</option><option value="abajo">Apunta abajo</option><option value="ninguna">Sin dirección</option>
+                      </select>
+                      <select value={s.accion} onChange={(e) => void cambiarMeta(s, { accion: e.target.value as SpriteMeta["accion"] })} className="input min-w-0 py-1 text-[10px]">
+                        {(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"] as const).map((a) => <option value={a} key={a}>{a}</option>)}
+                      </select>
+                      <select value={s.anclaje} onChange={(e) => void cambiarMeta(s, { anclaje: e.target.value as SpriteMeta["anclaje"] })} className="input min-w-0 py-1 text-[10px]">
+                        <option value="centro">Ancla al centro</option><option value="pies">Ancla por los pies</option>
+                      </select>
+                      <button type="button" onClick={() => void guardarMeta(s)} disabled={guardandoMeta === s.id} className="btn-brand col-span-2 py-1 text-[10px]">
+                        {guardandoMeta === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Guardar orientación
                       </button>
-                    )
+                    </div>
                   )}
-                  {puedeEditar && confirmar !== s.id && (
-                    <button type="button" onClick={() => {
-                      if (editando === s.id) { setEditando(null); void leer(); }
-                      else setEditando(s.id);
-                    }}
-                      className="rounded-md border border-border px-2 py-1 text-muted hover:border-accent/50 hover:text-accent"
-                      title="Corregir vista, dirección y anclaje">
-                      <Compass className="h-3 w-3" />
+                  {tienePlantilla && (onEditarPlantilla || onNuevaAnimacion) && (
+                    <div className="flex min-w-0 gap-1.5">
+                      {onEditarPlantilla && s.animationId && (
+                        <button
+                          type="button"
+                          className="btn-ghost min-w-0 flex-1 py-1 text-[10px]"
+                          title="Abrir plantilla completa en el taller"
+                          onClick={() => onEditarPlantilla(s.animationId!)}
+                        >
+                          <Pencil className="h-3 w-3" /> Editar plantilla
+                        </button>
+                      )}
+                      {onNuevaAnimacion && characterId && (
+                        <button
+                          type="button"
+                          className="btn-ghost min-w-0 flex-1 py-1 text-[10px]"
+                          title="Añadir otra animación al mismo personaje"
+                          onClick={() => onNuevaAnimacion(characterId)}
+                        >
+                          <Film className="h-3 w-3" /> Nueva animación
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex min-w-0 gap-1.5 overflow-hidden">
+                    <button
+                      onClick={() => onUsar?.(s)}
+                      disabled={!onUsar}
+                      className="btn-brand min-w-0 flex-1 py-1 text-[11px] disabled:opacity-40"
+                    >
+                      <Plus className="h-3 w-3" /> Al montaje
                     </button>
-                  )}
+                    {puedeEditar && (
+                      confirmar === s.id ? (
+                        <>
+                          <button
+                            onClick={() => void borrar(s.id)}
+                            disabled={borrando === s.id}
+                            className="rounded-md border border-danger/50 px-2 py-1 text-[11px] text-danger disabled:opacity-40"
+                          >
+                            {borrando === s.id
+                              ? <Loader2 className="h-3 w-3 animate-spin" />
+                              : "Sí, borrar"}
+                          </button>
+                          <button onClick={() => setConfirmar(null)} className="btn-ghost px-2 py-1 text-[11px]">
+                            No
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmar(s.id)}
+                          className="rounded-md border border-border px-2 py-1 text-muted hover:border-danger/50 hover:text-danger"
+                          title="Borrar de la biblioteca"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )
+                    )}
+                    {puedeEditar && confirmar !== s.id && (
+                      <button type="button" onClick={() => {
+                        if (editando === s.id) { setEditando(null); void leer(); }
+                        else setEditando(s.id);
+                      }}
+                        className="rounded-md border border-border px-2 py-1 text-muted hover:border-accent/50 hover:text-accent"
+                        title="Corregir vista, dirección y anclaje">
+                        <Compass className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {filtrados.length > POR_PAGINA && (

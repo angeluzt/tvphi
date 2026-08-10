@@ -21,11 +21,15 @@ export interface SpriteMontado {
 const base64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
   const lector = new FileReader();
   lector.onload = () => resolve(String(lector.result).replace(/^data:[^,]+,/, ""));
-  lector.onerror = () => reject(new Error("No se pudo preparar la tira del sprite."));
+  lector.onerror = () => reject(new Error("No se pudo preparar la imagen del sprite."));
   lector.readAsDataURL(blob);
 });
 
-/** Reutiliza un actor existente o fabrica, recorta y guarda el que falte. */
+/**
+ * Reutiliza un actor existente o fabrica, recorta y guarda el que falte.
+ * Guarda la plantilla completa (editable en el taller) y publica la tira
+ * en la biblioteca pública, enlazadas.
+ */
 export async function resolverSpritePlaneado(
   plan: SpritePlaneado,
   calidad: "low" | "medium" | "high" = "low",
@@ -64,34 +68,85 @@ export async function resolverSpritePlaneado(
 
   const dataUrl = `data:image/png;base64,${generado.imagen}`;
   const imagen = await cargarImagen(dataUrl);
+  const hojaBlob = await (await fetch(dataUrl)).blob();
   const forma = (generado.forma ?? plan.forma) as "tira" | "columna";
   const esperados = Number(generado.fotogramas ?? plan.spr.fotogramas);
   const columnas = Number(generado.columnas) || (forma === "columna" ? 1 : esperados);
   const filas = Number(generado.filas) || (forma === "columna" ? esperados : 1);
+  const celdas = celdasSpriteEnRejilla(imagen.naturalWidth, imagen.naturalHeight, esperados, { columnas, filas });
+  const croma = typeof generado.croma === "string" && /^#[0-9a-f]{6}$/i.test(generado.croma)
+    ? generado.croma
+    : "#FF00FF";
   const cortada = await cortarHoja({
     dataUrl,
     fotogramas: esperados,
     forma,
-    croma: generado.croma,
-    celdas: celdasSpriteEnRejilla(imagen.naturalWidth, imagen.naturalHeight, esperados, { columnas, filas }),
+    croma,
+    celdas,
   });
   if (!cortada.fotogramas.length) {
     throw new Error("La hoja del sprite salió sin ningún fotograma recortable.");
   }
 
   let tira: Awaited<ReturnType<typeof tiraDeFotogramas>>;
+  let refBlob: Blob;
   try {
     tira = await tiraDeFotogramas(cortada.fotogramas);
+    const primerUrl = cortada.fotogramas[0]?.url;
+    refBlob = primerUrl
+      ? await (await fetch(primerUrl)).blob()
+      : hojaBlob;
   } finally {
     cortada.fotogramas.forEach((f) => {
       if (f.url.startsWith("blob:")) URL.revokeObjectURL(f.url);
     });
   }
+
+  const nombre = plan.nombre.slice(0, 60) || nombreSprite(plan.que);
+  const [hojaB64, tiraB64, refB64] = await Promise.all([
+    base64(hojaBlob),
+    base64(tira.blob),
+    base64(refBlob),
+  ]);
+
+  // 1) Plantilla editable (misma forma que el taller del Lab).
+  const plantilla = await pedirJson("/api/story/sprite-characters", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      nombrePersonaje: nombre,
+      descripcionPersonaje: plan.que,
+      nombre,
+      que: plan.que,
+      fotogramas: tira.fotogramas,
+      fps: plan.spr.fps,
+      vista: plan.vista,
+      direccion: plan.direccion,
+      accion: plan.accion,
+      anclaje: plan.anclaje,
+      croma,
+      columnas,
+      filas,
+      anchoHoja: imagen.naturalWidth,
+      altoHoja: imagen.naturalHeight,
+      ancho: tira.ancho,
+      alto: tira.alto,
+      celdas: cortada.celdas,
+      hojaOriginal: hojaB64,
+      hojaTrabajo: hojaB64,
+      tira: tiraB64,
+      referencia: refB64,
+    }),
+  });
+  const animationId = plantilla?.animacionId as string | undefined;
+  if (!animationId) throw new Error("El sprite se recortó, pero no se pudo guardar la plantilla.");
+
+  // 2) Tira pública para montajes, enlazada a la plantilla.
   const guardado = await pedirJson("/api/story/lab/sprites", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      nombre: plan.nombre.slice(0, 60) || nombreSprite(plan.que),
+      nombre,
       que: plan.que,
       fotogramas: tira.fotogramas,
       fps: plan.spr.fps,
@@ -101,11 +156,12 @@ export async function resolverSpritePlaneado(
       anclaje: plan.anclaje,
       ancho: tira.ancho,
       alto: tira.alto,
-      tira: await base64(tira.blob),
+      tira: tiraB64,
+      animationId,
     }),
   });
   const meta = guardado?.sprite as SpriteMeta | undefined;
-  if (!meta?.id) throw new Error("El sprite se recortó, pero no se pudo guardar en la biblioteca.");
+  if (!meta?.id) throw new Error("El sprite se recortó, pero no se pudo publicar en la biblioteca.");
 
   return {
     id: plan.id,

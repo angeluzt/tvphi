@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check, FolderOpen, UserRound, Pencil, Plus,
   Search, RefreshCw, ChevronLeft, ChevronRight,
@@ -101,12 +101,19 @@ interface Hecho {
   };
 }
 
-export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar = true }: {
+export type GenerarSpriteHandle = {
+  /** Abre una animación ya guardada (plantilla completa) para editarla. */
+  abrirAnimacion: (animationId: string) => Promise<void>;
+  /** Prepara el taller para añadir otra animación al mismo personaje. */
+  nuevaAnimacionDePersonaje: (characterId: string) => Promise<void>;
+};
+
+export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   onGuardado?: (s: SpriteMeta) => void;
   /** Importar y editar un ZIP no necesita IA y debe seguir disponible sin clave. */
   puedeGenerar?: boolean;
   puedePublicar?: boolean;
-}) {
+}>(function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar = true }, ref) {
   const [que, setQue] = useState("");
   const [n, setN] = useState(6);
   const [forma, setForma] = useState<"tira" | "columna">("tira");
@@ -213,9 +220,12 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
     setErrorPersonajes(null);
     try {
       const j = await pedirJson("/api/story/sprite-characters");
-      setPersonajes(j.personajes ?? []);
+      const lista = (j.personajes ?? []) as PersonajeSprite[];
+      setPersonajes(lista);
+      return lista;
     } catch (e) {
       setErrorPersonajes((e as Error).message || "No se pudieron cargar tus sprites.");
+      return [] as PersonajeSprite[];
     } finally {
       setCargandoPersonajes(false);
     }
@@ -469,6 +479,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
           ancho: hecho.ancho,
           alto: hecho.alto,
           tira: b64,
+          animationId: animacionId || undefined,
         }),
       });
       setGuardado(true);
@@ -504,6 +515,26 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
     setForma(a.columnas>=a.filas?"tira":"columna");setDistribucion(a.filas===1?"fila":a.columnas===1?"columna":"equilibrada");setGuardado(false);setGuardadoPrivado(true);
     setCortesPendientes(false);setHojaPendiente(false);setEditorActivo("hoja");setAviso("Animación abierta para corregir.");
   }catch(e){if(uh)URL.revokeObjectURL(uh);if(ut)URL.revokeObjectURL(ut);setError((e as Error).message);}finally{setPaso(null);}}
+
+  const tallerApi = useRef({
+    editarAnimacion: async (_id: string) => {},
+    nuevaAnimacion: (_p: PersonajeSprite) => {},
+    releerPersonajes: async () => [] as PersonajeSprite[],
+  });
+  tallerApi.current = { editarAnimacion, nuevaAnimacion, releerPersonajes };
+
+  useImperativeHandle(ref, () => ({
+    abrirAnimacion: (id) => tallerApi.current.editarAnimacion(id),
+    nuevaAnimacionDePersonaje: async (characterId) => {
+      const lista = await tallerApi.current.releerPersonajes();
+      const p = lista.find((x) => x.spriteId === characterId);
+      if (!p) {
+        setError("No encontré ese personaje en tu taller. Quizá lo borraste o es de otra cuenta.");
+        return;
+      }
+      tallerApi.current.nuevaAnimacion(p);
+    },
+  }));
 
   async function descargar() {
     if (!hecho || edicionPendiente) return;
@@ -1084,4 +1115,4 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
       </div>
     </div>
   );
-}
+});
