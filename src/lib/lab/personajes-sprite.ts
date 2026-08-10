@@ -34,6 +34,21 @@ export interface PersonajeSprite {
   animaciones: AnimacionPersonajeSprite[];
 }
 
+/**
+ * De dónde se baja cada imagen de una animación.
+ *
+ * Un solo sitio que arma la URL: el nombre del parámetro se comprueba contra
+ * una lista cerrada en el servidor, así que aquí basta con no inventárselo.
+ */
+export const urlImagenAnimacion = (id: string, que: "original" | "trabajo" | "tira") =>
+  `/api/story/sprite-characters/animations/${id}/image?que=${que}`;
+
+/**
+ * El proyecto editable de una animación.
+ *
+ * Las imágenes viajan como URL, no como base64: las tres juntas en el JSON eran
+ * varios megas por respuesta. Se piden en paralelo y el navegador las cachea.
+ */
 export interface ProyectoAnimacionSprite extends AnimacionPersonajeSprite {
   personajeId: string;
   personajeNombre: string;
@@ -41,7 +56,6 @@ export interface ProyectoAnimacionSprite extends AnimacionPersonajeSprite {
   anchoHoja: number;
   altoHoja: number;
   celdas: CeldaSprite[];
-  hojaOriginal: string;
-  hojaTrabajo: string;
-  tira: string;
+  hojaOriginalUrl: string;
+  hojaTrabajoUrl: string;
 }

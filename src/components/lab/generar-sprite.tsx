@@ -676,10 +676,18 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     setAviso(j.actualizada?`Cambios guardados${j.enAtlas?" y actualizados en el atlas.":"."}`:`Animación guardada${j.enAtlas?" y compactada en el atlas.":"."}`);
   }catch(e){setError((e as Error).message);}finally{setGuardando(false);}}
 
+  /**
+   * Abrir una animación guardada para corregirla.
+   *
+   * El JSON trae solo medidas y celdas; las tres imágenes se bajan APARTE y en
+   * paralelo. Antes venían las tres en base64 dentro del mismo objeto: varios
+   * megas por respuesta, y si fallaba se caía la apertura entera. Ahora cada
+   * una es un binario cacheable y el navegador las pide a la vez.
+   */
   async function editarAnimacion(id:string){if(paso)return;setPaso("Abriendo la animación…");setError(null);let uh:string|null=null,ut:string|null=null;try{
     const j=await pedirJson(`/api/story/sprite-characters/animations/${id}`),a=j.animacion as ProyectoAnimacionSprite;
-    // Sin fetch(data:…): hojas grandes tiran "Failed to fetch" al abrir.
-    const bo=pngBase64ABlob(a.hojaOriginal),bh=pngBase64ABlob(a.hojaTrabajo),bt=pngBase64ABlob(a.tira);
+    const bajar=async(u:string)=>{const r=await fetch(u);if(!r.ok)throw new Error(`No se pudo bajar la imagen (${r.status}).`);return r.blob();};
+    const [bo,bh,bt]=await Promise.all([bajar(a.hojaOriginalUrl),bajar(a.hojaTrabajoUrl),bajar(a.tiraUrl)]);
     uh=URL.createObjectURL(bh);ut=URL.createObjectURL(bt);const fotos=await fotogramasDeTira(ut,a.fotogramas);
     setHecho({edicionId:Date.now(),fotos,url:ut,blob:bt,ancho:a.ancho,alto:a.alto,descartados:0,hoja:{sesionId:Date.now(),url:uh,blob:bh,originalBlob:bo,
       ancho:a.anchoHoja,alto:a.altoHoja,forma:a.columnas>=a.filas?"tira":"columna",columnas:a.columnas,filas:a.filas,croma:a.croma,celdas:a.celdas}});uh=null;ut=null;
