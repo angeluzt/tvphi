@@ -310,6 +310,20 @@ export async function cortarHoja(opts: {
   celdas?: CeldaSprite[];
   /** Margen a dejar alrededor del recorte, en tanto por uno. */
   aire?: number;
+  /**
+   * Centrar cada fotograma sobre SU PROPIO contenido. Por defecto sí.
+   *
+   * POR QUÉ ES LO SENSATO POR DEFECTO. La caja común evita que el recorte
+   * cambie de tamaño entre cuadros, pero conserva la deriva del dibujo: el
+   * modelo pone el bicho un poco más a la izquierda en un cuadro y un poco más
+   * arriba en otro, sin querer, y al reproducir eso se ve como un temblor o
+   * como un salto lateral. Centrar cada cuadro sobre su silueta lo quita.
+   *
+   * LO QUE SE PIERDE: el movimiento que el dibujo tuviera A PROPÓSITO —una
+   * pelota que bota, un salto—. Por eso es una opción y no una imposición: se
+   * puede apagar y el recorte vuelve a respetar la posición original.
+   */
+  centrar?: boolean;
 }): Promise<HojaCortada> {
   const img = await cargarImagen(opts.dataUrl);
   const propuestas = opts.celdas?.length
@@ -358,14 +372,18 @@ export async function cortarHoja(opts: {
   let caja: { x0: number; y0: number; x1: number; y1: number } | null = null;
   let descartados = 0;
   const vale: boolean[] = [];
+  // La caja de CADA cuadro, no solo la común: es la que permite centrarlo
+  // sobre su propia silueta en vez de sobre la del conjunto.
+  const propias: ({ x0: number; y0: number; x1: number; y1: number } | null)[] = [];
   celdas.forEach(({ cv, datos }) => {
     const lleno = llenoDe(datos);
     // Una celda casi vacía es una que el modelo no dibujó. Meterla en la
     // animación es un parpadeo en medio del ciclo.
     const sirve = lleno > 0.004;
     vale.push(sirve);
-    if (!sirve) { descartados++; return; }
+    if (!sirve) { descartados++; propias.push(null); return; }
     const c = cajaDe(datos, cv.width, cv.height);
+    propias.push(c);
     if (!c) { vale[vale.length - 1] = false; descartados++; return; }
     caja = caja
       ? { x0: Math.min(caja.x0, c.x0), y0: Math.min(caja.y0, c.y0), x1: Math.max(caja.x1, c.x1), y1: Math.max(caja.y1, c.y1) }
@@ -392,11 +410,22 @@ export async function cortarHoja(opts: {
   const rh = h0 + my * 2;
 
   // 3 · Recortar todos con la misma caja.
+  const centrar = opts.centrar !== false;
   const fotogramas: Fotograma[] = [];
   celdas.forEach(({ cv }, i) => {
     if (!vale[i]) return;
     const out = lienzo(rw, rh);
-    out.getContext("2d")!.drawImage(cv, c0.x0, c0.y0, w0, h0, mx, my, w0, h0);
+    const p = propias[i];
+    if (centrar && p) {
+      // Se dibuja la celda ENTERA, desplazada para que el centro de su silueta
+      // caiga en el centro del recorte. Lo que sobre por los lados se sale del
+      // lienzo, que es justo lo que queremos tirar.
+      const cx = (p.x0 + p.x1 + 1) / 2;
+      const cy = (p.y0 + p.y1 + 1) / 2;
+      out.getContext("2d")!.drawImage(cv, Math.round(rw / 2 - cx), Math.round(rh / 2 - cy));
+    } else {
+      out.getContext("2d")!.drawImage(cv, c0.x0, c0.y0, w0, h0, mx, my, w0, h0);
+    }
     const d = out.getContext("2d")!.getImageData(0, 0, out.width, out.height).data;
     fotogramas.push({
       url: out.toDataURL("image/png"),

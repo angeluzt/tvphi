@@ -122,6 +122,15 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   const [n, setN] = useState(6);
   const [forma, setForma] = useState<"tira" | "columna">("tira");
   const [distribucion,setDistribucion]=useState<"equilibrada"|"fila"|"columna">("equilibrada");
+  /**
+   * Centrar cada fotograma sobre su silueta al recortar. Encendido de serie.
+   *
+   * Es lo que quita el temblor lateral de casi todos los sprites generados: el
+   * modelo no coloca al bicho exactamente igual en cada celda, y esa deriva se
+   * ve como un brinco. Se puede apagar cuando el movimiento del dibujo sea
+   * intencionado —una pelota que bota, un salto—.
+   */
+  const [centrarCuadros, setCentrarCuadros] = useState(true);
   const [vista, setVista] = useState<TipoVistaSprite>("lateral");
   const [direccion, setDireccion] = useState<DireccionSprite>("derecha");
   const [accion, setAccion] = useState<AccionSprite>("otro");
@@ -422,6 +431,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
           forma: formaHoja,
           croma: j.croma,
           celdas,
+          centrar: centrarCuadros,
         });
       } finally {
         URL.revokeObjectURL(urlParaCorte);
@@ -575,6 +585,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         forma: hecho.hoja.forma,
         croma: hecho.hoja.croma,
         celdas: hecho.hoja.celdas,
+        centrar: centrarCuadros,
       });
       if (!cortada.fotogramas.length) {
         throw new Error("La hoja corregida no contiene ningún fotograma visible.");
@@ -628,6 +639,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         forma: hecho.hoja.forma,
         croma: hecho.hoja.croma,
         celdas,
+        centrar: centrarCuadros,
       });
       if (!cortada.fotogramas.length) {
         throw new Error("Esos cortes no contienen ningún fotograma visible.");
@@ -1100,6 +1112,21 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         <p className="text-[9px] leading-snug text-muted sm:col-span-4">
           Esto queda guardado: la IA sabrá cómo orientarlo, voltearlo y apoyarlo en el escenario.
         </p>
+        {/* Encendido de serie porque arregla el temblor de casi todos los
+            sprites. Se deja apagar para lo que se mueva a propósito. */}
+        <label className="flex items-start gap-2 text-[10px] text-muted sm:col-span-4">
+          <input
+            type="checkbox"
+            checked={centrarCuadros}
+            onChange={(e) => setCentrarCuadros(e.target.checked)}
+            className="mt-0.5 shrink-0"
+          />
+          <span>
+            <b className="text-fg">Centrar cada fotograma</b> — quita el temblor cuando el modelo no
+            coloca al bicho igual en todas las celdas.{" "}
+            Apágalo si el movimiento es a propósito (una pelota que bota, un salto).
+          </span>
+        </label>
       </div>
 
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
