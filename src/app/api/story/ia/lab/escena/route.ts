@@ -54,10 +54,11 @@ Estructura:
  "animacion":{"pasos":[{"mov":"acercar","segundos":3,"intensidad":45,"nota":"para qué es este tramo"}]},
  "efectos":[{"id":"humo","espacio":"imagen","x":0.5,"y":0.7,"escala":0.4}]}
 
-CAPAS QUE SE MUEVEN SOLAS (esto es lo que hace que la escena esté viva)
-- Una capa puede llevar «mov» y moverse por su cuenta, además de moverse con la cámara.
-- Si en la escena hay algo que debería estar EN MOVIMIENTO —un pájaro, un barco, una nube, un meteoro, una bandera— dale su PROPIA capa, con el resto del cuadro vacío, y ponle «mov».
-- EXCEPCIÓN: si está activo el MODO DIRECTOR DE ESCENA VIVA, los seres u objetos cuya pose cambia van en "sprites" y NO en una capa dibujada. «mov» queda para superficies o decoración que se desplazan como una imagen plana.
+CAPAS QUE SE MUEVEN SOLAS (por defecto casi NADA se mueve)
+- «mov» es OPT-IN. Si dudas, NO lo pongas: la capa queda quieta y solo responde al paralaje de cámara.
+- NUNCA pongas «mov» en: fondo/sky, islas, terreno, suelo, paredes, vegetación en bloque, edificios, arcos, escaleras. Se ven rotos si "flotan".
+- Solo pon «mov» cuando el plano entero DEBE cruzar o mecerse —nube suelta, bandera, barco en agua, tren en vía, farolillo— y en una capa propia casi vacía alrededor.
+- EXCEPCIÓN: si está activo el MODO DIRECTOR DE ESCENA VIVA, los seres u objetos cuya pose cambia van en "sprites" y NO en una capa dibujada. «mov» queda solo para decoración plana que se desplace.
 - Los tipos, sus campos y las velocidades que funcionan van en la referencia. No inventes otros.
 - Si algo viaja SOBRE otra capa —tren sobre vía, barco sobre agua, plataforma sobre riel— usa trayectoria y referenciaCapaId. Su profundidad debe coincidir con esa referencia; la aplicación también la corregirá.
 - Usa espacio "capa" para objetos integrados al decorado. "pantalla" ignora la cámara y solo sirve para una sobreimpresión absoluta.

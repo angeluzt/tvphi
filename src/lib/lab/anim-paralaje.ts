@@ -5,6 +5,7 @@
 // dos veces, panear desde ahí, ocultar una capa y volver a mostrarla después.
 
 export type AnimParalaje =
+  | "quieto"
   | "suave"
   | "izq-der"
   | "der-izq"
@@ -31,6 +32,11 @@ export type MovCola =
   | "ir-a";
 
 export const ANIM_OPCIONES: { id: AnimParalaje; label: string; pista: string }[] = [
+  {
+    id: "quieto",
+    label: "Quieto (estático)",
+    pista: "La cámara no se mueve sola: solo sprites y capas con movimiento propio",
+  },
   { id: "suave", label: "Suave (idle)", pista: "Va y viene en círculo suave" },
   { id: "izq-der", label: "Izquierda → derecha", pista: "Travelling horizontal" },
   { id: "der-izq", label: "Derecha → izquierda", pista: "Travelling al revés" },
@@ -721,9 +727,12 @@ export function vistaAnim(
     });
 
   switch (kind) {
+    case "quieto":
+      // Por defecto: islas, suelo y cielo quietos. El movimiento lo ponen la
+      // cola, el ratón o el «mov» / sprite de cada capa — no un idle global.
+      return base(0, 0, 0);
     case "suave": {
-      // El idle de reposo se queda corto a propósito: es un respiro de fondo,
-      // no un movimiento de cámara.
+      // Idle de respiro: corto a propósito. Úsalo solo si quieres “vida” de cámara.
       const q = k * 0.35;
       if (opts.modo === "tramo") {
         const a = avance * Math.PI * 2;
