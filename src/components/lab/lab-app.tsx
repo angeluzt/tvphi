@@ -222,6 +222,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
           sprite={sprite}
           colaInicial={colaIa ?? undefined}
           escena={escena ?? undefined}
+          puedeIa={hayIa}
           // Un ZIP con mapa dentro repone también la pestaña 1: si no, se
           // recuperaba el montaje y el mapa se quedaba en blanco.
           onEscena={(e) => {

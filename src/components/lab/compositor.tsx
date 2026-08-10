@@ -28,6 +28,10 @@ import {
 } from "@/lib/lab/anim-paralaje";
 import { RangoPreciso } from "./rango-preciso";
 import { EditorCromaCapa, type CromaCorregido } from "./editor-croma-capa";
+import { HerramientasCapa } from "./herramientas-capa";
+import {
+  borrarBorradorMontaje, guardarBorradorMontaje, imgADataUrl, leerBorradorMontaje,
+} from "@/lib/lab/borrador-montaje";
 
 // Paso 2: apilar las capas ya generadas y moverlas con profundidad.
 //
@@ -78,7 +82,7 @@ export interface Semilla {
 let contador = 0;
 let pasoSeq = 0;
 
-export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
+export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, puedeIa }: {
   semilla?: Semilla[];
   /**
    * Un sprite de la biblioteca para AÑADIR, no para reemplazar.
@@ -94,11 +98,13 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   escena?: unknown;
   /** Al importar un ZIP que trae mapa, se devuelve para reponerlo en su pestaña. */
   onEscena?: (e: unknown) => void;
+  /** Regenerar capa con /api/story/ia/lab/capa (admins con OpenAI). */
+  puedeIa?: boolean;
 }) {
   const [capas, setCapas] = useState<CapaImg[]>([]);
   const [moviendo, setMoviendo] = useState(true);
   const [fuerza, setFuerza] = useState(55);
-  const [anim, setAnim] = useState<AnimParalaje>("suave");
+  const [anim, setAnim] = useState<AnimParalaje>("quieto");
   // Borrador del paso a añadir a la cola
   const [borrador, setBorrador] = useState(() => pasoPorDefecto({ id: "borrador", mov: "der", durMs: 4000, distancia: 55 }));
   const [cola, setCola] = useState<PasoSecuencia[]>([]);
@@ -145,6 +151,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   };
   const [aviso, setAviso] = useState("Carga primero el fondo y luego las capas PNG con transparencia.");
   const [busyZip, setBusyZip] = useState<"bajar" | "subir" | null>(null);
+  const [borradorInfo, setBorradorInfo] = useState<string | null>(null);
+  const borradorListo = useRef(false);
   const canvas = useRef<HTMLCanvasElement>(null);
   const caja = useRef<HTMLDivElement>(null);
   const raton = useRef({ x: 0, y: 0 });
@@ -217,6 +225,102 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
   useEffect(() => {
     if (rutaVisibleId && rutaVisibleId !== capaActivaId) setRutaVisibleId(null);
   }, [capaActivaId, rutaVisibleId]);
+
+  /** ¿Hay un montaje auto-guardado tras una recarga? */
+  const [borradorPendiente, setBorradorPendiente] = useState<Awaited<ReturnType<typeof leerBorradorMontaje>>>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    void (async () => {
+      try {
+        const b = await leerBorradorMontaje();
+        if (!vivo) return;
+        if (b?.capas?.length && !semilla?.length) setBorradorPendiente(b);
+      } catch { /* IndexedDB puede fallar en modo privado */ }
+      finally { borradorListo.current = true; }
+    })();
+    return () => { vivo = false; };
+  // Solo al montar: semilla que llegue después manda sobre el borrador.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!borradorListo.current || !capas.length) return;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const packed = [];
+          for (const c of capasRef.current) {
+            packed.push({
+              clave: c.clave,
+              nombre: c.nombre,
+              depth: c.depth,
+              escala: c.escala,
+              opacidad: c.opacidad,
+              bloqueada: c.bloqueada,
+              via: c.via,
+              vacio: c.vacio,
+              mov: c.mov,
+              spr: c.spr,
+              dataUrl: await imgADataUrl(c.img),
+            });
+          }
+          await guardarBorradorMontaje({
+            version: 1,
+            guardadoEn: Date.now(),
+            width: tam.current.w,
+            height: tam.current.h,
+            capas: packed,
+            escena,
+            cola: colaRef.current,
+          });
+          setBorradorInfo(
+            `Autoguardado en este navegador · ${new Date().toLocaleTimeString()}. Descarga el ZIP para respaldarlo.`,
+          );
+        } catch {
+          setBorradorInfo("No se pudo autoguardar en este navegador. Usa «Descargar todo · ZIP».");
+        }
+      })();
+    }, 1800);
+    return () => window.clearTimeout(t);
+  }, [capas, cola, escena]);
+
+  async function recuperarBorrador() {
+    const b = borradorPendiente;
+    if (!b?.capas?.length) return;
+    setBorradorPendiente(null);
+    try {
+      const nuevas: CapaImg[] = [];
+      for (const c of b.capas) {
+        const img = await cargar(c.dataUrl);
+        const base = hacerCapa(c.nombre, img);
+        nuevas.push({
+          ...base,
+          clave: c.clave || base.id,
+          depth: c.depth, escala: c.escala, opacidad: c.opacidad,
+          bloqueada: c.bloqueada, via: c.via, vacio: c.vacio,
+          mov: normalizarMov(c.mov), spr: normalizarSprite(c.spr),
+        });
+      }
+      relojesSpriteRef.current.clear();
+      relojesCapaRef.current.clear();
+      const ahora = performance.now();
+      nuevas.forEach((c) => {
+        if (c.spr) relojesSpriteRef.current.set(c.id, { inicio: ahora });
+        else if (c.mov) relojesCapaRef.current.set(c.id, { inicio: ahora });
+      });
+      tam.current = { w: b.width || nuevas[0].img.naturalWidth, h: b.height || nuevas[0].img.naturalHeight };
+      setCapas(nuevas);
+      setCapaActivaId(nuevas[nuevas.length - 1].id);
+      if (Array.isArray(b.cola) && b.cola.length) {
+        setCola((b.cola as PasoSecuencia[]).map((p, i) => pasoPorDefecto({ ...p, id: `b${++pasoSeq}-${i}` })));
+      }
+      if (b.escena) onEscena?.(b.escena);
+      setAviso(`Recuperado el montaje autoguardado (${nuevas.length} capas). Descarga el ZIP si quieres un respaldo portable.`);
+    } catch (e) {
+      setAviso((e as Error).message || "No se pudo recuperar el borrador.");
+    }
+  }
 
   function metaCapas() {
     return capasRef.current.map((c) => ({ id: c.id, depth: c.depth }));
@@ -493,6 +597,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
 
   useEffect(() => {
     if (!semilla?.length) return;
+    setBorradorPendiente(null);
     let vivo = true;
     (async () => {
       const nuevas: CapaImg[] = [];
@@ -1015,11 +1120,48 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
           relojesCapaRef.current.clear();
           setRutaVisibleId(null);
           setCapas([]);
+          setBorradorInfo(null);
+          void borrarBorradorMontaje();
           setAviso("Vacío.");
         }} disabled={!capas.length} className="btn-ghost text-xs text-danger">
           <Trash2 className="h-3.5 w-3.5" /> Vaciar
         </button>
+        {capas.some((c) => !c.spr && c.mov) && (
+          <button
+            type="button"
+            onClick={() => {
+              setCapas((prev) => prev.map((c) => (c.spr ? c : { ...c, mov: undefined })));
+              relojesCapaRef.current.clear();
+              setAviso("Capas de decorado quietas. Los sprites conservan su animación.");
+            }}
+            className="btn-ghost text-xs"
+            title="Quita flotar/deriva de islas, suelo, etc.; no toca sprites"
+          >
+            Congelar decorado
+          </button>
+        )}
       </div>
+
+      {borradorPendiente && !capas.length && (
+        <div className="rounded-lg border border-gold/50 bg-gold/10 px-3 py-2 text-[11px] text-fg">
+          Hay un montaje autoguardado
+          ({borradorPendiente.capas.length} capas · {new Date(borradorPendiente.guardadoEn).toLocaleString()}).
+          {" "}
+          <button type="button" className="text-accent underline" onClick={() => void recuperarBorrador()}>
+            Recuperarlo
+          </button>
+          {" · "}
+          <button type="button" className="text-muted underline" onClick={() => {
+            setBorradorPendiente(null);
+            void borrarBorradorMontaje();
+          }}>
+            Descartar
+          </button>
+        </div>
+      )}
+      {borradorInfo && capas.length > 0 && (
+        <p className="text-[10px] text-muted">{borradorInfo}</p>
+      )}
 
       <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div className="card order-2 space-y-2 self-start p-3 lg:order-1 lg:sticky lg:top-2">
@@ -1352,6 +1494,39 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
                       onRutaVisible={(visible) => setRutaVisibleId(visible ? capaActiva.id : null)}
                     />
                   )}
+                  <HerramientasCapa
+                    nombre={capaActiva.nombre}
+                    clave={capaActiva.clave}
+                    esSprite={!!capaActiva.spr}
+                    esFondo={indiceActivo === 0}
+                    formato={tam.current.w >= tam.current.h ? "16:9" : tam.current.h > tam.current.w * 1.2 ? "9:16" : "1:1"}
+                    escena={escena}
+                    puedeIa={puedeIa}
+                    obtenerPng={() => new Promise((res) => {
+                      const cv = document.createElement("canvas");
+                      cv.width = capaActiva.img.naturalWidth || capaActiva.img.width;
+                      cv.height = capaActiva.img.naturalHeight || capaActiva.img.height;
+                      cv.getContext("2d")!.drawImage(capaActiva.img, 0, 0);
+                      cv.toBlob((b) => res(b), "image/png");
+                    })}
+                    onNombre={(n) => upd(capaActiva.id, { nombre: n || capaActiva.nombre })}
+                    onImagen={(r) => {
+                      void (async () => {
+                        try {
+                          const img = await cargar(r.url);
+                          upd(capaActiva.id, {
+                            img,
+                            via: r.via,
+                            vacio: r.vacio,
+                            ...(capaActiva.spr ? { spr: undefined } : {}),
+                          });
+                          setAviso(`«${capaActiva.nombre}» actualizada.`);
+                        } catch {
+                          setAviso("No se pudo aplicar la nueva imagen a la capa.");
+                        }
+                      })();
+                    }}
+                  />
                 </fieldset>
               </div>
             )}
@@ -1444,6 +1619,12 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena }: {
               </select>
             </label>
           </div>
+          {anim === "quieto" && !enSecuencia && (
+            <p className="text-[10px] text-muted">
+              Cámara fija: el dragón u otros sprites sí se mueven; islas y cielo se quedan quietos
+              salvo que les hayas puesto movimiento propio (usa «Congelar decorado» para quitárselo).
+            </p>
+          )}
           {pistaIdle && !enSecuencia && (
             <p className="text-[10px] text-muted">{pistaIdle}. Con el ratón encima mandas tú.</p>
           )}

@@ -198,7 +198,17 @@ export function MapaEditor({
                     type="checkbox" checked={marcadas.includes(c.id)}
                     onChange={() => alterna(c.id)} aria-label={`Marcar ${c.name}`}
                   />
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium">{c.name}</span>
+                  <input
+                    className="input min-w-0 flex-1 py-0.5 text-[11px] font-medium"
+                    value={c.name}
+                    onChange={(e) => {
+                      const name = e.target.value.slice(0, 80);
+                      const next = { ...esc, layers: esc.layers.map((x) => x.id === c.id ? { ...x, name } : x) };
+                      setEsc(next);
+                      setTexto(JSON.stringify(next, null, 2));
+                    }}
+                    aria-label={`Nombre de ${c.id}`}
+                  />
                   <span className="chip shrink-0 bg-brand/15 text-brand">{c.depth}</span>
                   <button
                     onClick={() => setEsc({ ...esc, layers: esc.layers.map((x) => x.id === c.id ? { ...x, visible: x.visible === false } : x) })}
@@ -208,9 +218,22 @@ export function MapaEditor({
                     {c.visible === false ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                   </button>
                 </div>
-                <p className="mt-1 truncate text-[10px] text-muted">
-                  {c.objects.length} formas{c.ai?.prompt ? ` · ${c.ai.prompt}` : ""}
-                </p>
+                <textarea
+                  className="input mt-1 min-h-[2.5rem] w-full py-0.5 text-[10px]"
+                  placeholder="Prompt de esta capa (inglés)…"
+                  value={c.ai?.prompt ?? ""}
+                  onChange={(e) => {
+                    const prompt = e.target.value.slice(0, 4000);
+                    const next = {
+                      ...esc,
+                      layers: esc.layers.map((x) => x.id === c.id
+                        ? { ...x, ai: { ...x.ai, prompt } }
+                        : x),
+                    };
+                    setEsc(next);
+                    setTexto(JSON.stringify(next, null, 2));
+                  }}
+                />
               </div>
             ))}
           </div>
