@@ -11,6 +11,7 @@ import {
   type CeldaSprite, type Fotograma,
 } from "@/lib/lab/sprites";
 import { cargarImagen } from "@/lib/lab/quitar-fondo";
+import { pngBase64ABlob } from "@/lib/lab/png-base64";
 import { zip, bajar } from "@/lib/lab/exportar";
 import { leerZip } from "@/lib/story/zip";
 import { VistaSprite } from "./vista-sprite";
@@ -284,27 +285,47 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       });
       if (!r.ok) throw new Error(j.error || "No se pudo");
 
+      // Si el servidor ya persistió, enganchamos IDs ya (antes del recorte local).
+      const pidGuardado = typeof j.personajeId === "string" ? j.personajeId : null;
+      const aidGuardado = typeof j.animacionId === "string" ? j.animacionId : null;
+      if (pidGuardado) setPersonajeId(pidGuardado);
+      if (aidGuardado) setAnimacionId(aidGuardado);
+      if (j.guardadoEnDb && aidGuardado) setGuardadoPrivado(true);
+
       setPaso("Preparando la hoja original…");
-      const dataUrl = `data:image/png;base64,${j.imagen}`;
-      const blobHoja = await (await fetch(dataUrl)).blob();
-      const imagenHoja = await cargarImagen(dataUrl);
+      // Nunca fetch("data:…"): con PNGs grandes tira "Failed to fetch" tras un 200.
+      const blobHoja = pngBase64ABlob(j.imagen);
+      const urlHojaSrc = URL.createObjectURL(blobHoja);
+      let imagenHoja: HTMLImageElement;
+      try {
+        imagenHoja = await cargarImagen(urlHojaSrc);
+      } finally {
+        URL.revokeObjectURL(urlHojaSrc);
+      }
       const formaHoja = (j.forma ?? forma) as "tira" | "columna";
       const cuantos = j.fotogramas ?? n;
       const columnas=Number(j.columnas)||(formaHoja==="columna"?1:cuantos),filas=Number(j.filas)||(formaHoja==="columna"?cuantos:1);
       const celdas=celdasSpriteEnRejilla(imagenHoja.naturalWidth,imagenHoja.naturalHeight,cuantos,{columnas,filas});
 
       setPaso("Recortando los fotogramas…");
-      const hoja = await cortarHoja({
-        dataUrl,
-        fotogramas: cuantos,
-        forma: formaHoja,
-        croma: j.croma,
-        celdas,
-      });
+      const urlParaCorte = URL.createObjectURL(blobHoja);
+      let hoja: Awaited<ReturnType<typeof cortarHoja>>;
+      try {
+        hoja = await cortarHoja({
+          dataUrl: urlParaCorte,
+          fotogramas: cuantos,
+          forma: formaHoja,
+          croma: j.croma,
+          celdas,
+        });
+      } finally {
+        URL.revokeObjectURL(urlParaCorte);
+      }
       if (!hoja.fotogramas.length) {
         throw new Error(
           "La hoja salió sin nada recortable: probablemente el modelo no pintó el magenta. "
-          + "Vuelve a intentarlo, o pide algo con una silueta más clara.",
+          + "Vuelve a intentarlo, o pide algo con una silueta más clara."
+          + (j.guardadoEnDb ? " (La hoja bruta sí quedó guardada en tu taller.)" : ""),
         );
       }
 
@@ -312,7 +333,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       // se guarda a partir de este punto: así lo que se ve en la vista previa
       // es exactamente lo que quedará en la biblioteca, byte a byte.
       const tira = await tiraDeFotogramas(hoja.fotogramas);
-      setHecho({
+      const hechoLocal = {
         edicionId: Date.now(),
         fotos: hoja.fotogramas,
         url: URL.createObjectURL(tira.blob),
@@ -332,18 +353,80 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
           celdas: hoja.celdas,
           originalBlob:blobHoja,
         },
-      });
+      };
+      setHecho(hechoLocal);
       setCortesPendientes(false);
       setHojaPendiente(false);
       setEditorActivo("hoja");
-      setNombre(nombreSprite(que));
-      if (!personajeId) { setNombrePersonaje(nombreSprite(que)); setDescripcionPersonaje(que.trim()); }
+      const nom = nombreSprite(que);
+      setNombre(nom);
+      const nomPers = personajeId || pidGuardado ? nombrePersonaje.trim() || nom : nom;
+      if (!personajeId && !pidGuardado) {
+        setNombrePersonaje(nom);
+        setDescripcionPersonaje(que.trim());
+      }
+
+      // Refinar el borrador del servidor (o guardar si falló el autoguardado)
+      // con la tira ya limpia/recortada — lo que se ve = lo que queda en DB.
+      setPaso("Guardando en tu taller…");
+      let refinadoOk = !!j.guardadoEnDb;
+      try {
+        const refBlob = await (await fetch(hechoLocal.fotos[0].url)).blob();
+        const [hojaOriginal, hojaTrabajo, tiraB64, referencia] = await Promise.all([
+          blobABase64(hechoLocal.hoja.originalBlob),
+          blobABase64(hechoLocal.hoja.blob),
+          blobABase64(hechoLocal.blob),
+          blobABase64(refBlob),
+        ]);
+        const guard = await pedirJson("/api/story/sprite-characters", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            personajeId: pidGuardado || personajeId || undefined,
+            animacionId: aidGuardado || undefined,
+            nombrePersonaje: nomPers,
+            descripcionPersonaje: (descripcionPersonaje.trim() || que.trim()).slice(0, 600),
+            nombre: nom,
+            que: que.trim(),
+            fotogramas: hechoLocal.fotos.length,
+            fps,
+            vista,
+            direccion,
+            accion,
+            anclaje,
+            croma: hechoLocal.hoja.croma,
+            columnas: hechoLocal.hoja.columnas,
+            filas: hechoLocal.hoja.filas,
+            anchoHoja: hechoLocal.hoja.ancho,
+            altoHoja: hechoLocal.hoja.alto,
+            ancho: hechoLocal.ancho,
+            alto: hechoLocal.alto,
+            celdas: hechoLocal.hoja.celdas,
+            hojaOriginal,
+            hojaTrabajo,
+            tira: tiraB64,
+            referencia: (pidGuardado || personajeId) ? undefined : referencia,
+          }),
+        });
+        setPersonajeId(guard.personajeId);
+        setAnimacionId(guard.animacionId);
+        setGuardadoPrivado(true);
+        refinadoOk = true;
+        await releerPersonajes();
+      } catch (ge) {
+        // Si el server ya guardó el borrador, no es pérdida total.
+        if (!j.guardadoEnDb) throw ge;
+        setError((ge as Error).message);
+      }
+
       setPaso(null);
       setAviso(
         `${hoja.fotogramas.length} fotogramas listos`
+        + (refinadoOk ? " · guardado en el taller" : "")
         + (j.referenciaDe ? ` · partió de «${j.referenciaDe}»` : j.referenciaUsada ? " · con cuadro maestro" : "")
         + (hoja.descartados ? ` · ${hoja.descartados} salieron vacíos y se tiraron` : "")
-        + ` · rejilla ${columnas}×${filas} · ${tira.ancho}×${tira.alto} · ${pesoLegible(tira.blob.size)}`,
+        + ` · rejilla ${columnas}×${filas} · ${tira.ancho}×${tira.alto} · ${pesoLegible(tira.blob.size)}`
+        + (j.errorGuardado && !aidGuardado ? ` · aviso: ${j.errorGuardado}` : ""),
       );
     } catch (e) {
       setError((e as Error).message);

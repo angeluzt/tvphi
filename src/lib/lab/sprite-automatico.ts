@@ -5,6 +5,7 @@ import { urlSprite, type SpriteMeta } from "./biblioteca";
 import type { SpriteEnCapa } from "./sprite-capa";
 import type { SpritePlaneado } from "./plan-escena-viva";
 import { cargarImagen } from "./quitar-fondo";
+import { pngBase64ABlob } from "./png-base64";
 import { celdasSpriteEnRejilla, cortarHoja, nombreSprite, tiraDeFotogramas } from "./sprites";
 
 export interface SpriteMontado {
@@ -66,9 +67,18 @@ export async function resolverSpritePlaneado(
   });
   if (!respuesta.ok) throw new Error(generado?.error || "No se pudo generar el sprite.");
 
-  const dataUrl = `data:image/png;base64,${generado.imagen}`;
-  const imagen = await cargarImagen(dataUrl);
-  const hojaBlob = await (await fetch(dataUrl)).blob();
+  // Preferir IDs ya persistidos por el servidor (evita doble personaje).
+  const pidSrv = typeof generado.personajeId === "string" ? generado.personajeId : undefined;
+  const aidSrv = typeof generado.animacionId === "string" ? generado.animacionId : undefined;
+
+  const hojaBlob = pngBase64ABlob(generado.imagen);
+  const urlHoja = URL.createObjectURL(hojaBlob);
+  let imagen: HTMLImageElement;
+  try {
+    imagen = await cargarImagen(urlHoja);
+  } finally {
+    URL.revokeObjectURL(urlHoja);
+  }
   const forma = (generado.forma ?? plan.forma) as "tira" | "columna";
   const esperados = Number(generado.fotogramas ?? plan.spr.fotogramas);
   const columnas = Number(generado.columnas) || (forma === "columna" ? 1 : esperados);
@@ -77,15 +87,25 @@ export async function resolverSpritePlaneado(
   const croma = typeof generado.croma === "string" && /^#[0-9a-f]{6}$/i.test(generado.croma)
     ? generado.croma
     : "#FF00FF";
-  const cortada = await cortarHoja({
-    dataUrl,
-    fotogramas: esperados,
-    forma,
-    croma,
-    celdas,
-  });
+  const urlCorte = URL.createObjectURL(hojaBlob);
+  let cortada: Awaited<ReturnType<typeof cortarHoja>>;
+  try {
+    cortada = await cortarHoja({
+      dataUrl: urlCorte,
+      fotogramas: esperados,
+      forma,
+      croma,
+      celdas,
+    });
+  } finally {
+    URL.revokeObjectURL(urlCorte);
+  }
   if (!cortada.fotogramas.length) {
-    throw new Error("La hoja del sprite salió sin ningún fotograma recortable.");
+    throw new Error(
+      generado.guardadoEnDb
+        ? "La hoja del sprite salió sin fotogramas recortables, pero sí quedó guardada en tu taller."
+        : "La hoja del sprite salió sin ningún fotograma recortable.",
+    );
   }
 
   let tira: Awaited<ReturnType<typeof tiraDeFotogramas>>;
@@ -110,10 +130,13 @@ export async function resolverSpritePlaneado(
   ]);
 
   // 1) Plantilla editable (misma forma que el taller del Lab).
+  //    Si el server ya creó borrador, actualizamos esa animación.
   const plantilla = await pedirJson("/api/story/sprite-characters", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      personajeId: pidSrv,
+      animacionId: aidSrv,
       nombrePersonaje: nombre,
       descripcionPersonaje: plan.que,
       nombre,
@@ -135,7 +158,7 @@ export async function resolverSpritePlaneado(
       hojaOriginal: hojaB64,
       hojaTrabajo: hojaB64,
       tira: tiraB64,
-      referencia: refB64,
+      referencia: pidSrv || aidSrv ? undefined : refB64,
     }),
   });
   const animationId = plantilla?.animacionId as string | undefined;
