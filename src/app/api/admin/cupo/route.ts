@@ -16,7 +16,7 @@ export async function GET() {
 }
 
 const body = z.object({
-  limite: z.number().int().min(1).max(100),
+  limite: z.number().int().min(0).max(100),
 });
 
 export async function POST(req: Request) {
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   }
   const parsed = body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Indica un número entre 1 y 100." }, { status: 400 });
+    return NextResponse.json({ error: "Indica un número entre 0 y 100 (0 apaga la IA)." }, { status: 400 });
   }
   try {
     const limite = await guardarLimiteIa(parsed.data.limite);

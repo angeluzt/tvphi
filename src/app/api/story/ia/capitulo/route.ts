@@ -6,7 +6,7 @@ import { referenciaCompacta } from "@/lib/story/catalogo";
 import { migrateProject, quienesHablan } from "@/lib/story/model";
 import { prepararCapituloGenerado, ajustarMusicaCapitulo } from "@/lib/story/guion";
 import { VOCES } from "@/lib/story/modelos";
-import { estadoCupoHistorias, mensajeCupoAgotado, registrarUsoIaCapitulo, esAdminHistorias } from "@/lib/story/cupo";
+import { estadoCupoHistorias, reservarUsoIa, liberarUsoIa, esAdminHistorias } from "@/lib/story/cupo";
 import { AVISO_SIN_VERIFICAR } from "@/lib/email-verify";
 import { fijarConsistencia, leerReparto, leerEstilo } from "@/lib/story/consistencia";
 
@@ -157,11 +157,11 @@ export async function POST(req: Request) {
     }, { status: 403 });
   }
 
-  const cupo = await estadoCupoHistorias(user.id, user.email);
-  if (!cupo.exento && cupo.quedan <= 0) {
+  const reserva = await reservarUsoIa(user.id, user.email, "capitulo");
+  if (!reserva.ok) {
     return NextResponse.json({
-      error: mensajeCupoAgotado(cupo),
-      cupo,
+      error: reserva.mensaje,
+      cupo: reserva.cupo,
       codigo: "cupo_ia",
     }, { status: 429 });
   }
@@ -170,101 +170,104 @@ export async function POST(req: Request) {
   // en cada generación.
   const ref = referenciaCompacta();
   let bruto: string;
+  let committed = false;
   try {
-    const r = await fetch(OPENAI("/v1/chat/completions"), {
+    try {
+      const r = await fetch(OPENAI("/v1/chat/completions"), {
         signal: espera("texto"),
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model: modelo,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: INSTRUCCIONES },
-          // La forma va aparte y en su propio mensaje para que no se pierda
-          // entre el resto: es lo que decide si el vídeo sirve para TikTok.
-          { role: "system", content:
-            `FORMATO DE ESTE VÍDEO: ${formato}. Usa "aspect":"${formato}" y, en cada escena, `
-            + `"imgW":${medida.w} y "imgH":${medida.h}. `
-            + (formato === "9:16"
-              ? "Es VERTICAL, para móvil: encuadra en vertical, la acción en el centro y con aire arriba y abajo; nada importante en los bordes laterales."
-              : formato === "1:1"
-                ? "Es CUADRADO: encuadra centrado, sin depender de los lados."
-                : "Es APAISADO, para pantalla ancha.") },
-          { role: "system", content: `Catálogo de efectos y reglas del montaje:\n${JSON.stringify(ref)}` },
-          { role: "user", content: `Haz un capítulo de ${escenas} escenas sobre esto:\n\n${prompt}` },
-        ],
-      }),
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model: modelo,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: INSTRUCCIONES },
+            // La forma va aparte y en su propio mensaje para que no se pierda
+            // entre el resto: es lo que decide si el vídeo sirve para TikTok.
+            { role: "system", content:
+              `FORMATO DE ESTE VÍDEO: ${formato}. Usa "aspect":"${formato}" y, en cada escena, `
+              + `"imgW":${medida.w} y "imgH":${medida.h}. `
+              + (formato === "9:16"
+                ? "Es VERTICAL, para móvil: encuadra en vertical, la acción en el centro y con aire arriba y abajo; nada importante en los bordes laterales."
+                : formato === "1:1"
+                  ? "Es CUADRADO: encuadra centrado, sin depender de los lados."
+                  : "Es APAISADO, para pantalla ancha.") },
+            { role: "system", content: `Catálogo de efectos y reglas del montaje:\n${JSON.stringify(ref)}` },
+            { role: "user", content: `Haz un capítulo de ${escenas} escenas sobre esto:\n\n${prompt}` },
+          ],
+        }),
+      });
+      // Se lee como texto primero: si hay un proxy por medio o la red falla, la
+      // respuesta no es JSON y reventaría aquí con un error ilegible.
+      const texto = await r.text();
+      let j: any = null;
+      try { j = JSON.parse(texto); } catch {}
+      if (!r.ok) {
+        // El mensaje de OpenAI tal cual: "clave inválida", "sin saldo"… es lo que
+        // el usuario necesita leer, no un "error 400" nuestro.
+        return NextResponse.json(
+          { error: j?.error?.message || `OpenAI respondió ${r.status}` }, { status: 502 });
+      }
+      if (!j) {
+        return NextResponse.json(
+          { error: "OpenAI respondió algo que no es JSON. ¿Hay un proxy o cortafuegos por medio?" },
+          { status: 502 });
+      }
+      bruto = j?.choices?.[0]?.message?.content ?? "";
+    } catch (e: any) {
+      return NextResponse.json({ error: motivoFallo(e, "texto") }, { status: 502 });
+    }
+
+    let crudo: any;
+    try { crudo = JSON.parse(bruto); }
+    catch { return NextResponse.json({ error: "La IA no devolvió un JSON válido" }, { status: 502 }); }
+
+    // Se pasa por el mismo normalizador que la importación a mano: lo que venga
+    // raro se endereza o se cae aquí, no dentro del proyecto del usuario.
+    const project = migrateProject(crudo?.project ?? crudo);
+    // El formato lo pone el servidor, no el modelo: se le pide, pero si contesta
+    // otro el usuario acabaría con un vídeo de otra forma sin enterarse, y los
+    // encuadres ya vendrían hechos para la equivocada.
+    project.aspect = formato;
+    for (const sc of project.scenes) {
+      if (!(sc.imgW > 0) || !(sc.imgH > 0) || (sc.imgW > sc.imgH) !== (medida.w > medida.h)) {
+        sc.imgW = medida.w;
+        sc.imgH = medida.h;
+      }
+    }
+    if (!project.scenes.length) {
+      return NextResponse.json({ error: "La IA no devolvió ninguna escena" }, { status: 502 });
+    }
+
+    // Red de seguridad: el prompt PIDE que no meta frases de presentador, pero
+    // pedir no es garantizar. Lo que se cuela aquí se acabaría oyendo en el vídeo
+    // («¿te gustó cómo quedó?»), y para entonces ya está pagado.
+    // La ficha de cada personaje se PEGA al prompt de sus escenas, aquí y por
+    // código. Pedírselo al modelo en el prompt ya se hacía y no bastaba: lo
+    // cumple dos o tres escenas y luego escribe «Elena mira por la ventana», sin
+    // decir quién es Elena, y el modelo de imagen se inventa a otra persona.
+    const consistencia = fijarConsistencia(project, leerReparto(crudo), leerEstilo(crudo));
+
+    const { quitadas } = prepararCapituloGenerado(project);
+    asegurarVocesCapitulo(project);
+    const musica = ajustarMusicaCapitulo(project);
+
+    committed = true;
+    return NextResponse.json({
+      ok: true,
+      // Se dice lo que se ha quitado en vez de hacerlo a escondidas.
+      quitadas,
+      // Lo mismo con la música que se ha enderezado.
+      musica,
+      // Y con las fichas que se han pegado a las escenas.
+      consistencia,
+      name: typeof crudo?.name === "string" ? crudo.name : "Capítulo generado",
+      project,
+      // Para que la interfaz pueda decir cuántas imágenes va a pedir.
+      imagenes: project.scenes.length,
+      cupo: reserva.cupo,
     });
-    // Se lee como texto primero: si hay un proxy por medio o la red falla, la
-    // respuesta no es JSON y reventaría aquí con un error ilegible.
-    const texto = await r.text();
-    let j: any = null;
-    try { j = JSON.parse(texto); } catch {}
-    if (!r.ok) {
-      // El mensaje de OpenAI tal cual: "clave inválida", "sin saldo"… es lo que
-      // el usuario necesita leer, no un "error 400" nuestro.
-      return NextResponse.json(
-        { error: j?.error?.message || `OpenAI respondió ${r.status}` }, { status: 502 });
-    }
-    if (!j) {
-      return NextResponse.json(
-        { error: "OpenAI respondió algo que no es JSON. ¿Hay un proxy o cortafuegos por medio?" },
-        { status: 502 });
-    }
-    bruto = j?.choices?.[0]?.message?.content ?? "";
-  } catch (e: any) {
-    return NextResponse.json({ error: motivoFallo(e, "texto") }, { status: 502 });
+  } finally {
+    if (!committed) await liberarUsoIa(reserva.id);
   }
-
-  let crudo: any;
-  try { crudo = JSON.parse(bruto); }
-  catch { return NextResponse.json({ error: "La IA no devolvió un JSON válido" }, { status: 502 }); }
-
-  // Se pasa por el mismo normalizador que la importación a mano: lo que venga
-  // raro se endereza o se cae aquí, no dentro del proyecto del usuario.
-  const project = migrateProject(crudo?.project ?? crudo);
-  // El formato lo pone el servidor, no el modelo: se le pide, pero si contesta
-  // otro el usuario acabaría con un vídeo de otra forma sin enterarse, y los
-  // encuadres ya vendrían hechos para la equivocada.
-  project.aspect = formato;
-  for (const sc of project.scenes) {
-    if (!(sc.imgW > 0) || !(sc.imgH > 0) || (sc.imgW > sc.imgH) !== (medida.w > medida.h)) {
-      sc.imgW = medida.w;
-      sc.imgH = medida.h;
-    }
-  }
-  if (!project.scenes.length) {
-    return NextResponse.json({ error: "La IA no devolvió ninguna escena" }, { status: 502 });
-  }
-
-  // Red de seguridad: el prompt PIDE que no meta frases de presentador, pero
-  // pedir no es garantizar. Lo que se cuela aquí se acabaría oyendo en el vídeo
-  // («¿te gustó cómo quedó?»), y para entonces ya está pagado.
-  // La ficha de cada personaje se PEGA al prompt de sus escenas, aquí y por
-  // código. Pedírselo al modelo en el prompt ya se hacía y no bastaba: lo
-  // cumple dos o tres escenas y luego escribe «Elena mira por la ventana», sin
-  // decir quién es Elena, y el modelo de imagen se inventa a otra persona.
-  const consistencia = fijarConsistencia(project, leerReparto(crudo), leerEstilo(crudo));
-
-  const { quitadas } = prepararCapituloGenerado(project);
-  asegurarVocesCapitulo(project);
-  const musica = ajustarMusicaCapitulo(project);
-
-  await registrarUsoIaCapitulo(user.id);
-  const cupoTras = await estadoCupoHistorias(user.id, user.email);
-
-  return NextResponse.json({
-    ok: true,
-    // Se dice lo que se ha quitado en vez de hacerlo a escondidas.
-    quitadas,
-    // Lo mismo con la música que se ha enderezado.
-    musica,
-    // Y con las fichas que se han pegado a las escenas.
-    consistencia,
-    name: typeof crudo?.name === "string" ? crudo.name : "Capítulo generado",
-    project,
-    // Para que la interfaz pueda decir cuántas imágenes va a pedir.
-    imagenes: project.scenes.length,
-    cupo: cupoTras,
-  });
 }

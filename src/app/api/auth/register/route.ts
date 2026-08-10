@@ -47,7 +47,7 @@ const schema = z.object({
    */
   displayName: z.string().max(40, "El nombre no puede pasar de 40 letras.").optional(),
   password: z.string()
-    .min(6, "La contraseña necesita al menos 6 caracteres.")
+    .min(8, "La contraseña necesita al menos 8 caracteres.")
     .max(100, "La contraseña es demasiado larga."),
   /** El token de Turnstile. Si el captcha está apagado, no se mira. */
   captcha: z.string().max(4000).optional(),
@@ -76,39 +76,54 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: captcha.error, captcha: true }, { status: 400 });
   }
 
-  const { email, username, password } = parsed.data;
+  const email = parsed.data.email.trim().toLowerCase();
+  const username = parsed.data.username.trim().toLowerCase();
+  const password = parsed.data.password;
   const displayName = parsed.data.displayName?.trim() || username;
   const slug = slugify(username);
 
   const exists = await prisma.user.findFirst({
-    where: { OR: [{ email }, { username }] },
+    where: {
+      OR: [
+        { email: { equals: email, mode: "insensitive" } },
+        { username: { equals: username, mode: "insensitive" } },
+      ],
+    },
   });
   if (exists) {
     return NextResponse.json({ error: "Email o usuario ya en uso" }, { status: 409 });
   }
 
   const passwordHash = await hashPassword(password);
-  const user = await prisma.user.create({
-    data: {
-      email,
-      username,
-      displayName,
-      passwordHash,
-      channel: {
-        create: {
-          slug,
-          title: `Proyecto de ${displayName}`,
-          scenes: {
-            create: defaultScenes().map((s) => ({
-              name: s.name,
-              order: s.order,
-              layers: s.layers as any,
-            })),
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        email,
+        username,
+        displayName,
+        passwordHash,
+        channel: {
+          create: {
+            slug,
+            title: `Proyecto de ${displayName}`,
+            scenes: {
+              create: defaultScenes().map((s) => ({
+                name: s.name,
+                order: s.order,
+                layers: s.layers as any,
+              })),
+            },
           },
         },
       },
-    },
-  });
+    });
+  } catch (e: any) {
+    if (e?.code === "P2002") {
+      return NextResponse.json({ error: "Email o usuario ya en uso" }, { status: 409 });
+    }
+    throw e;
+  }
 
   await createSession(user.id);
 

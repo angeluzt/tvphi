@@ -107,7 +107,7 @@ function ResetForm() {
                   type="password"
                   className="input mt-1"
                   autoComplete="new-password"
-                  minLength={6}
+                  minLength={8}
                   required
                 />
               </div>
@@ -118,7 +118,7 @@ function ResetForm() {
                   type="password"
                   className="input mt-1"
                   autoComplete="new-password"
-                  minLength={6}
+                  minLength={8}
                   required
                 />
               </div>

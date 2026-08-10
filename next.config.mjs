@@ -8,6 +8,7 @@ const nextConfig = {
   },
   // El compositor/editor usa APIs del navegador; nada especial en server components.
   experimental: {
+    instrumentationHook: true,
     serverComponentsExternalPackages: ["bcryptjs"],
     // La biblioteca de audio vive en assets/, fuera de public/, para que no se
     // pueda descargar sin sesión. Next solo empaqueta public/ y .next, así que

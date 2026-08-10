@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 
 const schema = z.object({
   actual: z.string().min(1),
-  nueva: z.string().min(6).max(100),
+  nueva: z.string().min(8).max(100),
   confirmar: z.string().min(1),
 }).refine((d) => d.nueva === d.confirmar, {
   message: "Las contraseñas nuevas no coinciden",

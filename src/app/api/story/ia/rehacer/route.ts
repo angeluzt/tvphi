@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, motivoFallo } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
 import { limpiarNarracion } from "@/lib/story/guion";
-import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
+import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo, reservarUsoIa, liberarUsoIa } from "@/lib/story/cupo";
 
 // Rehacer un trozo suelto: esta frase, esta imagen.
 //
@@ -44,12 +44,21 @@ export async function POST(req: Request) {
   const sinCupo = await bloqueoDeGasto(user);
   if (sinCupo) return respuestaBloqueo(sinCupo);
 
+  const reserva = await reservarUsoIa(user.id, user.email, "texto");
+  if (!reserva.ok) {
+    return NextResponse.json({ error: reserva.mensaje, sinCupo: true, cupo: reserva.cupo }, { status: 429 });
+  }
+
   const parsed = cuerpo.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  if (!parsed.success) {
+    await liberarUsoIa(reserva.id);
+    return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  }
   const { que, actual, contexto, pista } = parsed.data;
 
   const key = claveOpenAi();
   if (!key) {
+    await liberarUsoIa(reserva.id);
     return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
   }
 
@@ -86,6 +95,7 @@ export async function POST(req: Request) {
     contexto.despues && `Justo después se dice: ${contexto.despues}`,
   ].filter(Boolean).join("\n");
 
+  let committed = false;
   try {
     const r = await fetch(OPENAI("/v1/chat/completions"), {
         signal: espera("texto"),
@@ -128,8 +138,11 @@ export async function POST(req: Request) {
     }
     // Si sale exactamente lo mismo, se dice: es una llamada pagada para nada.
     const igual = salida.trim().toLowerCase() === actual.trim().toLowerCase();
+    committed = true;
     return NextResponse.json({ ok: true, texto: salida, quitadas, igual });
   } catch (e: any) {
     return NextResponse.json({ error: motivoFallo(e, "texto") }, { status: 502 });
+  } finally {
+    if (!committed) await liberarUsoIa(reserva.id);
   }
 }
