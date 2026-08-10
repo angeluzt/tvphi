@@ -38,6 +38,7 @@ import { VfxScene } from "@/lib/story/vfx";
 import { PanelEfectos } from "./panel-efectos";
 import { Palanca, Flecha, Num, Barra } from "./controles-basicos";
 import { pintarGuiaRuta } from "@/lib/lab/guia-ruta";
+import { pintarCapas } from "@/lib/lab/pintar-escena";
 import { MandosMovimientoCapa, movimientoInicial } from "./mandos-movimiento";
 import { MandosSprite } from "./mandos-sprite";
 import { VistaPreviaFlotante } from "./vista-previa-flotante";
@@ -45,6 +46,14 @@ import { InspectorRapido, ParalajeGlobalSimple, type ModoEdicionCanvas } from ".
 import {
   borrarBorradorMontaje, guardarBorradorMontaje, imgADataUrl, leerBorradorMontaje,
 } from "@/lib/lab/borrador-montaje";
+
+/**
+ * A qué segundo se congela la simulación de efectos para el PNG.
+ *
+ * A cero no hay nada emitido; tres segundos bastan para que el fuego, el humo
+ * o la lluvia estén en régimen y la foto se parezca a lo que se ve.
+ */
+const SEGUNDOS_PNG = 3;
 
 const ANIM_A_COLA: Partial<Record<AnimParalaje, MovCola>> = {
   "izq-der": "der",
@@ -935,126 +944,21 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     // fotograma cero reproducible.
     const ahora = performance.now();
     let guiaRuta: { spr: SpriteEnCapa; plano: Plano; tiempo: number } | null = null;
-    for (const capa of capas) {
-      if (!capa.visible) continue;
-      // El movimiento propio siempre usa coordenadas del lienzo. Para sprites
-      // «pantalla» este es TODO su movimiento; para el resto se suma después
-      // al paneo y al zoom de cámara.
-      const tiempo = capa.spr ? tiempoSprite(capa.id, ahora) : tiempoMovimientoCapa(capa.id, ahora);
-      const propio = desplazamientoCapa(capa.mov, tiempo);
-
-      if (capa.spr && !spriteSigueCamara(capa.spr)) {
-        // Plano fijo del lienzo: no usa vista.ox, vista.zoom, profundidad ni
-        // alphaCapa. Así una transición de cámara no dobla la trayectoria A→B
-        // ni hace desaparecer al sprite. Zoom y opacidad manuales sí mandan.
-        const af = capa.img.naturalWidth / capa.spr.fotogramas;
-        const hf = capa.img.naturalHeight;
-        const i = fotogramaEn(capa.spr, tiempo);
-        const estado = estadoSpriteEn(capa.spr, tiempo);
-        const spr = {
-          ...capa.spr,
-          alto: capa.spr.alto * capa.escala * propio.escala,
-          espejo: estado.espejo,
-        };
-        const plano = { x0: propio.dx * w, y0: propio.dy * h, w, h };
-        c.save();
-        c.globalAlpha = capa.opacidad;
-        pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, plano, tiempo));
-        if (propio.repetir) {
-          if (capa.mov?.x) {
-            const p2 = { ...plano, x0: plano.x0 - Math.sign(capa.mov.x) * 2 * w };
-            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
-          }
-          if (capa.mov?.y) {
-            const p2 = { ...plano, y0: plano.y0 - Math.sign(capa.mov.y) * 2 * h };
-            pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
-          }
-        }
-        c.restore();
-        if (rutaVisibleId === capa.id) guiaRuta = { spr, plano, tiempo };
-        continue;
-      }
-
-      // Una capa normal también puede ser una sobreimpresión absoluta. En ese
-      // caso ignora por completo paneo, profundidad, zoom y fades de cámara;
-      // es el equivalente real de un sprite anclado al lienzo.
-      if (!capa.spr && capa.mov?.espacio === "pantalla") {
-        const base = planoCentrado({
-          lienzoW: w, lienzoH: h, escala: capa.escala * propio.escala,
-        });
-        const plano = moverPlano(base, propio, "pantalla", w, h);
-        c.save();
-        c.globalAlpha = capa.opacidad;
-        c.drawImage(capa.img, plano.x0, plano.y0, plano.w, plano.h);
-        if (propio.repetir) {
-          const copias = copiarPlanoBucle(plano, capa.mov, "pantalla", w, h);
-          if (copias.horizontal) c.drawImage(capa.img, copias.horizontal.x0, copias.horizontal.y0, copias.horizontal.w, copias.horizontal.h);
-          if (copias.vertical) c.drawImage(capa.img, copias.vertical.x0, copias.vertical.y0, copias.vertical.w, copias.vertical.h);
-        }
-        c.restore();
-        continue;
-      }
-
-      const referencia = capa.mov?.referenciaCapaId
-        ? capas.find((otra) => otra.clave === capa.mov?.referenciaCapaId)
-        : undefined;
-      const depth = referencia?.depth ?? capa.depth;
-      let e = capa.escala * vista.zoom * vista.zoomCapa(depth);
-      // El paneo también va con la perspectiva: de cerca, el mismo movimiento
-      // de cámara barre mucho más cuadro. Sin esto, al acercarse el paralaje se
-      // queda corto y la escena vuelve a parecer plana.
-      const pan = vista.panCapa(depth);
-      if (capa.id === idFondo) {
-        // El fondo es el único opaco: si se desplaza o se queda por debajo del
-        // cuadro, asoma el negro por el canto. Se le da justo el margen que
-        // necesita para el paneo de este fotograma —(e−1)/2 tiene que cubrir el
-        // desplazamiento— así que ni se ve el negro ni se agranda de más.
-        const holgura = 1 + 2 * Math.max(Math.abs(vista.ox * pan), Math.abs(vista.oy * pan));
-        e = Math.max(e, holgura);
-      }
-      e *= propio.escala;
-      const base = planoCentrado({
-        lienzoW: w, lienzoH: h, escala: e,
-        ox: vista.ox, oy: vista.oy, pan,
-      });
-      // Este es el arreglo del tren: el movimiento se aplica EN EL PLANO ya
-      // transformado, no como píxeles añadidos al final. Si la cámara duplica
-      // la vía, también duplica exactamente el recorrido del tren.
-      const planoCapa = moverPlano(base, propio, "capa", w, h);
-      const { x0, y0, w: dw, h: dh } = planoCapa;
-      c.save();
-      c.globalAlpha = capa.opacidad * vista.alphaCapa(depth, capa.id);
-
-      if (capa.spr) {
-        // Este es el modo opcional «seguir cámara»: el sprite vive dentro del
-        // plano transformado y por eso sí hereda paralaje, zoom y fundidos.
-        const af = capa.img.naturalWidth / capa.spr.fotogramas;
-        const hf = capa.img.naturalHeight;
-        const i = fotogramaEn(capa.spr, tiempo);
-        const estado = estadoSpriteEn(capa.spr, tiempo);
-        const spr = { ...capa.spr, espejo: estado.espejo };
-        const plano = { x0, y0, w: dw, h: dh };
-        pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, plano, tiempo));
-        if (propio.repetir) {
-          const copias = copiarPlanoBucle(plano, capa.mov!, "capa", w, h);
-          if (copias.horizontal) pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, copias.horizontal, tiempo));
-          if (copias.vertical) pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, copias.vertical, tiempo));
-        }
-        c.restore();
-        if (rutaVisibleId === capa.id) guiaRuta = { spr, plano, tiempo };
-        continue;
-      }
-
-      c.drawImage(capa.img, x0, y0, dw, dh);
-      // Con bucle se pinta una segunda copia a un cuadro de distancia: es lo
-      // que evita el hueco negro mientras la primera termina de salir.
-      if (propio.repetir) {
-        const copias = copiarPlanoBucle(planoCapa, capa.mov!, "capa", w, h);
-        if (copias.horizontal) c.drawImage(capa.img, copias.horizontal.x0, copias.horizontal.y0, copias.horizontal.w, copias.horizontal.h);
-        if (copias.vertical) c.drawImage(capa.img, copias.vertical.x0, copias.vertical.y0, copias.vertical.w, copias.vertical.h);
-      }
-      c.restore();
-    }
+    // Las capas las pinta un módulo aparte, el MISMO que usa «Montaje PNG».
+    // Antes había dos dibujantes y se habían separado: el del PNG no pintaba
+    // efectos ni el movimiento propio de las capas.
+    const guia = pintarCapas(c, {
+      capas,
+      vista,
+      w, h,
+      idFondo,
+      rutaVisibleId,
+      // Cada capa lleva su reloj: un sprite y una capa con «mov» no comparten
+      // el mismo, y por eso el tiempo se pide por capa en vez de pasarlo suelto.
+      tiempoDeCapa: (capa) => (capa.spr
+        ? tiempoSprite(capa.id, ahora)
+        : tiempoMovimientoCapa(capa.id, ahora)),
+    });
     // Los efectos del motor, ENCIMA de las capas.
     //
     // Van al final porque son lo que ocurre en el aire delante de la escena:
@@ -1065,7 +969,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     pintarEfectos(c, w, h, vista, (performance.now() - relojRef.current) / 1000);
 
     // Guía solo en la vista previa. Nunca entra al PNG ni al ZIP.
-    if (guiaRuta) pintarGuiaRuta(c, guiaRuta.spr, guiaRuta.plano, guiaRuta.tiempo);
+    if (guia) pintarGuiaRuta(c, guia.spr, guia.plano, guia.tiempo);
   }
 
   /**
@@ -1088,11 +992,20 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     h: number,
     vista: VistaCamara,
     reloj: number,
+    /**
+     * Una simulación distinta de la que está en pantalla.
+     *
+     * La exportación la necesita: si reutilizara la de la vista previa,
+     * `seek` a un tiempo anterior la rebobinaría —está escrito así a
+     * propósito, para poder retroceder— y exportar dejaría la escena de
+     * pantalla reiniciada. El PNG se lleva la suya y no toca nada.
+     */
+    propia?: VfxScene,
   ) {
     const lista = efectosRef.current;
     if (!lista.length) return;
-    if (!vfxRef.current) vfxRef.current = new VfxScene();
-    const escenaVfx = vfxRef.current;
+    if (!propia && !vfxRef.current) vfxRef.current = new VfxScene();
+    const escenaVfx = propia ?? vfxRef.current!;
 
     // El zoom que se le declara al motor sale de los efectos PEGADOS: es lo que
     // reescala las partículas ya vivas para que sigan a la cámara en vez de
@@ -1131,39 +1044,44 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     escenaVfx.draw(c, 1);
   }
 
+  /**
+   * El montaje como PNG.
+   *
+   * Usa EL MISMO dibujante que la vista previa, con la cámara donde la tengas
+   * puesta. Antes tenía su propia copia del bucle, más simple, y se había
+   * separado: exportaba sin efectos, sin el movimiento propio de las capas y
+   * sin la posición de la cámara. O sea, una imagen que no era la que estabas
+   * viendo, sin avisar de nada.
+   *
+   * Los relojes se congelan en cero: un PNG es un instante, así que cada sprite
+   * sale en su primer fotograma y cada recorrido, en su punto de partida.
+   */
   async function exportarPng() {
     if (!capas.length) return;
     const out = document.createElement("canvas");
-    out.width = tam.current.w; out.height = tam.current.h;
+    out.width = tam.current.w;
+    out.height = tam.current.h;
     const c = out.getContext("2d");
     if (!c) return;
-    for (const capa of capas) {
-      if (!capa.visible) continue;
-      const e = capa.escala;
-      const dw = out.width * e, dh = out.height * e;
-      const x0 = -(dw - out.width) / 2, y0 = -(dh - out.height) / 2;
-      c.globalAlpha = capa.opacidad;
-      if (capa.spr) {
-        // Un PNG es un instante, así que del sprite se congela el primero.
-        const af = capa.img.naturalWidth / capa.spr.fotogramas;
-        const hf = capa.img.naturalHeight;
-        if (spriteSigueCamara(capa.spr)) {
-          const plano = { x0, y0, w: dw, h: dh };
-          const spr = { ...capa.spr, espejo: estadoSpriteEn(capa.spr, 0).espejo };
-          pintarSprite(c, capa.img, spr, af, hf, 0, cajaSprite(spr, af, hf, plano));
-        } else {
-          const spr = {
-            ...capa.spr,
-            alto: capa.spr.alto * capa.escala,
-            espejo: estadoSpriteEn(capa.spr, 0).espejo,
-          };
-          const plano = { x0: 0, y0: 0, w: out.width, h: out.height };
-          pintarSprite(c, capa.img, spr, af, hf, 0, cajaSprite(spr, af, hf, plano));
-        }
-        continue;
-      }
-      c.drawImage(capa.img, x0, y0, dw, dh);
-    }
+
+    const vista = vistaDesdeEstado(estadoRef.current);
+    pintarCapas(c, {
+      capas,
+      vista,
+      w: out.width,
+      h: out.height,
+      idFondo: capas.find((x) => x.visible && !x.spr)?.id,
+      // Sin guía: es una ayuda para colocar, no parte de la escena.
+      rutaVisibleId: null,
+      tiempoDeCapa: () => 0,
+    });
+    // Los efectos también, que era justo lo que faltaba.
+    //
+    // En su propia simulación y adelantada unos segundos: a tiempo cero no hay
+    // ni una partícula emitida todavía, así que un PNG de una hoguera saldría
+    // sin fuego. Con el humo ya subiendo es la foto que uno espera.
+    pintarEfectos(c, out.width, out.height, vista, SEGUNDOS_PNG, new VfxScene());
+
     const b = await new Promise<Blob | null>((r) => out.toBlob(r, "image/png"));
     if (b) bajar(b, "montaje.png");
   }
