@@ -89,7 +89,17 @@ export function AjustesIaForm({ inicial }: { inicial: AjustesIa }) {
         <Numero
           etiqueta="Historias con IA por día" valor={a.historiasPorDia} min={0} max={100}
           onCambio={(v) => set("historiasPorDia", v)}
-          pista="Escribir el guion es lo barato: ~$0.004 cada uno"
+          pista="0 = interruptor de emergencia: apaga toda la IA de pago"
+        />
+        <Numero
+          etiqueta="Voces de pago por día" valor={a.vocesPorDia} min={0} max={500}
+          onCambio={(v) => set("vocesPorDia", v)}
+          pista="Solo cuenta si la narración de pago está encendida"
+        />
+        <Numero
+          etiqueta="Reescrituras de texto por día" valor={a.textosPorDia} min={0} max={500}
+          onCambio={(v) => set("textosPorDia", v)}
+          pista="«Rehacer» frase o prompt; no regenerar el capítulo entero"
         />
       </div>
 

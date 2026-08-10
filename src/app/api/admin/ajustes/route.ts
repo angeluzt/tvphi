@@ -14,6 +14,8 @@ const cuerpo = z.object({
   calidadImagen: z.enum(["low", "medium", "high"]).optional(),
   imagenesPorDia: z.number().int().min(0).max(500).optional(),
   historiasPorDia: z.number().int().min(0).max(100).optional(),
+  vocesPorDia: z.number().int().min(0).max(500).optional(),
+  textosPorDia: z.number().int().min(0).max(500).optional(),
   vozDePago: z.boolean().optional(),
   imagenesIa: z.boolean().optional(),
 });

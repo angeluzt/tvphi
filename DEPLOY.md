@@ -13,56 +13,81 @@ navegador; el servidor guarda cuentas, capítulos (JSON) y cupos de IA.
 | IA | OpenAI (`OPENAI_API_KEY`) | Cupos en `/admin` |
 | Correo reset | Resend (opcional) | Sin clave, enlace en logs en dev |
 
-Healthcheck: `GET /api/health`. Arranque: `pnpm start:prod` (`migrate deploy` + `next start`).
+Healthcheck: `GET /api/health` → `{"ok":true,"db":"ok",…}`. Si la BD cae, **503**.
+
+Arranque recomendado: `pnpm start:prod` (`prisma migrate deploy` + `next start`).
 
 ---
 
 ## Paso 1 — Base de datos
 
-Neon → New Project → `DATABASE_URL`, **o** Railway → Database → PostgreSQL.
+1. Neon → New Project → copia `DATABASE_URL` (`postgresql://…?sslmode=require`), **o**
+2. Railway → Database → PostgreSQL (inyecta `DATABASE_URL`).
+
+Sin migraciones aplicadas la app no sirve historias. En deploy, `start:prod` las aplica.
 
 ---
 
 ## Paso 2 — App en Railway
 
-**New Project → Deploy from GitHub** → rama **`main`**. Usa el Dockerfile del repo.
+1. **New Project → Deploy from GitHub** → `angeluzt/tvphi`, rama **`main`**.
+2. Usa el **Dockerfile** del repo.
+3. Añade variables (Paso 3) antes de esperar un arranque sano.
 
 ---
 
 ## Paso 3 — Variables de entorno
+
+**Obligatorias en producción** (la app falla al arrancar si faltan — fail-closed):
 
 ```
 NODE_ENV=production
 APP_URL=https://tvphi.com
 AUTH_SECRET=<openssl rand -base64 32>
 DATABASE_URL=<Postgres>
+```
+
+Recomendadas para Historias + admin:
+
+```
 OPENAI_API_KEY=<clave>
 STORY_DAILY_LIMIT=3
 STORY_QUOTA_EXEMPT_EMAILS=tu@email.com
+RESEND_API_KEY=<opcional>
+EMAIL_FROM=TVPHI <noreply@tudominio.com>
 ```
 
-Opcionales: `RESEND_API_KEY`, `EMAIL_FROM`, Turnstile (`TURNSTILE_*`).
+Opcionales: Turnstile (`TURNSTILE_*`).
 
-Comprueba `https://tu-url/api/health` → `ok: true`.
+- `STORY_QUOTA_EXEMPT_EMAILS`: sin cupo IA y acceso a `/admin`.
+- Cupos (`historiasPorDia`, imágenes, voces, textos) se editan en `/admin`; **0** = cortar gasto.
+- Rate limit de login es **en memoria** (por instancia Railway). Suficiente en un solo
+  réplica; no es un firewall compartido entre nodos.
+
+Comprueba `https://tu-url/api/health` → `ok: true` y `db: "ok"`.
 
 ---
 
 ## Paso 4 — Dominio
 
-Railway → Custom Domain. Actualiza `APP_URL`.
+Railway → Custom Domain → `tvphi.com`. En Cloudflare DNS, CNAME al destino Railway.
+Actualiza `APP_URL` a la URL pública real.
 
 ---
 
 ## Verificación
 
-- Registro / login → `/story` → generar un capítulo (si hay cupo y clave OpenAI).
-- Export / FFmpeg en cliente.
+- `/api/health` → 200 y `db: "ok"`.
+- Registro / login → `/story` → generar un capítulo con IA (si hay cupo y `OPENAI_API_KEY`).
+- Guardar capítulo y reabrir desde la cuenta.
+- Export / FFmpeg en cliente (sin subir el MP4 al servidor).
 
 ## Notas
 
-- **main** = producción. Abre PRs.
-- Migraciones: `pnpm prisma migrate dev --name …` en local; prod con `migrate deploy`.
+- **main** = producción. Abre PRs; cada push a `main` redepliega.
+- Migraciones: `pnpm prisma migrate dev --name …` en local; prod las aplica con `migrate deploy`.
 - Tablas Prisma de canales/chat/billing son **legado** (schema aún las declara para no
   romper migraciones antiguas); no hay UI ni rutas activas. No hace falta
   configurar Stream, Stripe ni Redis para el producto actual.
-- Assets pesados viven en IndexedDB: exporta ZIP para backup entre equipos.
+- Assets grandes (imágenes/audio) van en IndexedDB del navegador: un cambio de PC
+  no los restaura solos (exporta ZIP si quieres backup).

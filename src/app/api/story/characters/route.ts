@@ -3,6 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { normalizeCharacterData } from "@/lib/story/characters";
+import {
+  MAX_BYTES_JSON_PERSONAJE, MAX_PERSONAJES_POR_USUARIO,
+  bytesJson, cuerpoDemasiadoGrande,
+} from "@/lib/story/limites";
+import { resolverSeriesId } from "@/lib/story/series-id";
 
 // Fichas de personaje. Igual que los proyectos: aquí solo van los textos y las
 // referencias; las imágenes pesan y viven en el navegador (IndexedDB).
@@ -56,22 +61,36 @@ export async function GET() {
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  const peso = cuerpoDemasiadoGrande(req, MAX_BYTES_JSON_PERSONAJE * 2);
+  if (peso) return NextResponse.json({ error: peso }, { status: 413 });
   const parsed = saveSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
   const { id, name, data, seriesId } = parsed.data;
+  if (bytesJson(data) > MAX_BYTES_JSON_PERSONAJE) {
+    return NextResponse.json({ error: "La ficha es demasiado grande." }, { status: 413 });
+  }
+  const serie = await resolverSeriesId(user.id, seriesId);
+  if (!serie.ok) return NextResponse.json({ error: serie.error }, { status: 403 });
 
   if (id) {
     const existing = await prisma.storyCharacter.findFirst({ where: { id, userId: user.id }, select: { id: true } });
     if (!existing) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
     const character = await prisma.storyCharacter.update({
       where: { id },
-      data: { name, data: data as any, ...(seriesId !== undefined ? { seriesId } : {}) },
+      data: { name, data: data as any, ...(serie.seriesId !== undefined ? { seriesId: serie.seriesId } : {}) },
     });
     return NextResponse.json({ ok: true, character: { id: character.id, name: character.name, seriesId: character.seriesId, data, updatedAt: character.updatedAt.toISOString() } });
   }
 
+  const cuantos = await prisma.storyCharacter.count({ where: { userId: user.id } });
+  if (cuantos >= MAX_PERSONAJES_POR_USUARIO) {
+    return NextResponse.json({
+      error: `Has llegado al tope de ${MAX_PERSONAJES_POR_USUARIO} personajes.`,
+    }, { status: 409 });
+  }
+
   const character = await prisma.storyCharacter.create({
-    data: { userId: user.id, name, data: data as any, seriesId: seriesId ?? null },
+    data: { userId: user.id, name, data: data as any, seriesId: serie.seriesId ?? null },
   });
   return NextResponse.json({ ok: true, character: { id: character.id, name: character.name, seriesId: character.seriesId, data, updatedAt: character.updatedAt.toISOString() } });
 }

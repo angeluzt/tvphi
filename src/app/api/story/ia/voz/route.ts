@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, motivoFallo } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
-import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
+import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo, reservarUsoIa, liberarUsoIa } from "@/lib/story/cupo";
 import { leerAjustes } from "@/lib/story/ajustes";
 
 // Narrar un texto con la voz de OpenAI.
@@ -59,11 +59,20 @@ export async function POST(req: Request) {
   const sinCupo = await bloqueoDeGasto(user);
   if (sinCupo) return respuestaBloqueo(sinCupo);
 
+  const reserva = await reservarUsoIa(user.id, user.email, "voz");
+  if (!reserva.ok) {
+    return NextResponse.json({ error: reserva.mensaje, sinCupo: true, cupo: reserva.cupo }, { status: 429 });
+  }
+
   const parsed = cuerpo.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  if (!parsed.success) {
+    await liberarUsoIa(reserva.id);
+    return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  }
 
   const key = claveOpenAi();
   if (!key) {
+    await liberarUsoIa(reserva.id);
     return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
   }
 
@@ -73,6 +82,7 @@ export async function POST(req: Request) {
     : guardados.voz;
   const voz = parsed.data.voz || guardados.vozNombre || "alloy";
   if (!modelo) {
+    await liberarUsoIa(reserva.id);
     return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 400 });
   }
 
@@ -87,6 +97,7 @@ export async function POST(req: Request) {
   // lo que se le da. Es la diferencia entre pedirlo y que sea imposible.
   const deVoz = /tts/i.test(modelo);
 
+  let committed = false;
   try {
     const r = deVoz
       ? await fetch(OPENAI("/v1/audio/speech"), {
@@ -138,6 +149,7 @@ export async function POST(req: Request) {
         }, { status: 502 });
       }
       const wav = Buffer.from(await r.arrayBuffer()).toString("base64");
+      committed = true;
       return NextResponse.json({ ok: true, formato: "wav", audio: wav, via: "voz" });
     }
 
@@ -146,12 +158,7 @@ export async function POST(req: Request) {
     try { j = JSON.parse(texto); } catch {}
     if (!r.ok) {
       const crudo = j?.error?.message || `OpenAI respondió ${r.status}`;
-      // OpenAI retira modelos cada cierto tiempo, y entonces contesta con una
-      // jerga que no le dice nada a nadie. Si el problema es el modelo, se dice
-      // en claro y se marca, para que la interfaz pueda ofrecer cambiarlo en el
-      // sitio en vez de dejar al usuario encerrado.
       const delModelo = /deprecat|does not exist|no longer|not found|unsupported|model/i.test(crudo);
-      // Se apunta para que la próxima vez salga avisado en la lista.
       if (delModelo) await anotarFallo(user.id, modelo);
       return NextResponse.json({
         error: delModelo
@@ -169,11 +176,11 @@ export async function POST(req: Request) {
         modeloMal: true, modelo,
       }, { status: 502 });
     }
-    // El audio vuelve en base64; lo guarda el navegador, igual que las imágenes.
-    // Se avisa de por dónde ha ido: por el camino de chat no hay garantía de que
-    // no añada nada de su cosecha.
+    committed = true;
     return NextResponse.json({ ok: true, formato: "wav", audio, via: "chat" });
   } catch (e: any) {
     return NextResponse.json({ error: motivoFallo(e, "voz") }, { status: 502 });
+  } finally {
+    if (!committed) await liberarUsoIa(reserva.id);
   }
 }

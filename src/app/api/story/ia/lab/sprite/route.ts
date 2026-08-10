@@ -4,8 +4,8 @@ import { getCurrentUser } from "@/lib/auth";
 import {
   claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, motivoFallo,
 } from "@/lib/story/credenciales";
-import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo, estadoCupoImagenes,
-  registrarUsoIaImagen, mensajeCupoImagenes } from "@/lib/story/cupo";
+import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo, reservarUsoIa,
+  liberarUsoIa, mensajeCupoImagenes } from "@/lib/story/cupo";
 import { leerAjustes, calidadEfectiva } from "@/lib/story/ajustes";
 import { CROMA } from "@/lib/lab/quitar-fondo";
 import { rejillaSpriteEquilibrada } from "@/lib/lab/sprites";
@@ -116,11 +116,11 @@ export async function POST(req: Request) {
   const admin = esAdminHistorias(user.email);
   const ajustes = await leerAjustes();
   if (!ajustes.imagenesIa && !admin) return NextResponse.json({ error: "Ahora mismo no se pueden generar imágenes con IA." }, { status: 403 });
-  const cupoImg = await estadoCupoImagenes(user.id, user.email);
-  if (!cupoImg.exento && cupoImg.quedan <= 0) return NextResponse.json({ error: mensajeCupoImagenes(cupoImg), sinCupo: true }, { status: 429 });
+  const reserva = await reservarUsoIa(user.id, user.email, "imagen");
+  if (!reserva.ok) return NextResponse.json({ error: reserva.mensaje || mensajeCupoImagenes(reserva.cupo), sinCupo: true }, { status: 429 });
   const guardados = await preferenciasModelos(user.id, user.email);
   const modelo = admin && parsed.data.modelo ? parsed.data.modelo : guardados.imagen;
-  if (!modelo) return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 400 });
+  if (!modelo) { await liberarUsoIa(reserva.id); return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 400 }); }
 
   // Esta ruta es solo de admin, así que se le respeta la calidad que pida; si
   // no dice ninguna, manda la del panel, que en pruebas es la barata.
@@ -133,11 +133,16 @@ export async function POST(req: Request) {
     ? await prisma.spriteCharacter.findFirst({ where: { id: personajeId, userId: user.id }, select: { referencia: true } })
     : null;
   if (personajeId && !personaje) {
+    await liberarUsoIa(reserva.id);
     return NextResponse.json({ error: "Ese personaje no pertenece a tu biblioteca de sprites." }, { status: 404 });
   }
   const editable = /^(gpt-image-2|gpt-image-1\.5|gpt-image-1(?:$|-\d)|chatgpt-image-latest)/i.test(modelo);
-  if (personaje && !editable) return NextResponse.json({ error: `«${modelo}» no admite una imagen de referencia.` }, { status: 400 });
+  if (personaje && !editable) {
+    await liberarUsoIa(reserva.id);
+    return NextResponse.json({ error: `«${modelo}» no admite una imagen de referencia.` }, { status: 400 });
+  }
 
+  let committed = false;
   try {
     const p = prompt(que, fotogramas, vista, direccion, accion, rejilla.columnas, rejilla.filas, !!personaje);
     let r: Response;
@@ -168,7 +173,7 @@ export async function POST(req: Request) {
     if (!b64) {
       return NextResponse.json({ error: `«${modelo}» contestó sin imagen.` }, { status: 502 });
     }
-    if (!cupoImg.exento) await registrarUsoIaImagen(user.id);
+    committed = true;
 
     return NextResponse.json({
       ok: true,
@@ -186,5 +191,7 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     return NextResponse.json({ error: motivoFallo(e, "imagen") }, { status: 502 });
+  } finally {
+    if (!committed) await liberarUsoIa(reserva.id);
   }
 }

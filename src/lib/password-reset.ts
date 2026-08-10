@@ -87,6 +87,24 @@ export async function validarTokenReset(raw: string): Promise<TokenValido | null
   return { id: row.id, userId: row.userId };
 }
 
+/** Marca el token usado de forma atómica. Solo gana la primera petición concurrente. */
+export async function reclamarTokenReset(raw: string): Promise<TokenValido | null> {
+  const token = raw.trim();
+  if (!token || token.length < 20 || token.length > 200) return null;
+  const tokenHash = hashToken(token);
+  const ahora = new Date();
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.passwordResetToken.findUnique({ where: { tokenHash } });
+    if (!row || row.usedAt || row.expiresAt.getTime() <= ahora.getTime()) return null;
+    const marcado = await tx.passwordResetToken.updateMany({
+      where: { id: row.id, usedAt: null },
+      data: { usedAt: ahora },
+    });
+    if (marcado.count !== 1) return null;
+    return { id: row.id, userId: row.userId };
+  });
+}
+
 /** Marca el token usado (idempotente si ya estaba). */
 export async function consumirTokenReset(id: string) {
   await prisma.passwordResetToken.updateMany({
