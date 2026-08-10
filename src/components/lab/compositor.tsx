@@ -29,9 +29,26 @@ import {
 import { RangoPreciso } from "./rango-preciso";
 import { EditorCromaCapa, type CromaCorregido } from "./editor-croma-capa";
 import { HerramientasCapa } from "./herramientas-capa";
+import { BarraTransporte } from "./barra-transporte";
+import { VistaPreviaFlotante } from "./vista-previa-flotante";
+import { InspectorRapido, ParalajeGlobalSimple, type ModoEdicionCanvas } from "./inspector-rapido";
 import {
   borrarBorradorMontaje, guardarBorradorMontaje, imgADataUrl, leerBorradorMontaje,
 } from "@/lib/lab/borrador-montaje";
+
+const ANIM_A_COLA: Partial<Record<AnimParalaje, MovCola>> = {
+  "izq-der": "der",
+  "der-izq": "izq",
+  "arriba-abajo": "abajo",
+  "abajo-arriba": "arriba",
+  acercar: "acercar",
+  alejar: "alejar",
+  atravesar: "atravesar",
+  diagonal: "der",
+  "dolly-izq": "acercar",
+  orbita: "der",
+  suave: "der",
+};
 
 // Paso 2: apilar las capas ya generadas y moverlas con profundidad.
 //
@@ -125,6 +142,15 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   /** Una sola capa abierta evita repetir todos sus controles en una lista interminable. */
   const [capaActivaId, setCapaActivaId] = useState<string | null>(null);
   const [editandoCromaId, setEditandoCromaId] = useState<string | null>(null);
+  const [previewAbierta, setPreviewAbierta] = useState(false);
+  const [modoEdicion, setModoEdicion] = useState<ModoEdicionCanvas>(null);
+  const [moverTodo, setMoverTodo] = useState(false);
+  const [volverRuta, setVolverRuta] = useState(true);
+  const [voltearDefault, setVoltearDefault] = useState(true);
+  const [pausaSegInspector, setPausaSegInspector] = useState(1.5);
+  const [paralajeDurSeg, setParalajeDurSeg] = useState(4);
+  const [paralajePausaSeg, setParalajePausaSeg] = useState(1);
+  const [progresoUi, setProgresoUi] = useState(0);
   // La cola de la IA se copia UNA vez y ya es tuya: si se volviera a copiar en
   // cada render, cualquier retoque a mano se perdería al respirar.
   const colaIaRef = useRef<PasoSecuencia[] | null>(null);
@@ -167,6 +193,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   const pasoActivoRef = useRef(pasoActivo);
   const repetirRef = useRef(repetirCola);
   const pasoMsRef = useRef(0);
+  const progresoUiRef = useRef(0);
   const ultimoFrameRef = useRef<number | null>(null);
   /** Pose acumulada (entre pasos y al terminar la cola). */
   const estadoRef = useRef<EstadoCamara>(estadoNeutro());
@@ -783,6 +810,16 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
         const { vista: v, estado } = interpolarTramo(planRef.current[idx], pasoMsRef.current, metaCapas());
         vista = v;
         estadoRef.current = estado;
+        const total = planRef.current.reduce((a, t) => a + t.durMs, 0);
+        if (total > 0) {
+          let hecho = pasoMsRef.current;
+          for (let i = 0; i < idx; i++) hecho += planRef.current[i].durMs;
+          const frac = Math.min(1, hecho / total);
+          if (Math.abs(frac - progresoUiRef.current) > 0.004) {
+            progresoUiRef.current = frac;
+            setProgresoUi(frac);
+          }
+        }
       }
     } else if (retenerPoseRef.current) {
       vista = vistaDesdeEstado(estadoRef.current);
@@ -1024,7 +1061,244 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     reiniciarSpritesSincronizados();
     refrescarRelojes((n) => n + 1);
     setPose({ ox: 0, oy: 0, avance: 0 });
+    progresoUiRef.current = 0;
+    setProgresoUi(0);
     setAviso("Cámara al centro. La animación vuelve a empezar desde aquí.");
+  }
+
+  function toggleReproduccion() {
+    if (enSecuencia) {
+      pararSecuencia();
+      return;
+    }
+    if (cola.length) {
+      iniciarSecuencia();
+      setPreviewAbierta(true);
+      return;
+    }
+    retenerPoseRef.current = false;
+    setMoviendo((v) => !v);
+    setPreviewAbierta(true);
+  }
+
+  function seekCola(frac: number) {
+    if (!cola.length) {
+      progresoUiRef.current = frac;
+      setProgresoUi(frac);
+      return;
+    }
+    if (!enSecuencia) iniciarSecuencia();
+    planificar();
+    const plan = planRef.current;
+    if (!plan.length) return;
+    const total = plan.reduce((a, t) => a + t.durMs, 0);
+    let alvo = Math.max(0, Math.min(1, frac)) * total;
+    let idx = 0;
+    estadoRef.current = clonarEstado(inicioRef.current);
+    while (idx < plan.length && alvo >= plan[idx].durMs) {
+      alvo -= plan[idx].durMs;
+      estadoRef.current = clonarEstado(plan[idx].destino);
+      idx++;
+    }
+    if (idx >= plan.length) {
+      idx = plan.length - 1;
+      alvo = plan[idx].durMs;
+    }
+    pasoActivoRef.current = idx;
+    setPasoActivo(idx);
+    pasoMsRef.current = alvo;
+    progresoUiRef.current = frac;
+    setProgresoUi(frac);
+    anotarPose();
+  }
+
+  function saltarPaso(delta: -1 | 1) {
+    if (!cola.length) return;
+    if (!enSecuencia && !planRef.current.length) {
+      iniciarSecuencia();
+      return;
+    }
+    planificar();
+    const n = planRef.current.length;
+    if (!n) return;
+    const next = Math.max(0, Math.min(n - 1, pasoActivoRef.current + delta));
+    let hecho = 0;
+    for (let i = 0; i < next; i++) hecho += planRef.current[i].durMs;
+    const total = planRef.current.reduce((a, t) => a + t.durMs, 0);
+    seekCola(total > 0 ? hecho / total : 0);
+  }
+
+  function aplicarParalajeACola() {
+    const mov = ANIM_A_COLA[anim];
+    if (!mov) {
+      setAviso("Elige un tipo de paralaje distinto de «Quieto».");
+      return;
+    }
+    const pasos: PasoSecuencia[] = [
+      pasoPorDefecto({
+        id: `p${++pasoSeq}`,
+        mov,
+        durMs: Math.round(paralajeDurSeg * 1000),
+        distancia: fuerza,
+      }),
+    ];
+    if (paralajePausaSeg > 0) {
+      pasos.push(pasoPorDefecto({
+        id: `p${++pasoSeq}`,
+        mov: "esperar",
+        durMs: Math.round(paralajePausaSeg * 1000),
+        distancia: 0,
+      }));
+    }
+    setCola((c) => [...c, ...pasos]);
+    setAviso(`Paralaje añadido a la cola (${pasos.length} paso${pasos.length === 1 ? "" : "s"}).`);
+  }
+
+  function coordsEnLienzo(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
+    const el = caja.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
+    };
+  }
+
+  function aplicarVolverRuta(pasos: PasoRutaSprite[], spr: SpriteEnCapa): PasoRutaSprite[] {
+    if (!volverRuta || pasos.length < 1) return pasos.slice(0, 24);
+    const ida = pasos.filter((p) => p.tipo === "mover" || p.tipo === "pausa");
+    const vuelta: PasoRutaSprite[] = [];
+    let x = spr.x;
+    let y = spr.y;
+    const puntos: { x: number; y: number; segundos: number; suavizado?: "lineal" | "suave" }[] = [{ x, y, segundos: 1 }];
+    for (const p of ida) {
+      if (p.tipo === "mover") {
+        x = p.x ?? x;
+        y = p.y ?? y;
+        puntos.push({ x, y, segundos: p.segundos, suavizado: p.suavizado });
+      }
+    }
+    for (let i = puntos.length - 2; i >= 0; i--) {
+      if (voltearDefault) vuelta.push({ tipo: "voltear", segundos: 0.1 });
+      vuelta.push({
+        tipo: "mover",
+        x: puntos[i].x,
+        y: puntos[i].y,
+        segundos: puntos[i + 1]?.segundos ?? 1.2,
+        suavizado: puntos[i + 1]?.suavizado ?? "suave",
+      });
+    }
+    return [...ida, ...vuelta].slice(0, 24);
+  }
+
+  function anadirPuntoRuta(nx: number, ny: number) {
+    const capa = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!capa?.spr || capa.bloqueada) return;
+    const spr = capa.spr;
+    const nucleo = [...(spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover" || p.tipo === "pausa")];
+    let lx = spr.x;
+    let ly = spr.y;
+    for (const p of nucleo) {
+      if (p.tipo === "mover") { lx = p.x ?? lx; ly = p.y ?? ly; }
+    }
+    const espejo = spr.vista === "lateral" && Math.abs(nx - lx) >= 0.005
+      ? ((nx > lx) !== (spr.direccionBase !== "izquierda"))
+      : !!spr.espejo;
+    nucleo.push({ tipo: "mover", x: nx, y: ny, segundos: 1.2, suavizado: "suave", espejo });
+    const finales = aplicarVolverRuta(nucleo, spr);
+    upd(capa.id, {
+      spr: {
+        ...spr,
+        ruta: { pasos: finales, bucle: !!spr.ruta?.bucle || volverRuta },
+        trayectoria: undefined,
+        espejo,
+      },
+    });
+    setRutaVisibleId(capa.id);
+    setAviso(`Punto ${nucleo.filter((p) => p.tipo === "mover").length} en la ruta de «${capa.nombre}».`);
+  }
+
+  function anadirPausaRuta() {
+    const capa = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!capa?.spr || capa.bloqueada) return;
+    const spr = capa.spr;
+    const nucleo = [...(spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover" || p.tipo === "pausa")];
+    nucleo.push({ tipo: "pausa", segundos: pausaSegInspector });
+    const finales = aplicarVolverRuta(nucleo, spr);
+    upd(capa.id, { spr: { ...spr, ruta: { pasos: finales, bucle: !!spr.ruta?.bucle || volverRuta }, trayectoria: undefined } });
+    setAviso(`Pausa de ${pausaSegInspector}s en «${capa.nombre}».`);
+  }
+
+  function colocarSeleccion(nx: number, ny: number) {
+    const ids = moverTodo
+      ? capasRef.current.filter((c) => !c.bloqueada).map((c) => c.id)
+      : capaActivaId ? [capaActivaId] : [];
+    if (!ids.length) return;
+    setCapas((cs) => cs.map((c) => {
+      if (!ids.includes(c.id)) return c;
+      if (c.spr) {
+        const dx = nx - c.spr.x;
+        const dy = ny - c.spr.y;
+        const spr = { ...c.spr, x: nx, y: ny };
+        if (c.spr.ruta?.pasos.length) {
+          spr.ruta = {
+            ...c.spr.ruta,
+            pasos: c.spr.ruta.pasos.map((p) => (p.tipo === "mover"
+              ? { ...p, x: (p.x ?? c.spr!.x) + dx, y: (p.y ?? c.spr!.y) + dy }
+              : p)),
+          };
+        }
+        if (c.spr.trayectoria) {
+          spr.trayectoria = {
+            ...c.spr.trayectoria,
+            x: c.spr.trayectoria.x + dx,
+            y: c.spr.trayectoria.y + dy,
+          };
+        }
+        return { ...c, spr };
+      }
+      // Capa de imagen: desplazamiento local rápido
+      return {
+        ...c,
+        mov: {
+          tipo: "trayectoria",
+          desdeX: 0,
+          desdeY: 0,
+          x: (nx - 0.5) * 0.35,
+          y: (ny - 0.5) * 0.35,
+          segundos: 0.01,
+          bucle: false,
+          volver: false,
+        },
+      };
+    }));
+  }
+
+  function movCapaRapido(tipo: string) {
+    if (!capaActivaId) return;
+    if (!tipo) {
+      upd(capaActivaId, { mov: undefined });
+      return;
+    }
+    if (tipo === "trayectoria") {
+      upd(capaActivaId, {
+        mov: normalizarMov({
+          tipo: "trayectoria",
+          desdeX: 0, desdeY: 0,
+          x: 0.25, y: 0,
+          segundos: 4, bucle: true, volver: true, suavizado: "suave",
+        }),
+      });
+      return;
+    }
+    if (tipo === "deriva") {
+      upd(capaActivaId, { mov: normalizarMov({ tipo: "deriva", x: 0.08, y: 0, bucle: true }) });
+      return;
+    }
+    upd(capaActivaId, {
+      mov: normalizarMov({ tipo: tipo as MovCapa["tipo"], amplitud: 0.03, segundos: 4 }),
+    });
   }
 
   const upd = (id: string, p: Partial<CapaImg>) =>
@@ -1253,7 +1527,9 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
               // sin ello el navegador se queda el gesto para desplazar la página
               // y el dedo no mueve nada.
               className={`z-20 touch-none overflow-hidden rounded-lg border border-border bg-black shadow-lg shadow-black/40 sm:sticky sm:top-12 ${
-                enSecuencia ? "" : arrastrando ? "cursor-grabbing" : "cursor-grab"
+                modoEdicion === "punto" ? "cursor-crosshair"
+                  : modoEdicion === "colocar" ? "cursor-move"
+                  : enSecuencia ? "" : arrastrando ? "cursor-grabbing" : "cursor-grab"
               }`}
               // Colocar la cámara a mano: se arrastra la escena y cada capa se
               // mueve con su paralaje, así que se ve dónde va a quedar todo
@@ -1261,6 +1537,21 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
               // abajo»: con los números a ciegas no hay manera de acertar.
               onPointerDown={(e) => {
                 if (enSecuencia || !capas.length) return;
+                const xy = coordsEnLienzo(e);
+                if (modoEdicion === "punto" && xy) {
+                  e.preventDefault();
+                  anadirPuntoRuta(xy.x, xy.y);
+                  return;
+                }
+                if (modoEdicion === "colocar" && xy) {
+                  e.preventDefault();
+                  dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                  colocarSeleccion(xy.x, xy.y);
+                  arrastreRef.current = { x: e.clientX, y: e.clientY };
+                  setArrastrando(true);
+                  return;
+                }
                 dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 // Envuelto porque puede lanzar si el puntero ya se soltó, y una
                 // excepción aquí dejaría el arrastre a medias.
@@ -1279,6 +1570,13 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                 retenerPoseRef.current = true;
               }}
               onPointerMove={(e) => {
+                if (modoEdicion === "colocar" && arrastreRef.current && dedos.current.has(e.pointerId)) {
+                  const xy = coordsEnLienzo(e);
+                  if (xy) colocarSeleccion(xy.x, xy.y);
+                  arrastreRef.current = { x: e.clientX, y: e.clientY };
+                  return;
+                }
+                if (modoEdicion === "punto") return;
                 if (dedos.current.has(e.pointerId)) {
                   dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 }
@@ -1426,6 +1724,35 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                       <Trash2 className="h-3.5 w-3.5" /> Borrar capa
                     </button>
                   </div>
+
+                  <InspectorRapido
+                    esSprite={!!capaActiva.spr}
+                    modo={modoEdicion}
+                    onModo={setModoEdicion}
+                    moverTodo={moverTodo}
+                    onMoverTodo={setMoverTodo}
+                    volverRuta={volverRuta}
+                    onVolverRuta={(v) => {
+                      setVolverRuta(v);
+                      const capa = capasRef.current.find((c) => c.id === capaActivaId);
+                      if (!capa?.spr) return;
+                      const nucleo = (capa.spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover" || p.tipo === "pausa");
+                      if (!nucleo.length) return;
+                      const finales = v ? aplicarVolverRuta(nucleo, capa.spr) : nucleo;
+                      upd(capa.id, {
+                        spr: { ...capa.spr, ruta: { pasos: finales, bucle: v || !!capa.spr.ruta?.bucle } },
+                      });
+                    }}
+                    voltearDefault={voltearDefault}
+                    onVoltearDefault={setVoltearDefault}
+                    pausaSeg={pausaSegInspector}
+                    onPausaSeg={setPausaSegInspector}
+                    onAddPausa={anadirPausaRuta}
+                    onMovCapa={movCapaRapido}
+                    movCapaTipo={capaActiva.mov?.tipo ?? ""}
+                    bloqueada={capaActiva.bloqueada}
+                  />
+
                   {capaActiva.via && (
                     <p className={`text-[10px] ${capaActiva.via === "opaca" && indiceActivo > 0 ? "text-gold" : "text-muted"}`}>
                       {capaActiva.via === "transparente" && "Vino con transparencia"}
@@ -1443,6 +1770,9 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                     <Barra etiqueta="Opacidad" valor={capaActiva.opacidad} max={1} paso={0.01}
                       onCambio={(v) => upd(capaActiva.id, { opacidad: v })} formato={(v) => `${Math.round(v * 100)}%`} />
                   </div>
+                  <details className="rounded-lg border border-border/70 bg-surface-2/30 p-2">
+                    <summary className="cursor-pointer text-[11px] font-medium text-muted">Más opciones de movimiento</summary>
+                    <div className="mt-2 space-y-2">
                   {!capaActiva.spr && (
                     <MandosMovimientoCapa
                       mov={capaActiva.mov}
@@ -1471,9 +1801,6 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                         const superficie = siguiente.superficieId
                           ? superficies.find((s) => s.id === siguiente.superficieId)
                           : undefined;
-                        // Mover X o editar una ruta ligada recalcula Y sobre la
-                        // polilínea. Cambiar Y a mano sigue permitido; para una
-                        // ruta completamente libre basta elegir «Ruta libre».
                         if (superficie && (
                           p.x !== undefined || p.trayectoria !== undefined
                           || p.ruta !== undefined || p.superficieId !== undefined
@@ -1494,6 +1821,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                       onRutaVisible={(visible) => setRutaVisibleId(visible ? capaActiva.id : null)}
                     />
                   )}
+                    </div>
+                  </details>
                   <HerramientasCapa
                     nombre={capaActiva.nombre}
                     clave={capaActiva.clave}
@@ -1597,6 +1926,22 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
             </div>
             <p className="text-[11px] text-muted">{aviso}</p>
           </div>
+
+          <ParalajeGlobalSimple
+            anim={anim}
+            onAnim={(a) => {
+              setAnim(a);
+              if (!enSecuencia) pasoMsRef.current = 0;
+              retenerPoseRef.current = false;
+            }}
+            fuerza={fuerza}
+            onFuerza={setFuerza}
+            durSeg={paralajeDurSeg}
+            onDurSeg={setParalajeDurSeg}
+            pausaSeg={paralajePausaSeg}
+            onPausaSeg={setParalajePausaSeg}
+            onAplicarCola={aplicarParalajeACola}
+          />
 
           <div className="card space-y-2 p-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -1913,6 +2258,34 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
           onAplicar={(resultado) => aplicarCorreccionCroma(capaEditandoCroma.id, resultado)}
         />
       )}
+
+      <BarraTransporte
+        reproduciendo={enSecuencia || (moviendo && !retenerPoseRef.current && anim !== "quieto")}
+        progreso={progresoUi}
+        disabled={!capas.length}
+        onPlayPause={toggleReproduccion}
+        onReset={() => {
+          pararSecuencia();
+          centrarTodo();
+        }}
+        onSeek={seekCola}
+        onPaso={saltarPaso}
+        onAbrirPreview={() => {
+          setPreviewAbierta(true);
+          if (!enSecuencia && cola.length) iniciarSecuencia();
+        }}
+      />
+      <VistaPreviaFlotante
+        abierto={previewAbierta}
+        canvasOrigen={canvas}
+        reproduciendo={enSecuencia || moviendo}
+        progreso={progresoUi}
+        onCerrar={() => setPreviewAbierta(false)}
+        onPlayPause={toggleReproduccion}
+        onReset={() => { pararSecuencia(); centrarTodo(); }}
+        onSeek={seekCola}
+        onPaso={saltarPaso}
+      />
     </div>
   );
 }
