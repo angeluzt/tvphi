@@ -10,6 +10,7 @@ import { GenerarSprite, type GenerarSpriteHandle } from "./generar-sprite";
 import { BibliotecaSprites } from "./biblioteca-sprites";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { urlSprite, type SpriteMeta } from "@/lib/lab/biblioteca";
+import type { EfectoEscena } from "@/lib/lab/efectos-escena";
 import type { Escena } from "@/lib/lab/escena";
 
 function pestanaInicial(): "mapa" | "compositor" | "sprites" {
@@ -28,6 +29,8 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
   const [colaIa, setColaIa] = useState<any[] | null>(null);
   // El sprite que se acaba de elegir en la biblioteca, de camino al montaje.
   const [sprite, setSprite] = useState<any>(null);
+  // Los efectos que escribió la IA, esperando a que se monte el compositor.
+  const [efectosIa, setEfectosIa] = useState<EfectoEscena[] | null>(null);
   // Sube cada vez que se guarda uno nuevo, para que la biblioteca se relea.
   const [tandaSprites, setTandaSprites] = useState(0);
   // Lo que se le pasa al editor cuando la IA escribe un mapa nuevo.
@@ -170,6 +173,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
           escena={escena}
           onEscena={(e) => { setImpuesta(e); setEscena(e); }}
           onAnimacion={(pasos) => setColaIa(pasos)}
+          onEfectos={(fx) => setEfectosIa(fx)}
           onCapas={(cs, resumen, actores) => {
             const porCapa = new globalThis.Map<string, typeof actores>();
             for (const actor of actores) {
@@ -233,6 +237,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
           semilla={semilla}
           sprite={sprite}
           colaInicial={colaIa ?? undefined}
+          efectosIniciales={efectosIa ?? undefined}
           escena={escena ?? undefined}
           puedeIa={hayIa}
           onEscena={(e) => {

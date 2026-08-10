@@ -31,6 +31,11 @@ import { EditorCromaCapa, type CromaCorregido } from "./editor-croma-capa";
 import { HerramientasCapa } from "./herramientas-capa";
 import { BarraTransporte } from "./barra-transporte";
 import { PestanasMontaje, PanelMontajeCaja, type PanelMontaje } from "./paneles-montaje";
+import {
+  aEntradaVfx, claveEfectos, nombreEfecto, normalizarEfectos, type EfectoEscena,
+} from "@/lib/lab/efectos-escena";
+import { VfxScene } from "@/lib/story/vfx";
+import { PanelEfectos } from "./panel-efectos";
 import { VistaPreviaFlotante } from "./vista-previa-flotante";
 import { InspectorRapido, ParalajeGlobalSimple, type ModoEdicionCanvas } from "./inspector-rapido";
 import {
@@ -100,7 +105,7 @@ export interface Semilla {
 let contador = 0;
 let pasoSeq = 0;
 
-export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, puedeIa }: {
+export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, escena, onEscena, puedeIa }: {
   semilla?: Semilla[];
   /**
    * Un sprite de la biblioteca para AÑADIR, no para reemplazar.
@@ -112,6 +117,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   sprite?: (Semilla & { spr: SpriteEnCapa }) | null;
   /** Cola escrita por la IA. Se carga una vez, y a partir de ahí se edita. */
   colaInicial?: PasoSecuencia[];
+  /** Efectos escritos por la IA. Igual que la cola: se copian una vez. */
+  efectosIniciales?: EfectoEscena[];
   /** El mapa de formas, para que viaje dentro del ZIP del proyecto. */
   escena?: unknown;
   /** Al importar un ZIP que trae mapa, se devuelve para reponerlo en su pestaña. */
@@ -149,6 +156,21 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   const [panel, setPanel] = useState<PanelMontaje>("elemento");
   // La fila de acciones secundarias, plegada por defecto.
   const [masAcciones, setMasAcciones] = useState(false);
+  // Los efectos del motor colgados de la escena.
+  //
+  // La IA lleva tres versiones devolviéndolos y viajaban dentro del ZIP, pero
+  // no había ni estado que los guardara ni línea que los pintara: se pagaba el
+  // token de pedirlos y se tiraban. El motor (VfxScene) es el mismo que usan
+  // las historias; aquí solo se le da de comer.
+  const [efectos, setEfectos] = useState<EfectoEscena[]>([]);
+  const efectosRef = useRef<EfectoEscena[]>([]);
+  efectosRef.current = efectos;
+  // La simulación vive en un ref: es estado del dibujo, no de React, y meterla
+  // en el árbol provocaría un render por fotograma.
+  const vfxRef = useRef<VfxScene | null>(null);
+  // Qué efecto se está a punto de colocar. Mientras haya uno, el siguiente
+  // toque en la escena lo planta ahí en vez de mover la cámara.
+  const [efectoPendiente, setEfectoPendiente] = useState<string | null>(null);
   const [modoEdicion, setModoEdicion] = useState<ModoEdicionCanvas>(null);
   const [moverTodo, setMoverTodo] = useState(false);
   const [volverRuta, setVolverRuta] = useState(true);
@@ -165,6 +187,15 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     colaIaRef.current = colaInicial;
     setCola(colaInicial.map((p, i) => ({ ...p, id: `p${++pasoSeq}-${i}` })));
   }, [colaInicial]);
+
+  // Los efectos de la IA, igual que la cola: se copian UNA vez y a partir de
+  // ahí son tuyos. Si se recopiaran, borrar uno a mano lo haría reaparecer.
+  const efectosIaRef = useRef<EfectoEscena[] | undefined>(undefined);
+  useEffect(() => {
+    if (!efectosIniciales?.length || efectosIaRef.current === efectosIniciales) return;
+    efectosIaRef.current = efectosIniciales;
+    setEfectos(efectosIniciales);
+  }, [efectosIniciales]);
   const [enSecuencia, setEnSecuencia] = useState(false);
   const [pasoActivo, setPasoActivo] = useState(0);
   const [repetirCola, setRepetirCola] = useState(false);
@@ -553,6 +584,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
         // justo el trabajo que uno guarda para no repetir.
         escena,
         cola,
+        efectos,
         capas: capas.map((c) => ({
           clave: c.clave, nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
           bloqueada: c.bloqueada, via: c.via, vacio: c.vacio, mov: c.mov, spr: c.spr, img: c.img,
@@ -634,6 +666,13 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
       if (pack.escena) {
         onEscena?.(pack.escena);
         partes.push("el mapa");
+      }
+      // Los efectos viajaban en el ZIP desde la versión 2 y al importar nadie
+      // los leía: volvías con el montaje y la cámara, y la escena sin humo.
+      const fx = normalizarEfectos(pack.efectos);
+      if (fx.efectos.length) {
+        setEfectos(fx.efectos);
+        partes.push(`${fx.efectos.length} efecto${fx.efectos.length === 1 ? "" : "s"}`);
       }
       setAviso(`Importado: ${partes.join(", ")}.`);
     } catch (e) {
@@ -1012,8 +1051,80 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
       }
       c.restore();
     }
+    // Los efectos del motor, ENCIMA de las capas.
+    //
+    // Van al final porque son lo que ocurre en el aire delante de la escena:
+    // el humo tapa la pared, no al revés. `VfxScene` deja el lienzo como
+    // estaba, así que no se lleva por delante lo ya pintado.
+    // El reloj general de la escena: los efectos son del ambiente, no de una
+    // capa concreta, así que no siguen el reloj individual de ninguna.
+    pintarEfectos(c, w, h, vista, (performance.now() - relojRef.current) / 1000);
+
     // Guía solo en la vista previa. Nunca entra al PNG ni al ZIP.
     if (guiaRuta) pintarGuiaRuta(c, guiaRuta.spr, guiaRuta.plano, guiaRuta.tiempo);
+  }
+
+  /**
+   * Pintar los efectos colgados de la escena.
+   *
+   * LA PARTE QUE IMPORTA es dónde cae cada uno, y depende de su espacio:
+   *
+   *   · «encuadre» → sus coordenadas YA son de pantalla. La lluvia cae sobre la
+   *     cámara: no se desplaza al panear ni crece al acercarse. Se le pasa
+   *     zoom 1 aunque la cámara esté encima de la escena.
+   *
+   *   · «imagen» → está pegado a un sitio de la escena, así que hay que llevar
+   *     ese punto por la MISMA transformación que sufre una capa a su
+   *     profundidad. Es lo que hace que una hoguera se quede en su suelo al
+   *     panear, y que crezca al acercarse en vez de flotar despegada.
+   */
+  function pintarEfectos(
+    c: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    vista: VistaCamara,
+    reloj: number,
+  ) {
+    const lista = efectosRef.current;
+    if (!lista.length) return;
+    if (!vfxRef.current) vfxRef.current = new VfxScene();
+    const escenaVfx = vfxRef.current;
+
+    // El zoom que se le declara al motor sale de los efectos PEGADOS: es lo que
+    // reescala las partículas ya vivas para que sigan a la cámara en vez de
+    // quedarse del tamaño con el que nacieron.
+    const pegado = lista.find((e) => e.espacio === "imagen");
+    const zoom = pegado
+      ? vista.zoom * vista.zoomCapa(pegado.depth)
+      : 1;
+
+    const entradas = lista.map((e) => {
+      if (e.espacio === "encuadre") {
+        return aEntradaVfx(e, { x: e.x, y: e.y, x2: e.x2, y2: e.y2 });
+      }
+      // El plano de una capa a esa profundidad, igual que en el bucle de
+      // arriba: escala por perspectiva y desplazamiento por paneo.
+      const esc = vista.zoom * vista.zoomCapa(e.depth);
+      const pan = vista.panCapa(e.depth);
+      const dw = w * esc, dh = h * esc;
+      const x0 = -(dw - w) / 2 + vista.ox * pan * w;
+      const y0 = -(dh - h) / 2 + vista.oy * pan * h;
+      const aPantalla = (u: number, v: number) => ({
+        x: (x0 + u * dw) / w,
+        y: (y0 + v * dh) / h,
+      });
+      const a = aPantalla(e.x, e.y);
+      const b = aPantalla(e.x2, e.y2);
+      return aEntradaVfx(e, { x: a.x, y: a.y, x2: b.x, y2: b.y });
+    });
+
+    escenaVfx.setSize(w, h);
+    escenaVfx.setZoomScale(zoom);
+    // La clave NO lleva la posición: si la llevara, mover la cámara reiniciaría
+    // las partículas en cada fotograma y solo se vería el primer instante del
+    // efecto, una y otra vez.
+    escenaVfx.seek(claveEfectos(lista), entradas, Math.max(0, reloj));
+    escenaVfx.draw(c, 1);
   }
 
   async function exportarPng() {
@@ -1477,6 +1588,25 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     caja.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
+  /** Meter un efecto del catálogo en el sitio que se toque. */
+  function anadirEfecto(kind: string, nx: number, ny: number) {
+    const { efectos: nuevos, avisos } = normalizarEfectos([{ id: kind, x: nx, y: ny }]);
+    if (!nuevos.length) {
+      setAviso(avisos[0] ?? "Ese efecto no está en el catálogo.");
+      return;
+    }
+    const fx = { ...nuevos[0], id: `fx${Date.now().toString(36)}` };
+    setEfectos((prev) => [...prev, fx]);
+    setAviso(
+      `${nombreEfecto(fx.kind)} en la escena`
+      + (fx.espacio === "encuadre" ? " · llena el cuadro, no sigue a la cámara." : "."),
+    );
+  }
+
+  function quitarEfecto(id: string) {
+    setEfectos((prev) => prev.filter((e) => e.id !== id));
+  }
+
   function movCapaRapido(tipo: string) {
     if (!capaActivaId) return;
     if (!tipo) {
@@ -1750,6 +1880,12 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
               onPointerDown={(e) => {
                 if (enSecuencia || !capas.length) return;
                 const xy = coordsEnLienzo(e);
+                if (efectoPendiente && xy) {
+                  e.preventDefault();
+                  anadirEfecto(efectoPendiente, xy.x, xy.y);
+                  setEfectoPendiente(null);
+                  return;
+                }
                 if (modoEdicion === "punto" && xy) {
                   e.preventDefault();
                   anadirPuntoRuta(xy.x, xy.y);
@@ -2102,6 +2238,12 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
             )}
             </PanelMontajeCaja>
             <PanelMontajeCaja activo={panel === "camara"}>
+            <PanelEfectos
+              efectos={efectos}
+              pendiente={efectoPendiente}
+              onPendiente={(k) => { setEfectoPendiente(k); if (k) acercarLienzo(); }}
+              onQuitar={quitarEfecto}
+            />
             {/* Colocar la toma a mano. Aquí y no abajo del todo porque se usa
                 MIRANDO la vista previa: es un «déjalo así». */}
             <div className="flex flex-wrap items-center gap-2">
