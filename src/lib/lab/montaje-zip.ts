@@ -37,6 +37,15 @@ export type CapaMontajeMeta = {
    * reimportarla se pintaría tal cual. Es lo que dice dónde cortar.
    */
   spr?: unknown;
+  /**
+   * Las tiras de las animaciones ligadas, por clave: archivo dentro del ZIP.
+   *
+   * Van AQUÍ y no se rebajan por su id de biblioteca porque el ZIP promete
+   * llevar dentro todo lo necesario. Un proyecto que dependiera de la
+   * biblioteca del servidor se rompería al abrirlo en otra cuenta, o el día
+   * que alguien borre esa animación.
+   */
+  tiras?: Record<string, string>;
 };
 
 export type MontajePack = {
@@ -90,6 +99,7 @@ export async function bajarMontajeZip(opts: {
     mov?: unknown;
     spr?: unknown;
     img: HTMLImageElement;
+    tiras?: Record<string, HTMLImageElement>;
   }[];
 }) {
   const metas: CapaMontajeMeta[] = [];
@@ -97,8 +107,15 @@ export async function bajarMontajeZip(opts: {
 
   for (let i = 0; i < opts.capas.length; i++) {
     const c = opts.capas[i];
-    const archivo = `${String(i + 1).padStart(2, "0")}-${limpio(c.nombre)}.png`;
+    const prefijo = `${String(i + 1).padStart(2, "0")}-${limpio(c.nombre)}`;
+    const archivo = `${prefijo}.png`;
     archivos.push({ nombre: archivo, datos: await pngDeImg(c.img) });
+    let tiras: Record<string, string> | undefined;
+    for (const [clave, img] of Object.entries(c.tiras ?? {})) {
+      const nombre = `${prefijo}--${limpio(clave)}.png`;
+      archivos.push({ nombre, datos: await pngDeImg(img) });
+      (tiras ??= {})[clave] = nombre;
+    }
     metas.push({
       clave: c.clave,
       nombre: c.nombre,
@@ -111,6 +128,7 @@ export async function bajarMontajeZip(opts: {
       vacio: c.vacio,
       mov: c.mov,
       spr: c.spr,
+      ...(tiras ? { tiras } : {}),
     });
   }
 
@@ -157,6 +175,8 @@ export type CapaImportada = {
   mov?: unknown;
   spr?: unknown;
   url: string;
+  /** Tiras de las animaciones ligadas, por clave, ya como blob URL. */
+  tiras?: Record<string, string>;
 };
 
 /** Lee un ZIP de montaje y devuelve URLs blob + meta. */
@@ -188,14 +208,27 @@ export async function leerMontajeZip(file: Blob): Promise<{
       .map((e) => [e.nombre.replace(/^.*\//, ""), e]),
   );
 
+  const urlDe = (archivo: string) => {
+    const key = archivo.replace(/^.*\//, "");
+    const ent = pngs.get(key) ?? [...pngs.values()].find((e) => e.nombre.endsWith(key));
+    return ent ? URL.createObjectURL(new Blob([ent.datos.slice()], { type: "image/png" })) : null;
+  };
+
   if (pack?.capas?.length) {
     const capas: CapaImportada[] = [];
     for (const m of pack.capas) {
-      const key = m.archivo.replace(/^.*\//, "");
-      const ent = pngs.get(key) ?? [...pngs.values()].find((e) => e.nombre.endsWith(key));
-      if (!ent) throw new Error(`Falta la imagen «${m.archivo}» en el ZIP.`);
-      const url = URL.createObjectURL(new Blob([ent.datos.slice()], { type: "image/png" }));
+      const url = urlDe(m.archivo);
+      if (!url) throw new Error(`Falta la imagen «${m.archivo}» en el ZIP.`);
+      // Una tira ligada que falte NO tumba la importación: el dibujante ya cae
+      // a la tira de partida, así que se pierde ese cambio de animación y se
+      // conserva todo lo demás. Perder el proyecto entero sería mucho peor.
+      let tiras: Record<string, string> | undefined;
+      for (const [clave, archivo] of Object.entries(m.tiras ?? {})) {
+        const u = urlDe(archivo);
+        if (u) (tiras ??= {})[clave] = u;
+      }
       capas.push({
+        ...(tiras ? { tiras } : {}),
         clave: m.clave,
         nombre: m.nombre,
         depth: m.depth,

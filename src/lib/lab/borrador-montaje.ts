@@ -22,6 +22,8 @@ export type BorradorMontaje = {
     mov?: unknown;
     spr?: unknown;
     dataUrl: string;
+    /** Tiras de las animaciones ligadas, por clave, también como data URL. */
+    tiras?: Record<string, string>;
   }[];
   escena?: unknown;
   cola?: unknown[];
