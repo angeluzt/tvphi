@@ -16,7 +16,28 @@
 // llevan sus fotogramas dentro (ver sprite-capa.ts) y usan ESTE mismo
 // movimiento para cruzar el cuadro mientras aletean.
 
-export type TipoMovCapa = "trayectoria" | "deriva" | "flotar" | "vaiven" | "pulso";
+export type TipoMovCapa = "ruta" | "trayectoria" | "deriva" | "flotar" | "vaiven" | "pulso";
+
+/**
+ * Un punto de una ruta encadenada.
+ *
+ * Los sprites ya tenían esto —ir a A, esperar, ir a B, volverse— pero las capas
+ * solo sabían hacer A→B, un tramo y se acabó. Un tren que para en dos
+ * estaciones, una nube que rodea algo o una barca que va y vuelve por el mismo
+ * sitio no se podían describir. Ahora es el mismo concepto para las dos cosas.
+ *
+ * Las coordenadas son DESPLAZAMIENTOS respecto a donde está la capa, no
+ * posiciones absolutas: así la ruta sigue valiendo si luego mueves la capa.
+ */
+export interface PuntoRutaCapa {
+  x: number;
+  y: number;
+  /** Lo que tarda en llegar aquí desde el punto anterior. */
+  segundos: number;
+  /** Quedarse quieto aquí al llegar, antes de seguir. */
+  espera?: number;
+  suavizado?: SuavizadoMovCapa;
+}
 export type EspacioMovCapa = "capa" | "pantalla";
 export type SuavizadoMovCapa = "lineal" | "suave";
 
@@ -50,9 +71,76 @@ export interface MovCapa {
   segundos?: number;
   /** Desfase inicial (0..1 de un ciclo), para que dos capas no vayan a la vez. */
   desfase?: number;
+  /** ruta: los puntos por los que pasa, en orden. */
+  pasos?: PuntoRutaCapa[];
+}
+
+// ── Rutas encadenadas ───────────────────────────────────────────────────────
+
+/** Cuánto dura una ruta completa, contando esperas y la vuelta si la hay. */
+export function duracionRuta(pasos: PuntoRutaCapa[], volver = false): number {
+  const ida = pasos.reduce((a, p) => a + Math.max(0.01, p.segundos) + Math.max(0, p.espera ?? 0), 0);
+  // Al volver no se repiten las esperas: son paradas del viaje de ida.
+  const vuelta = volver ? pasos.reduce((a, p) => a + Math.max(0.01, p.segundos), 0) : 0;
+  return ida + vuelta;
+}
+
+const suave = (p: number) => p * p * (3 - 2 * p);
+
+/**
+ * Dónde está la capa en el segundo `t` de su ruta.
+ *
+ * Arranca siempre en (0,0) —el sitio de la capa— y va hacia el primer punto.
+ * Si `volver`, al llegar al último deshace el camino por los MISMOS puntos, que
+ * es lo que se pide cuando algo tiene que regresar por donde vino y no dar un
+ * salto de vuelta al origen.
+ */
+export function posicionEnRuta(
+  pasos: PuntoRutaCapa[],
+  t: number,
+  opts: { bucle?: boolean; volver?: boolean } = {},
+): { dx: number; dy: number } {
+  if (!pasos.length) return { dx: 0, dy: 0 };
+
+  const total = duracionRuta(pasos, opts.volver);
+  let tiempo = Math.max(0, t);
+  if (opts.bucle) tiempo = ((tiempo % total) + total) % total;
+  else tiempo = Math.min(tiempo, total);
+
+  // Los tramos de ida, cada uno con su espera al final.
+  let x = 0, y = 0;
+  for (const p of pasos) {
+    const dur = Math.max(0.01, p.segundos);
+    if (tiempo < dur) {
+      const k = (p.suavizado ?? "suave") === "suave" ? suave(tiempo / dur) : tiempo / dur;
+      return { dx: x + (p.x - x) * k, dy: y + (p.y - y) * k };
+    }
+    tiempo -= dur;
+    x = p.x; y = p.y;
+    const espera = Math.max(0, p.espera ?? 0);
+    if (tiempo < espera) return { dx: x, dy: y };
+    tiempo -= espera;
+  }
+
+  if (!opts.volver) return { dx: x, dy: y };
+
+  // La vuelta: los mismos puntos al revés, terminando en el origen.
+  const atras = [...pasos].reverse();
+  for (let i = 0; i < atras.length; i++) {
+    const destino = i + 1 < atras.length ? atras[i + 1] : { x: 0, y: 0 };
+    const dur = Math.max(0.01, atras[i].segundos);
+    if (tiempo < dur) {
+      const k = (atras[i].suavizado ?? "suave") === "suave" ? suave(tiempo / dur) : tiempo / dur;
+      return { dx: x + (destino.x - x) * k, dy: y + (destino.y - y) * k };
+    }
+    tiempo -= dur;
+    x = destino.x; y = destino.y;
+  }
+  return { dx: x, dy: y };
 }
 
 export const MOVS_CAPA: { id: TipoMovCapa; label: string; pista: string }[] = [
+  { id: "ruta", label: "Ruta por puntos", pista: "Encadena varios destinos con paradas: un tren que para en dos estaciones, una ronda que vuelve por donde vino" },
   { id: "trayectoria", label: "Punto A → punto B", pista: "Recorrido exacto integrado al plano: un tren sobre su vía, una puerta o una plataforma" },
   { id: "deriva", label: "Se desplaza", pista: "Cruza el cuadro a velocidad constante: un pájaro, un barco, una nube, un meteoro" },
   { id: "flotar", label: "Flota", pista: "Sube y baja despacio: una barca en el agua, un farolillo" },
@@ -87,7 +175,27 @@ export function normalizarMov(m: any): MovCapa | undefined {
     // referencia: es la que evita que un tren se despegue de su vía al hacer zoom.
     base.espacio = "capa";
   }
-  if (tipo === "trayectoria") {
+  if (tipo === "ruta") {
+    // Los puntos vienen de tocar la escena, así que hay que acotarlos: un dedo
+    // resbalado no puede mandar la capa a tres pantallas de distancia.
+    const crudos = Array.isArray(m.pasos) ? m.pasos.slice(0, 24) : [];
+    const pasos: PuntoRutaCapa[] = [];
+    for (const p of crudos) {
+      if (!p || typeof p !== "object") continue;
+      pasos.push({
+        x: acotar(num(p.x, 0), -3, 3),
+        y: acotar(num(p.y, 0), -3, 3),
+        segundos: acotar(num(p.segundos, 2), 0.1, 120),
+        ...(num(p.espera, 0) > 0 ? { espera: acotar(num(p.espera, 0), 0, 60) } : {}),
+        ...(p.suavizado === "lineal" ? { suavizado: "lineal" as const } : {}),
+      });
+    }
+    // Una ruta sin puntos, o que no se mueve de su sitio, no es un movimiento.
+    if (!pasos.length || pasos.every((p) => p.x === 0 && p.y === 0)) return undefined;
+    base.pasos = pasos;
+    base.bucle = m.bucle === true;
+    base.volver = m.volver === true;
+  } else if (tipo === "trayectoria") {
     base.desdeX = acotar(num(m.desdeX, 0), -3, 3);
     base.desdeY = acotar(num(m.desdeY, 0), -3, 3);
     base.x = acotar(num(m.x, 0.5), -3, 3);
@@ -144,6 +252,13 @@ export function desplazamientoCapa(mov: MovCapa | undefined, t: number): Desplaz
       if (mov.y) dy = ((((dy + 1) % 2) + 2) % 2) - 1;
     }
     return { dx, dy, escala: 1, repetir: mov.bucle !== false };
+  }
+
+  if (mov.tipo === "ruta") {
+    const pasos = mov.pasos ?? [];
+    if (!pasos.length) return QUIETO;
+    const { dx, dy } = posicionEnRuta(pasos, t, { bucle: mov.bucle, volver: mov.volver });
+    return { dx, dy, escala: 1, repetir: false };
   }
 
   if (mov.tipo === "trayectoria") {

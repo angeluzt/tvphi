@@ -101,16 +101,22 @@ async function estadoDesdeTabla(
     return { exento: true, usadas: 0, limite, quedan: limite, retryAt: null };
   }
   const desde = new Date(Date.now() - VENTANA_MS);
-  const filas = await prisma.aiUsage.findMany({
-    where: { userId, kind, createdAt: { gte: desde } },
-    orderBy: { createdAt: "asc" },
-    select: { createdAt: true },
-  });
-  const usadas = filas.length;
+  // Contar es un `count`, no traerse las filas: de lo que se usó en 24 h solo
+  // hacen falta CUÁNTAS son y CUÁNDO fue la más vieja (para decir a qué hora
+  // habrá hueco). Traer cien filas enteras para hacerles `.length` es trabajo
+  // y memoria por nada, y esto se llama en cada carga del panel.
+  const [usadas, primera] = await Promise.all([
+    prisma.aiUsage.count({ where: { userId, kind, createdAt: { gte: desde } } }),
+    prisma.aiUsage.findFirst({
+      where: { userId, kind, createdAt: { gte: desde } },
+      orderBy: { createdAt: "asc" },
+      select: { createdAt: true },
+    }),
+  ]);
   const quedan = Math.max(0, limite - usadas);
   const retryAt =
-    usadas >= limite && filas[0]
-      ? new Date(filas[0].createdAt.getTime() + VENTANA_MS).toISOString()
+    usadas >= limite && primera
+      ? new Date(primera.createdAt.getTime() + VENTANA_MS).toISOString()
       : null;
   return { exento: false, usadas, limite, quedan, retryAt };
 }
@@ -157,12 +163,17 @@ export async function reservarUsoIa(
     const resultado = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${key})`;
       const desde = new Date(Date.now() - VENTANA_MS);
-      const filas = await tx.aiUsage.findMany({
-        where: { userId, kind, createdAt: { gte: desde } },
-        orderBy: { createdAt: "asc" },
-        select: { createdAt: true },
-      });
-      const usadas = filas.length;
+      // Igual que arriba: contar, no traer. Aquí importa más todavía, porque
+      // esto corre con el lock del usuario cogido.
+      const [usadas, primera] = await Promise.all([
+        tx.aiUsage.count({ where: { userId, kind, createdAt: { gte: desde } } }),
+        tx.aiUsage.findFirst({
+          where: { userId, kind, createdAt: { gte: desde } },
+          orderBy: { createdAt: "asc" },
+          select: { createdAt: true },
+        }),
+      ]);
+      const filas = primera ? [primera] : [];
       if (usadas >= limite) {
         const cupo: CupoHistorias = {
           exento: false,

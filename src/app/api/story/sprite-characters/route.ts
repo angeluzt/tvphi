@@ -4,15 +4,32 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { esPng } from "@/lib/lab/biblioteca";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
-import type { PersonajeSprite } from "@/lib/lab/personajes-sprite";
+import { urlImagenAnimacion, type PersonajeSprite } from "@/lib/lab/personajes-sprite";
 
 export const dynamic = "force-dynamic";
 
 const MAX_HOJA = 6 * 1024 * 1024;
 const MAX_TIRA = 4 * 1024 * 1024;
+// Los personajes del taller de sprites y sus animaciones.
+//
+// TODO LO DE AQUÍ ES DE UN SOLO USUARIO. Cada consulta lleva `userId` (o
+// `character: { userId }`) en el where, y eso ES la autorización: el personaje
+// de otro no aparece, así que se contesta 404 sin llegar a decir si el id
+// existe. No hay un rol que pueda ver los de todos.
+//
+// POR QUÉ HAY TANTO TOPE. Cada animación guarda hasta tres imágenes (hoja
+// original, hoja retocada y tira), y todo eso son bytes en la base de datos que
+// nadie más va a limpiar. Sin límites, una cuenta puede llenar el disco del
+// despliegue ella sola. Los topes se comprueban SUMANDO lo que ya tiene el
+// usuario —incluidas las páginas del atlas— y no por petición: si no, veinte
+// peticiones de 6 MB pasan una a una.
+
+/** La miniatura del personaje. Es un solo fotograma, no necesita más. */
 const MAX_REF = 2 * 1024 * 1024;
+/** Cuántos personajes, y cuántas animaciones cuelgan de cada uno. */
 const MAX_P = 20;
 const MAX_A = 30;
+/** El total por usuario, contando hojas, tiras, referencias y páginas de atlas. */
 const MAX_TOTAL = 120 * 1024 * 1024;
 
 const celda = z.object({
@@ -116,7 +133,9 @@ export async function GET() {
       filas: a.filas,
       bytes: a.bytesOriginal + a.bytesTrabajo + a.bytesTira,
       actualizadoEn: a.updatedAt.toISOString(),
-      tiraUrl: `/api/story/sprite-characters/animations/${a.id}/image?v=${a.updatedAt.getTime()}`,
+      // El `v` no lo usa el servidor: fuerza al navegador a pedirla de nuevo
+      // cuando la animación se ha retocado, en vez de enseñar la vieja.
+      tiraUrl: `${urlImagenAnimacion(a.id, "tira")}&v=${a.updatedAt.getTime()}`,
     })),
   }));
 

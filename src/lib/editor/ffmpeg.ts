@@ -13,9 +13,16 @@ async function getFfmpeg(): Promise<FFmpeg> {
   if (loading) return loading;
   loading = (async () => {
     const f = new FFmpeg();
-    // Se sirve desde el propio sitio (scripts/copy-ffmpeg.mjs lo deja en
-    // /public). Si por lo que sea no estuviera, se recurre al CDN.
-    const fuentes = ["/ffmpeg", "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd"];
+    // SOLO desde el propio sitio: scripts/copy-ffmpeg.mjs deja el core en
+    // /public durante el build, así que siempre está.
+    //
+    // ANTES HABÍA UN FALLBACK A unpkg.com y se ha quitado a propósito. El core
+    // de ffmpeg es JS + WASM que se ejecuta dentro de la página: tirar de un
+    // CDN de terceros significa que quien controle ese paquete puede ejecutar
+    // código aquí, y obligaba además a abrirle `connect-src` en la CSP. Si
+    // algún día el archivo local falta, es un fallo del build que hay que
+    // arreglar en el build, no tapar bajándolo de fuera.
+    const fuentes = ["/ffmpeg"];
     let ultimo: unknown = null;
     for (const base of fuentes) {
       try {

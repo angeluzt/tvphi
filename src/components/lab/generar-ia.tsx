@@ -9,6 +9,7 @@ import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { prepararCapa, type Recorte } from "@/lib/lab/quitar-fondo";
 import type { SpritePlaneado } from "@/lib/lab/plan-escena-viva";
 import { resolverSpritePlaneado, type SpriteMontado } from "@/lib/lab/sprite-automatico";
+import { normalizarEfectos, type EfectoEscena } from "@/lib/lab/efectos-escena";
 
 // Del texto a la escena montada, sin salir de aquí.
 //
@@ -34,6 +35,7 @@ export function GenerarIa({
   escena,
   onEscena,
   onAnimacion,
+  onEfectos,
   onCapas,
 }: {
   /** El mapa que hay ahora, para poder dibujar capa a capa. */
@@ -45,6 +47,8 @@ export function GenerarIa({
    * mirando las capas que se acaban de crear, no después.
    */
   onAnimacion?: (pasos: any[], avisos: string[]) => void;
+  /** Los efectos del motor que escribió la IA, ya validados contra el catálogo. */
+  onEfectos?: (efectos: EfectoEscena[], avisos: string[]) => void;
   /** El resumen viaja con las capas: esta tarjeta se cierra al montarlas. */
   onCapas: (c: CapaGenerada[], resumen: string, sprites: SpriteMontado[]) => void;
 }) {
@@ -80,13 +84,20 @@ export function GenerarIa({
       if (Array.isArray(j.animacion) && j.animacion.length) {
         onAnimacion?.(j.animacion, Array.isArray(j.avisos) ? j.avisos : []);
       }
+      // Los efectos. La ruta los venía devolviendo desde hace tres versiones y
+      // aquí no se leían: se pagaba el token de pedirlos y se tiraban.
+      const fx = normalizarEfectos(j.efectos);
+      if (fx.efectos.length || fx.avisos.length) onEfectos?.(fx.efectos, fx.avisos);
+      const conFx = fx.efectos.length
+        ? `, ${fx.efectos.length} ${fx.efectos.length === 1 ? "efecto" : "efectos"}`
+        : "";
       const conAnim = Array.isArray(j.animacion) && j.animacion.length
         ? ` y ${j.animacion.length} ${j.animacion.length === 1 ? "paso de cámara" : "pasos de cámara"}`
         : "";
       const conSprites = planeados.length
         ? `, ${planeados.length} ${planeados.length === 1 ? "actor animado" : "actores animados"}`
         : ", sin actores animados";
-      setPaso(`Mapa listo: ${j.escena.layers.length} capas${conSprites}${conAnim}. Revísalo y genera el montaje.`);
+      setPaso(`Mapa listo: ${j.escena.layers.length} capas${conSprites}${conFx}${conAnim}. Revísalo y genera el montaje.`);
       // Lo que se tuvo que enderezar se enseña: si la IA pidió algo imposible
       // —dos movimientos del mismo eje, una capa que no existe— hay que poder
       // corregir el encargo en vez de preguntarse por qué se ve raro.

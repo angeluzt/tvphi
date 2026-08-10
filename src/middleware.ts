@@ -27,8 +27,10 @@ export function middleware(req: NextRequest) {
       "img-src 'self' data: blob: https:",
       "media-src 'self' blob: data:",
       "font-src 'self' data:",
-      // unpkg: fallback de ffmpeg.wasm si /ffmpeg local no carga (editor/export).
-      "connect-src 'self' https://challenges.cloudflare.com https://unpkg.com",
+      // Solo el propio sitio y el captcha. ffmpeg.wasm se sirve desde /ffmpeg,
+      // así que no hace falta abrirle la puerta a ningún CDN: todo el código
+      // que se ejecuta aquí sale de este despliegue.
+      "connect-src 'self' https://challenges.cloudflare.com",
       "worker-src 'self' blob:",
       "child-src 'self' blob:",
       "frame-src https://challenges.cloudflare.com",

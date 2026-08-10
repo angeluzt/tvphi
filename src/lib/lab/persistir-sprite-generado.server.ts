@@ -2,6 +2,7 @@ import "server-only";
 import sharp from "sharp";
 import { prisma } from "@/lib/prisma";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
+import { nombreCorto } from "@/lib/lab/biblioteca";
 
 /** Tope de personajes del taller (misma cifra que la ruta sprite-characters). */
 const MAX_P = 20;
@@ -69,7 +70,10 @@ export async function persistirSpriteGenerado(
     .png({ compressionLevel: 9 })
     .toBuffer();
 
-  const nombre = (meta.que.trim().slice(0, 60) || "Sprite");
+  // El nombre NO es el prompt cortado: los prompts que funcionan son largos y
+  // empiezan todos igual, así que la biblioteca se llenaba de párrafos idénticos
+  // cortados a media palabra. `nombreCorto` se queda con lo que distingue.
+  const nombre = nombreCorto(meta.que);
   const data = {
     nombre,
     que: meta.que.trim().slice(0, 400),

@@ -6,7 +6,7 @@ import {
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
   Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
   MapPinned, Plus, RotateCcw, Square, Lock, LockOpen, ChevronsUp, ChevronsDown,
-  Paintbrush,
+  Paintbrush, MoreHorizontal,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
@@ -30,6 +30,12 @@ import { RangoPreciso } from "./rango-preciso";
 import { EditorCromaCapa, type CromaCorregido } from "./editor-croma-capa";
 import { HerramientasCapa } from "./herramientas-capa";
 import { BarraTransporte } from "./barra-transporte";
+import { PestanasMontaje, PanelMontajeCaja, type PanelMontaje } from "./paneles-montaje";
+import {
+  aEntradaVfx, claveEfectos, nombreEfecto, normalizarEfectos, type EfectoEscena,
+} from "@/lib/lab/efectos-escena";
+import { VfxScene } from "@/lib/story/vfx";
+import { PanelEfectos } from "./panel-efectos";
 import { VistaPreviaFlotante } from "./vista-previa-flotante";
 import { InspectorRapido, ParalajeGlobalSimple, type ModoEdicionCanvas } from "./inspector-rapido";
 import {
@@ -99,7 +105,7 @@ export interface Semilla {
 let contador = 0;
 let pasoSeq = 0;
 
-export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, puedeIa }: {
+export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, escena, onEscena, puedeIa }: {
   semilla?: Semilla[];
   /**
    * Un sprite de la biblioteca para AÑADIR, no para reemplazar.
@@ -111,6 +117,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   sprite?: (Semilla & { spr: SpriteEnCapa }) | null;
   /** Cola escrita por la IA. Se carga una vez, y a partir de ahí se edita. */
   colaInicial?: PasoSecuencia[];
+  /** Efectos escritos por la IA. Igual que la cola: se copian una vez. */
+  efectosIniciales?: EfectoEscena[];
   /** El mapa de formas, para que viaje dentro del ZIP del proyecto. */
   escena?: unknown;
   /** Al importar un ZIP que trae mapa, se devuelve para reponerlo en su pestaña. */
@@ -143,6 +151,26 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   const [capaActivaId, setCapaActivaId] = useState<string | null>(null);
   const [editandoCromaId, setEditandoCromaId] = useState<string | null>(null);
   const [previewAbierta, setPreviewAbierta] = useState(false);
+  // Qué grupo de mandos se está viendo. Los dos existen siempre en el árbol:
+  // el que no toca se esconde, para no perder focos ni arrastres a medias.
+  const [panel, setPanel] = useState<PanelMontaje>("elemento");
+  // La fila de acciones secundarias, plegada por defecto.
+  const [masAcciones, setMasAcciones] = useState(false);
+  // Los efectos del motor colgados de la escena.
+  //
+  // La IA lleva tres versiones devolviéndolos y viajaban dentro del ZIP, pero
+  // no había ni estado que los guardara ni línea que los pintara: se pagaba el
+  // token de pedirlos y se tiraban. El motor (VfxScene) es el mismo que usan
+  // las historias; aquí solo se le da de comer.
+  const [efectos, setEfectos] = useState<EfectoEscena[]>([]);
+  const efectosRef = useRef<EfectoEscena[]>([]);
+  efectosRef.current = efectos;
+  // La simulación vive en un ref: es estado del dibujo, no de React, y meterla
+  // en el árbol provocaría un render por fotograma.
+  const vfxRef = useRef<VfxScene | null>(null);
+  // Qué efecto se está a punto de colocar. Mientras haya uno, el siguiente
+  // toque en la escena lo planta ahí en vez de mover la cámara.
+  const [efectoPendiente, setEfectoPendiente] = useState<string | null>(null);
   const [modoEdicion, setModoEdicion] = useState<ModoEdicionCanvas>(null);
   const [moverTodo, setMoverTodo] = useState(false);
   const [volverRuta, setVolverRuta] = useState(true);
@@ -159,6 +187,15 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     colaIaRef.current = colaInicial;
     setCola(colaInicial.map((p, i) => ({ ...p, id: `p${++pasoSeq}-${i}` })));
   }, [colaInicial]);
+
+  // Los efectos de la IA, igual que la cola: se copian UNA vez y a partir de
+  // ahí son tuyos. Si se recopiaran, borrar uno a mano lo haría reaparecer.
+  const efectosIaRef = useRef<EfectoEscena[] | undefined>(undefined);
+  useEffect(() => {
+    if (!efectosIniciales?.length || efectosIaRef.current === efectosIniciales) return;
+    efectosIaRef.current = efectosIniciales;
+    setEfectos(efectosIniciales);
+  }, [efectosIniciales]);
   const [enSecuencia, setEnSecuencia] = useState(false);
   const [pasoActivo, setPasoActivo] = useState(0);
   const [repetirCola, setRepetirCola] = useState(false);
@@ -181,6 +218,21 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   const borradorListo = useRef(false);
   const canvas = useRef<HTMLCanvasElement>(null);
   const caja = useRef<HTMLDivElement>(null);
+  // El lienzo grande. NO es una copia del pequeño: el bucle de dibujo apunta a
+  // uno o a otro según cuál se esté viendo.
+  //
+  // Antes la vista grande espejaba el lienzo incrustado con un drawImage por
+  // fotograma. Como el incrustado se dimensiona con el ancho de su caja —en un
+  // móvil, 320 px— la «vista previa a pantalla completa» era ese cuadro de 320
+  // px estirado: borroso, y sin más detalle del que ya se veía. Pintar
+  // directamente en el que está delante cuesta lo mismo y sale nítido.
+  const canvasPreview = useRef<HTMLCanvasElement>(null);
+  const cajaPreview = useRef<HTMLDivElement>(null);
+  const previewAbiertaRef = useRef(false);
+  // El bucle de dibujo vive en refs y no ve el estado de React. Sin esto, al
+  // abrir la vista grande se seguiría pintando en el lienzo pequeño y la grande
+  // se quedaría en negro.
+  previewAbiertaRef.current = previewAbierta;
   const raton = useRef({ x: 0, y: 0 });
   const encima = useRef(false);
   const tam = useRef({ w: 1920, h: 1080 });
@@ -532,6 +584,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
         // justo el trabajo que uno guarda para no repetir.
         escena,
         cola,
+        efectos,
         capas: capas.map((c) => ({
           clave: c.clave, nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
           bloqueada: c.bloqueada, via: c.via, vacio: c.vacio, mov: c.mov, spr: c.spr, img: c.img,
@@ -613,6 +666,13 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
       if (pack.escena) {
         onEscena?.(pack.escena);
         partes.push("el mapa");
+      }
+      // Los efectos viajaban en el ZIP desde la versión 2 y al importar nadie
+      // los leía: volvías con el montaje y la cámara, y la escena sin humo.
+      const fx = normalizarEfectos(pack.efectos);
+      if (fx.efectos.length) {
+        setEfectos(fx.efectos);
+        partes.push(`${fx.efectos.length} efecto${fx.efectos.length === 1 ? "" : "s"}`);
       }
       setAviso(`Importado: ${partes.join(", ")}.`);
     } catch (e) {
@@ -743,10 +803,31 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     };
   }
 
+  /**
+   * En qué lienzo toca pintar y de qué ancho.
+   *
+   * Solo uno está delante en cada momento: la vista grande tapa la página
+   * entera. El tope de ancho sube con ella porque ahí sí hay sitio para
+   * aprovecharlo; en el incrustado, pasar de 1200 es gastar píxeles que nadie
+   * ve.
+   */
+  function destinoDibujo(): { cv: HTMLCanvasElement; ancho: number } | null {
+    if (previewAbiertaRef.current && canvasPreview.current) {
+      const disponible = cajaPreview.current?.clientWidth ?? 900;
+      return { cv: canvasPreview.current, ancho: Math.max(320, Math.min(1920, disponible)) };
+    }
+    if (!canvas.current) return null;
+    return {
+      cv: canvas.current,
+      ancho: Math.max(320, Math.min(1200, caja.current?.clientWidth ?? 900)),
+    };
+  }
+
   function pintar(dt: number) {
-    const cv = canvas.current;
-    if (!cv) return;
-    const ancho = Math.max(320, Math.min(1200, caja.current?.clientWidth ?? 900));
+    const destino = destinoDibujo();
+    if (!destino) return;
+    const cv = destino.cv;
+    const ancho = destino.ancho;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.round(ancho * dpr);
     const h = Math.round((w * tam.current.h) / tam.current.w);
@@ -970,8 +1051,80 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
       }
       c.restore();
     }
+    // Los efectos del motor, ENCIMA de las capas.
+    //
+    // Van al final porque son lo que ocurre en el aire delante de la escena:
+    // el humo tapa la pared, no al revés. `VfxScene` deja el lienzo como
+    // estaba, así que no se lleva por delante lo ya pintado.
+    // El reloj general de la escena: los efectos son del ambiente, no de una
+    // capa concreta, así que no siguen el reloj individual de ninguna.
+    pintarEfectos(c, w, h, vista, (performance.now() - relojRef.current) / 1000);
+
     // Guía solo en la vista previa. Nunca entra al PNG ni al ZIP.
     if (guiaRuta) pintarGuiaRuta(c, guiaRuta.spr, guiaRuta.plano, guiaRuta.tiempo);
+  }
+
+  /**
+   * Pintar los efectos colgados de la escena.
+   *
+   * LA PARTE QUE IMPORTA es dónde cae cada uno, y depende de su espacio:
+   *
+   *   · «encuadre» → sus coordenadas YA son de pantalla. La lluvia cae sobre la
+   *     cámara: no se desplaza al panear ni crece al acercarse. Se le pasa
+   *     zoom 1 aunque la cámara esté encima de la escena.
+   *
+   *   · «imagen» → está pegado a un sitio de la escena, así que hay que llevar
+   *     ese punto por la MISMA transformación que sufre una capa a su
+   *     profundidad. Es lo que hace que una hoguera se quede en su suelo al
+   *     panear, y que crezca al acercarse en vez de flotar despegada.
+   */
+  function pintarEfectos(
+    c: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    vista: VistaCamara,
+    reloj: number,
+  ) {
+    const lista = efectosRef.current;
+    if (!lista.length) return;
+    if (!vfxRef.current) vfxRef.current = new VfxScene();
+    const escenaVfx = vfxRef.current;
+
+    // El zoom que se le declara al motor sale de los efectos PEGADOS: es lo que
+    // reescala las partículas ya vivas para que sigan a la cámara en vez de
+    // quedarse del tamaño con el que nacieron.
+    const pegado = lista.find((e) => e.espacio === "imagen");
+    const zoom = pegado
+      ? vista.zoom * vista.zoomCapa(pegado.depth)
+      : 1;
+
+    const entradas = lista.map((e) => {
+      if (e.espacio === "encuadre") {
+        return aEntradaVfx(e, { x: e.x, y: e.y, x2: e.x2, y2: e.y2 });
+      }
+      // El plano de una capa a esa profundidad, igual que en el bucle de
+      // arriba: escala por perspectiva y desplazamiento por paneo.
+      const esc = vista.zoom * vista.zoomCapa(e.depth);
+      const pan = vista.panCapa(e.depth);
+      const dw = w * esc, dh = h * esc;
+      const x0 = -(dw - w) / 2 + vista.ox * pan * w;
+      const y0 = -(dh - h) / 2 + vista.oy * pan * h;
+      const aPantalla = (u: number, v: number) => ({
+        x: (x0 + u * dw) / w,
+        y: (y0 + v * dh) / h,
+      });
+      const a = aPantalla(e.x, e.y);
+      const b = aPantalla(e.x2, e.y2);
+      return aEntradaVfx(e, { x: a.x, y: a.y, x2: b.x, y2: b.y });
+    });
+
+    escenaVfx.setSize(w, h);
+    escenaVfx.setZoomScale(zoom);
+    // La clave NO lleva la posición: si la llevara, mover la cámara reiniciaría
+    // las partículas en cada fotograma y solo se vería el primer instante del
+    // efecto, una y otra vez.
+    escenaVfx.seek(claveEfectos(lista), entradas, Math.max(0, reloj));
+    escenaVfx.draw(c, 1);
   }
 
   async function exportarPng() {
@@ -1066,19 +1219,52 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     setAviso("Cámara al centro. La animación vuelve a empezar desde aquí.");
   }
 
+  /**
+   * Reproducir la escena. UNA sola cosa, siempre la misma.
+   *
+   * Antes esto hacía dos cosas distintas según el estado: con cola de cámara
+   * arrancaba la secuencia, y sin cola encendía el vaivén de reposo —que no es
+   * «la escena», es un paseo automático— y además abría la vista grande a la
+   * fuerza. Así que darle al play mostraba cosas distintas según lo que
+   * hubieras hecho antes, que es justo lo que hacía imposible testear.
+   *
+   * Ahora reproducir significa siempre: TODO desde el fotograma cero —cámara si
+   * hay cola, movimiento de capas, rutas y ciclos de sprites—, en el lienzo que
+   * estés mirando. La vista grande se abre cuando tú lo pidas, no sola.
+   */
   function toggleReproduccion() {
-    if (enSecuencia) {
+    if (enSecuencia || moviendo) {
       pararSecuencia();
+      setMoviendo(false);
       return;
     }
-    if (cola.length) {
-      iniciarSecuencia();
-      setPreviewAbierta(true);
-      return;
-    }
+    reproducirTodo();
+  }
+
+  /** Todo a cero y a andar. Es lo que hace el botón grande de play. */
+  function reproducirTodo() {
+    encima.current = false;
     retenerPoseRef.current = false;
-    setMoviendo((v) => !v);
-    setPreviewAbierta(true);
+    progresoUiRef.current = 0;
+    setProgresoUi(0);
+    if (cola.length) {
+      // iniciarSecuencia ya pone los relojes de capas y sprites a cero.
+      iniciarSecuencia();
+      return;
+    }
+    // Sin cola de cámara la escena sigue teniendo vida propia: capas que se
+    // mueven y sprites que ciclan. Se reinician para que empiece por el
+    // principio y no por donde se hubiera quedado.
+    relojRef.current = performance.now();
+    reiniciarMovimientosCapa();
+    reiniciarSpritesSincronizados();
+    refrescarRelojes((n) => n + 1);
+    setMoviendo(true);
+    setAviso(
+      capas.some((c) => c.mov || c.spr)
+        ? "Reproduciendo la escena."
+        : "No hay nada animado todavía: dale movimiento a una capa o mete un sprite.",
+    );
   }
 
   function seekCola(frac: number) {
@@ -1154,8 +1340,16 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     setAviso(`Paralaje añadido a la cola (${pasos.length} paso${pasos.length === 1 ? "" : "s"}).`);
   }
 
+  /**
+   * Dónde se ha tocado, en 0..1 sobre la escena.
+   *
+   * Se mide contra el CANVAS, no contra su caja: en la vista grande el lienzo
+   * lleva `object-contain`, así que la caja tiene bandas negras a los lados y
+   * usarla desplazaría todo lo que se coloque. El rectángulo del canvas es el
+   * de la imagen de verdad.
+   */
   function coordsEnLienzo(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
-    const el = caja.current;
+    const el = (previewAbiertaRef.current ? canvasPreview.current : canvas.current) ?? caja.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return null;
@@ -1192,9 +1386,47 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     return [...ida, ...vuelta].slice(0, 24);
   }
 
+  /**
+   * Un punto más en la ruta de una capa normal.
+   *
+   * Los puntos se guardan como DESPLAZAMIENTO respecto al sitio de la capa, no
+   * como posición absoluta: una capa a pantalla completa no tiene «un sitio»
+   * donde esté, tiene el centro del cuadro, así que se mide desde ahí. Tocar en
+   * el centro y tocar en la esquina dan (0,0) y (0.5,0.5).
+   */
+  function anadirPuntoRutaCapa(capa: CapaImg, nx: number, ny: number) {
+    const previos = capa.mov?.tipo === "ruta" ? (capa.mov.pasos ?? []) : [];
+    const pasos = [...previos, {
+      x: Math.round((nx - 0.5) * 1000) / 1000,
+      y: Math.round((ny - 0.5) * 1000) / 1000,
+      segundos: 1.5,
+      suavizado: "suave" as const,
+    }];
+    const mov = normalizarMov({
+      tipo: "ruta",
+      pasos,
+      bucle: capa.mov?.bucle ?? false,
+      volver: capa.mov?.volver ?? volverRuta,
+      espacio: capa.mov?.espacio,
+      referenciaCapaId: capa.mov?.referenciaCapaId,
+    });
+    if (!mov) {
+      setAviso("Ese punto coincide con el sitio de la capa: no habría movimiento.");
+      return;
+    }
+    upd(capa.id, { mov });
+    setRutaVisibleId(capa.id);
+    reiniciarMovimientoCapa(capa.id);
+    setAviso(`Punto ${pasos.length} en la ruta de «${capa.nombre}».`);
+  }
+
   function anadirPuntoRuta(nx: number, ny: number) {
     const capa = capasRef.current.find((c) => c.id === capaActivaId);
-    if (!capa?.spr || capa.bloqueada) return;
+    if (!capa || capa.bloqueada) return;
+    // Una capa normal también puede tener ruta. Antes esto solo valía para
+    // sprites y tocar la escena con un fondo o una nube seleccionada no hacía
+    // nada, sin decir por qué.
+    if (!capa.spr) { anadirPuntoRutaCapa(capa, nx, ny); return; }
     const spr = capa.spr;
     const nucleo = [...(spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover" || p.tipo === "pausa")];
     let lx = spr.x;
@@ -1275,10 +1507,119 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     }));
   }
 
+  /**
+   * Copiar la animación de la capa activa a todas las demás.
+   *
+   * Las BLOQUEADAS se saltan: para eso está el candado —«no me toques esta»— y
+   * un «aplicar a todas» que ignorara el bloqueo lo convertiría en un adorno.
+   *
+   * A las que ya tienen movimiento se les desfasa un poco el ciclo. Cinco capas
+   * meciéndose exactamente a la vez no parecen cinco cosas vivas, parecen una
+   * sola imagen temblando.
+   */
+  function aplicarMovimientoATodas() {
+    const origen = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!origen?.mov) {
+      setAviso("Esta capa no tiene animación que copiar.");
+      return;
+    }
+    // Las cuentas se hacen AQUÍ, no dentro del actualizador de estado: el
+    // actualizador corre durante el render siguiente, así que el mensaje se
+    // armaba con los contadores todavía a cero y siempre decía «0 capas».
+    const otras = capasRef.current.filter((c) => c.id !== origen.id);
+    const destino = otras.filter((c) => !c.bloqueada);
+    const puestas = destino.length;
+    const saltadas = otras.length - puestas;
+    if (!puestas) {
+      setAviso(saltadas
+        ? `Las otras ${saltadas} capas están bloqueadas: quita el candado para aplicarles la animación.`
+        : "No hay otras capas a las que aplicársela.");
+      return;
+    }
+    const ciclico = origen.mov.tipo === "flotar" || origen.mov.tipo === "vaiven" || origen.mov.tipo === "pulso";
+    const desfases = new Map(destino.map((c, i) => [c.id, Math.round(((i + 1) * 0.37 % 1) * 100) / 100]));
+    setCapas((cs) => cs.map((c) => {
+      if (c.id === origen.id || c.bloqueada) return c;
+      return {
+        ...c,
+        mov: normalizarMov({
+          ...origen.mov,
+          ...(ciclico ? { desfase: desfases.get(c.id) } : {}),
+        }),
+      };
+    }));
+    reiniciarMovimientosCapa();
+    setAviso(
+      `Animación aplicada a ${puestas} capa${puestas === 1 ? "" : "s"}`
+      + (saltadas ? ` · ${saltadas} bloqueada${saltadas === 1 ? "" : "s"}, sin tocar` : "")
+      + ".",
+    );
+  }
+
+  /** Quitar la ruta de la capa activa y dejarla quieta. */
+  function borrarRutaCapa() {
+    const capa = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!capa) return;
+    if (capa.spr) {
+      upd(capa.id, { spr: { ...capa.spr, ruta: undefined, trayectoria: undefined } });
+    } else {
+      upd(capa.id, { mov: undefined });
+    }
+    setAviso(`«${capa.nombre}» se queda quieta.`);
+  }
+
+  /** Cuántos puntos tiene lo seleccionado, sea sprite o capa. */
+  function puntosDeLaRuta(): number {
+    const capa = capas.find((c) => c.id === capaActivaId);
+    if (!capa) return 0;
+    if (capa.spr) return (capa.spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover").length;
+    return capa.mov?.tipo === "ruta" ? (capa.mov.pasos ?? []).length : 0;
+  }
+
+  /**
+   * Dejar el lienzo a la vista antes de pedir que lo toquen.
+   *
+   * La cabecera del sitio es pegajosa y flota por encima: si el lienzo ha
+   * quedado alto, su parte de arriba está DEBAJO de la cabecera y los toques
+   * ahí se los queda ella. En un móvil eso es un tercio del lienzo muerto, sin
+   * ninguna pista de por qué. Se centra en pantalla y el problema desaparece.
+   */
+  function acercarLienzo() {
+    caja.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  /** Meter un efecto del catálogo en el sitio que se toque. */
+  function anadirEfecto(kind: string, nx: number, ny: number) {
+    const { efectos: nuevos, avisos } = normalizarEfectos([{ id: kind, x: nx, y: ny }]);
+    if (!nuevos.length) {
+      setAviso(avisos[0] ?? "Ese efecto no está en el catálogo.");
+      return;
+    }
+    const fx = { ...nuevos[0], id: `fx${Date.now().toString(36)}` };
+    setEfectos((prev) => [...prev, fx]);
+    setAviso(
+      `${nombreEfecto(fx.kind)} en la escena`
+      + (fx.espacio === "encuadre" ? " · llena el cuadro, no sigue a la cámara." : "."),
+    );
+  }
+
+  function quitarEfecto(id: string) {
+    setEfectos((prev) => prev.filter((e) => e.id !== id));
+  }
+
   function movCapaRapido(tipo: string) {
     if (!capaActivaId) return;
     if (!tipo) {
       upd(capaActivaId, { mov: undefined });
+      return;
+    }
+    if (tipo === "ruta") {
+      // Una ruta sin puntos no existe todavía: no hay nada que guardar. Lo que
+      // se hace es dejar el lienzo esperando toques, que es como se construye.
+      // Guardar aquí un `mov` vacío sería guardar un movimiento que no mueve.
+      setModoEdicion("punto");
+      acercarLienzo();
+      setAviso("Toca la escena para ir marcando por dónde pasa. Cada toque, un tramo.");
       return;
     }
     if (tipo === "trayectoria") {
@@ -1356,21 +1697,22 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
             onChange={(e) => { void meter(e.target.files); e.target.value = ""; }}
           />
         </label>
+        {/* Lo de menos uso, plegado.
+            Eran siete botones en fila: en un móvil, cuatro filas de mandos
+            ANTES de ver el lienzo. Y «Mover cámara» sobraba desde que el
+            transporte tiene su propio play, justo debajo de la vista. */}
         <button
-          onClick={() => {
-            if (enSecuencia) pararSecuencia();
-            else {
-              retenerPoseRef.current = false;
-              setMoviendo((v) => !v);
-            }
-          }}
+          type="button"
+          onClick={() => setMasAcciones((v) => !v)}
           className="btn-ghost text-xs"
+          aria-expanded={masAcciones}
         >
-          {moviendo || enSecuencia
-            ? <Pause className="h-3.5 w-3.5 text-accent" />
-            : <Play className="h-3.5 w-3.5 text-accent" />}
-          {enSecuencia ? "Parar secuencia" : moviendo ? "Parar cámara" : "Mover cámara"}
+          <MoreHorizontal className="h-3.5 w-3.5 text-accent" />
+          {masAcciones ? "Menos" : "Más acciones"}
         </button>
+      </div>
+
+      <div className={masAcciones ? "flex flex-wrap items-center gap-2" : "hidden"}>
         <button onClick={centrarTodo} className="btn-ghost text-xs">
           <Crosshair className="h-3.5 w-3.5 text-accent" /> Centrar
         </button>
@@ -1538,6 +1880,12 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
               onPointerDown={(e) => {
                 if (enSecuencia || !capas.length) return;
                 const xy = coordsEnLienzo(e);
+                if (efectoPendiente && xy) {
+                  e.preventDefault();
+                  anadirEfecto(efectoPendiente, xy.x, xy.y);
+                  setEfectoPendiente(null);
+                  return;
+                }
                 if (modoEdicion === "punto" && xy) {
                   e.preventDefault();
                   anadirPuntoRuta(xy.x, xy.y);
@@ -1659,6 +2007,30 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
             >
               <canvas ref={canvas} className="block h-auto w-full" />
             </div>
+            {/* El transporte, PEGADO a la vista. Antes vivía al final de todos
+                los mandos: para darle al play había que bajar hasta abajo, y
+                desde ahí ya no se veía lo que estabas reproduciendo. */}
+            <BarraTransporte
+              reproduciendo={enSecuencia || (moviendo && !retenerPoseRef.current && anim !== "quieto")}
+              progreso={progresoUi}
+              disabled={!capas.length}
+              onPlayPause={toggleReproduccion}
+              onReset={() => {
+                pararSecuencia();
+                centrarTodo();
+              }}
+              onSeek={seekCola}
+              onPaso={saltarPaso}
+              onAbrirPreview={() => {
+                setPreviewAbierta(true);
+                if (!enSecuencia && cola.length) iniciarSecuencia();
+              }}
+            />
+            <PestanasMontaje
+              activo={panel}
+              onCambiar={setPanel}
+              contador={capaActiva?.nombre ?? null}
+            />
             {!!cola.length && (
               <div className="flex items-center gap-1">
                 {cola.map((q, i) => (
@@ -1673,6 +2045,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
             )}
             </div>
 
+            <PanelMontajeCaja activo={panel === "elemento"}>
             {capaActiva && (
               <div className={`space-y-2 rounded-lg border p-2 ${
                 capaActiva.bloqueada ? "border-gold/50 bg-gold/5" : "border-accent/35 bg-accent/5"
@@ -1728,7 +2101,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                   <InspectorRapido
                     esSprite={!!capaActiva.spr}
                     modo={modoEdicion}
-                    onModo={setModoEdicion}
+                    onModo={(m) => { setModoEdicion(m); if (m) acercarLienzo(); }}
                     moverTodo={moverTodo}
                     onMoverTodo={setMoverTodo}
                     volverRuta={volverRuta}
@@ -1749,6 +2122,10 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                     onPausaSeg={setPausaSegInspector}
                     onAddPausa={anadirPausaRuta}
                     onMovCapa={movCapaRapido}
+                    onAplicarATodas={aplicarMovimientoATodas}
+                    puedeAplicarATodas={!!capaActiva.mov && capas.length > 1}
+                    onBorrarRuta={borrarRutaCapa}
+                    puntosRuta={puntosDeLaRuta()}
                     movCapaTipo={capaActiva.mov?.tipo ?? ""}
                     bloqueada={capaActiva.bloqueada}
                   />
@@ -1859,6 +2236,14 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                 </fieldset>
               </div>
             )}
+            </PanelMontajeCaja>
+            <PanelMontajeCaja activo={panel === "camara"}>
+            <PanelEfectos
+              efectos={efectos}
+              pendiente={efectoPendiente}
+              onPendiente={(k) => { setEfectoPendiente(k); if (k) acercarLienzo(); }}
+              onQuitar={quitarEfecto}
+            />
             {/* Colocar la toma a mano. Aquí y no abajo del todo porque se usa
                 MIRANDO la vista previa: es un «déjalo así». */}
             <div className="flex flex-wrap items-center gap-2">
@@ -1925,8 +2310,10 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
               </label>
             </div>
             <p className="text-[11px] text-muted">{aviso}</p>
+            </PanelMontajeCaja>
           </div>
 
+          <PanelMontajeCaja activo={panel === "camara"}>
           <ParalajeGlobalSimple
             anim={anim}
             onAnim={(a) => {
@@ -2246,6 +2633,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
           )}
 
           </div>
+          </PanelMontajeCaja>
         </div>
       </div>
       {capaEditandoCroma && (
@@ -2259,25 +2647,11 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
         />
       )}
 
-      <BarraTransporte
-        reproduciendo={enSecuencia || (moviendo && !retenerPoseRef.current && anim !== "quieto")}
-        progreso={progresoUi}
-        disabled={!capas.length}
-        onPlayPause={toggleReproduccion}
-        onReset={() => {
-          pararSecuencia();
-          centrarTodo();
-        }}
-        onSeek={seekCola}
-        onPaso={saltarPaso}
-        onAbrirPreview={() => {
-          setPreviewAbierta(true);
-          if (!enSecuencia && cola.length) iniciarSecuencia();
-        }}
-      />
       <VistaPreviaFlotante
         abierto={previewAbierta}
-        canvasOrigen={canvas}
+        canvasRef={canvasPreview}
+        cajaRef={cajaPreview}
+        titulo={cola.length ? `Vista previa · ${cola.length} pasos de cámara` : "Vista previa"}
         reproduciendo={enSecuencia || moviendo}
         progreso={progresoUi}
         onCerrar={() => setPreviewAbierta(false)}

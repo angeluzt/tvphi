@@ -1,12 +1,13 @@
 "use client";
 
-import { MapPin, Pause, Move, Footprints, CheckSquare, Square } from "lucide-react";
+import { MapPin, Pause, Move, Footprints, CheckSquare, Square, Copy } from "lucide-react";
 import type { AnimParalaje } from "@/lib/lab/anim-paralaje";
 
 export type ModoEdicionCanvas = "camara" | "colocar" | "punto" | null;
 
 const MOV_CAPA_RAPIDOS = [
   { id: "", label: "Quieto" },
+  { id: "ruta", label: "Ruta por puntos" },
   { id: "flotar", label: "Flotar" },
   { id: "deriva", label: "Deriva" },
   { id: "vaiven", label: "Vaivén" },
@@ -30,6 +31,10 @@ export function InspectorRapido({
   onMovCapa,
   movCapaTipo,
   bloqueada,
+  onAplicarATodas,
+  puedeAplicarATodas,
+  onBorrarRuta,
+  puntosRuta,
 }: {
   esSprite: boolean;
   modo: ModoEdicionCanvas;
@@ -46,6 +51,13 @@ export function InspectorRapido({
   onMovCapa: (tipo: string) => void;
   movCapaTipo?: string;
   bloqueada?: boolean;
+  /** Copia esta animación a todas las capas que no estén bloqueadas. */
+  onAplicarATodas?: () => void;
+  puedeAplicarATodas?: boolean;
+  /** Tira los puntos y deja la capa quieta. */
+  onBorrarRuta?: () => void;
+  /** Cuántos puntos lleva la ruta, para saber si hay algo que borrar. */
+  puntosRuta?: number;
 }) {
   return (
     <div className={`space-y-2 rounded-lg border border-accent/40 bg-accent/5 p-2 ${bloqueada ? "opacity-55" : ""}`}>
@@ -59,16 +71,16 @@ export function InspectorRapido({
         >
           <Move className="h-3.5 w-3.5" /> Colocar / arrastrar
         </button>
-        {esSprite && (
-          <button
-            type="button"
-            disabled={bloqueada}
-            onClick={() => onModo(modo === "punto" ? null : "punto")}
-            className={`btn-ghost justify-center px-1 py-1.5 text-[10px] ${modo === "punto" ? "border-accent bg-accent/15 text-accent" : ""}`}
-          >
-            <MapPin className="h-3.5 w-3.5" /> Puntos de ruta
-          </button>
-        )}
+        {/* Los puntos ya no son cosa solo de sprites: cualquier capa puede
+            tener ruta, así que el botón sale siempre. */}
+        <button
+          type="button"
+          disabled={bloqueada}
+          onClick={() => onModo(modo === "punto" ? null : "punto")}
+          className={`btn-ghost justify-center px-1 py-1.5 text-[10px] ${modo === "punto" ? "border-accent bg-accent/15 text-accent" : ""}`}
+        >
+          <MapPin className="h-3.5 w-3.5" /> Puntos de ruta
+        </button>
         {esSprite && (
           <button
             type="button"
@@ -146,6 +158,39 @@ export function InspectorRapido({
         />
         Arrastrar mueve todas las capas (no solo la seleccionada)
       </label>
+
+      {/* Lo que se puede hacer con la animación que ya tiene esta capa.
+          Sale solo cuando hay algo que copiar o que borrar: un botón que no
+          hace nada la mitad del tiempo estorba más de lo que ayuda. */}
+      {(!!puntosRuta || puedeAplicarATodas) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {!!puntosRuta && (
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[9px] text-muted">
+              {puntosRuta} punto{puntosRuta === 1 ? "" : "s"}
+            </span>
+          )}
+          {!!puntosRuta && onBorrarRuta && (
+            <button
+              type="button"
+              onClick={onBorrarRuta}
+              disabled={bloqueada}
+              className="rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted hover:border-danger/50 hover:text-danger disabled:opacity-40"
+            >
+              Borrar ruta
+            </button>
+          )}
+          {puedeAplicarATodas && onAplicarATodas && (
+            <button
+              type="button"
+              onClick={onAplicarATodas}
+              className="rounded-md border border-accent/40 px-1.5 py-0.5 text-[10px] text-accent hover:bg-accent/10"
+              title="Copiar esta animación a todas las capas que no estén bloqueadas"
+            >
+              <Copy className="mr-1 inline h-3 w-3" /> Aplicar a todas
+            </button>
+          )}
+        </div>
+      )}
 
       {modo === "punto" && (
         <p className="text-[10px] text-accent">Toca el lienzo para añadir puntos. Cada toque = un tramo.</p>
