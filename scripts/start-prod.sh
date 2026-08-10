@@ -42,10 +42,20 @@ while true; do
     break
   fi
   printf '%s\n' "$OUT"
+  if echo "$OUT" | grep -qE "P3009|P3018"; then
+    echo "❌ Prisma: migración fallida o bloqueada (P3009/P3018). Reintentar no ayuda."
+    echo "   DB vacía/nueva: DROP SCHEMA public CASCADE; CREATE SCHEMA public; y redeploy."
+    echo "   Si acabas de renombrar carpetas de migración, actualiza _prisma_migrations (ver DEPLOY.md)."
+    exit 1
+  fi
   if echo "$OUT" | grep -q "P1001"; then
     echo "❌ Prisma P1001: no se alcanza el servidor de base de datos ($DB_HOST)."
   elif echo "$OUT" | grep -q "P1000\|P1017\|P1003"; then
     echo "❌ Error de conexión/credenciales a Postgres. Revisa usuario, password y que el plugin esté Running."
+  else
+    # Error no transitorio (SQL, drift, etc.): no quemar reintentos.
+    echo "❌ migrate deploy falló con un error no recuperable por reintento."
+    exit 1
   fi
   if [ "$i" -ge "$MAX" ]; then
     echo "❌ Abortando tras $i intentos. La app NO arranca sin DB (evita un 502 silencioso)."

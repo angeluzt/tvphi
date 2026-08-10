@@ -42,6 +42,18 @@ Opcional: si también defines `DATABASE_PRIVATE_URL` aparte, el arranque la pref
 
 Sin migraciones aplicadas la app no sirve historias. En deploy, `start:prod` las aplica.
 
+Las carpetas en `prisma/migrations` usan prefijos `00_`…`09_` para que el orden lexicográfico
+coincida con el orden real (si no, `10_` corre antes que `4_` y falla en DB vacías).
+
+Si reutilizas una DB **antigua** que ya aplicó nombres sin cero (`0_init`, `4_characters`, …),
+actualiza los nombres en `_prisma_migrations` para que coincidan con las carpetas nuevas
+(`00_init`, `04_characters`, …) **antes** del siguiente deploy. En una DB nueva basta con:
+
+```sql
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+```
+
 ---
 
 ## Paso 2 — App en Railway
