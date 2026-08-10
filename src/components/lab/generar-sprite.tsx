@@ -414,20 +414,28 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         refinadoOk = true;
         await releerPersonajes();
       } catch (ge) {
-        // Si el server ya guardó el borrador, no es pérdida total.
+        // El POST de refinado es enorme; a veces el proxy lo corta ("Failed to fetch").
+        // Si el servidor ya guardó el borrador, NO es pérdida: el taller tiene la hoja.
         if (!j.guardadoEnDb) throw ge;
-        setError((ge as Error).message);
+        refinadoOk = true;
+        setGuardadoPrivado(true);
+        void releerPersonajes();
+        setAviso(
+          "Sprite guardado en el taller. El recorte fino no se alcanzó a subir "
+          + "(petición grande o red); ábrelo y pulsa Guardar si quieres actualizar la tira limpia.",
+        );
       }
 
       setPaso(null);
-      setAviso(
+      setAviso((prev) => prev ?? (
         `${hoja.fotogramas.length} fotogramas listos`
         + (refinadoOk ? " · guardado en el taller" : "")
         + (j.referenciaDe ? ` · partió de «${j.referenciaDe}»` : j.referenciaUsada ? " · con cuadro maestro" : "")
         + (hoja.descartados ? ` · ${hoja.descartados} salieron vacíos y se tiraron` : "")
         + ` · rejilla ${columnas}×${filas} · ${tira.ancho}×${tira.alto} · ${pesoLegible(tira.blob.size)}`
-        + (j.errorGuardado && !aidGuardado ? ` · aviso: ${j.errorGuardado}` : ""),
-      );
+        + (j.errorGuardado && !aidGuardado ? ` · aviso: ${j.errorGuardado}` : "")
+      ));
+      setError(null);
     } catch (e) {
       setError((e as Error).message);
       setPaso(null);
@@ -615,7 +623,8 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
 
   async function editarAnimacion(id:string){if(paso)return;setPaso("Abriendo la animación…");setError(null);let uh:string|null=null,ut:string|null=null;try{
     const j=await pedirJson(`/api/story/sprite-characters/animations/${id}`),a=j.animacion as ProyectoAnimacionSprite;
-    const bo=await(await fetch(`data:image/png;base64,${a.hojaOriginal}`)).blob(),bh=await(await fetch(`data:image/png;base64,${a.hojaTrabajo}`)).blob(),bt=await(await fetch(`data:image/png;base64,${a.tira}`)).blob();
+    // Sin fetch(data:…): hojas grandes tiran "Failed to fetch" al abrir.
+    const bo=pngBase64ABlob(a.hojaOriginal),bh=pngBase64ABlob(a.hojaTrabajo),bt=pngBase64ABlob(a.tira);
     uh=URL.createObjectURL(bh);ut=URL.createObjectURL(bt);const fotos=await fotogramasDeTira(ut,a.fotogramas);
     setHecho({edicionId:Date.now(),fotos,url:ut,blob:bt,ancho:a.ancho,alto:a.alto,descartados:0,hoja:{sesionId:Date.now(),url:uh,blob:bh,originalBlob:bo,
       ancho:a.anchoHoja,alto:a.altoHoja,forma:a.columnas>=a.filas?"tira":"columna",columnas:a.columnas,filas:a.filas,croma:a.croma,celdas:a.celdas}});uh=null;ut=null;
