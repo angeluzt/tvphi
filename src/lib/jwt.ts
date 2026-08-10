@@ -2,17 +2,26 @@ import { SignJWT, jwtVerify } from "jose";
 import { env } from "./env";
 
 // Firma/verificación de sesiones JWT (cookie httpOnly).
+//
+// El secreto se resuelve LAZY: si se evalúa al importar el módulo, `next build`
+// (NODE_ENV=production) rompe el deploy cuando AUTH_SECRET solo existe en
+// runtime del contenedor (caso típico en Railway).
 
-const secret = new TextEncoder().encode(env.authSecret);
 export const SESSION_COOKIE = "tvphi_session";
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 días
+
+let secretoCache: Uint8Array | null = null;
+function secretoJwt() {
+  if (!secretoCache) secretoCache = new TextEncoder().encode(env.authSecret);
+  return secretoCache;
+}
 
 export async function signSession(userId: string) {
   return new SignJWT({ sub: userId })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_MAX_AGE}s`)
-    .sign(secret);
+    .sign(secretoJwt());
 }
 
 export async function verifySessionToken(token: string): Promise<string | null> {
@@ -30,7 +39,7 @@ export async function verifySession(
   token: string,
 ): Promise<{ userId: string; emitido: Date } | null> {
   try {
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await jwtVerify(token, secretoJwt());
     const userId = payload.sub;
     if (!userId || typeof payload.iat !== "number") return null;
     return { userId, emitido: new Date(payload.iat * 1000) };

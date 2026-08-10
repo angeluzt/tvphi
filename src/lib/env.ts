@@ -7,10 +7,20 @@ export const isProd = (process.env.NODE_ENV ?? "development") === "production";
 
 const DEV_AUTH_SECRET = "dev-secret-change-me-please-0000000000000000";
 
+/**
+ * `next build` también pone NODE_ENV=production, pero las secrets de Railway
+ * (y la mayoría de PaaS) solo existen en runtime. Fallar en esa fase deja el
+ * deploy roto aunque AUTH_SECRET esté bien configurado para servir.
+ */
+export function esFaseBuildNext() {
+  return process.env.NEXT_PHASE === "phase-production-build";
+}
+
 function secretOrFail(name: string, raw: string | undefined, faltanteDev?: string): string {
   const v = (raw ?? "").trim();
   if (v) return v;
-  if (isProd) {
+  // Durante el build no exigimos secrets: se comprobarán al arrancar el server.
+  if (isProd && !esFaseBuildNext()) {
     throw new Error(
       `Falta ${name} en producción. La app no arranca sin variables críticas.`,
     );
@@ -33,8 +43,9 @@ export const env = {
   },
   port: Number(process.env.PORT ?? 3000),
   /**
-   * En producción NO hay valor por defecto: un despliegue sin AUTH_SECRET
-   * tiene que fallar, no firmar sesiones con un secreto público conocido.
+   * En producción (runtime) NO hay valor por defecto: un despliegue sin
+   * AUTH_SECRET tiene que fallar al servir, no firmar sesiones con un secreto
+   * público. El build de Next puede evaluarla: ahí se permite vacía.
    */
   get authSecret() {
     return secretOrFail("AUTH_SECRET", process.env.AUTH_SECRET, DEV_AUTH_SECRET);
@@ -55,9 +66,9 @@ export const env = {
   },
 };
 
-/** Comprueba variables que no pueden faltar al servir tráfico real. */
+/** Comprueba variables que no pueden faltar al servir tráfico real (no en `next build`). */
 export function assertEnvProduccion() {
-  if (!isProd) return;
+  if (!isProd || esFaseBuildNext()) return;
   void env.authSecret;
   void env.databaseUrl;
 }
