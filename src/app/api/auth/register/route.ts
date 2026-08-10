@@ -45,7 +45,7 @@ const schema = z.object({
    */
   displayName: z.string().max(40, "El nombre no puede pasar de 40 letras.").optional(),
   password: z.string()
-    .min(6, "La contraseña necesita al menos 6 caracteres.")
+    .min(8, "La contraseña necesita al menos 8 caracteres.")
     .max(100, "La contraseña es demasiado larga."),
   /** El token de Turnstile. Si el captcha está apagado, no se mira. */
   captcha: z.string().max(4000).optional(),
@@ -74,11 +74,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: captcha.error, captcha: true }, { status: 400 });
   }
 
-  const { email, username, password } = parsed.data;
+  const email = parsed.data.email.trim().toLowerCase();
+  const username = parsed.data.username.trim().toLowerCase();
+  const password = parsed.data.password;
   const displayName = parsed.data.displayName?.trim() || username;
 
   const exists = await prisma.user.findFirst({
-    where: { OR: [{ email }, { username }] },
+    where: {
+      OR: [
+        { email: { equals: email, mode: "insensitive" } },
+        { username: { equals: username, mode: "insensitive" } },
+      ],
+    },
   });
   if (exists) {
     return NextResponse.json({ error: "Email o usuario ya en uso" }, { status: 409 });
@@ -86,14 +93,22 @@ export async function POST(req: Request) {
 
   const passwordHash = await hashPassword(password);
   // Canal/streaming antiguo: ya no se crea. El producto es historias narradas.
-  const user = await prisma.user.create({
-    data: {
-      email,
-      username,
-      displayName,
-      passwordHash,
-    },
-  });
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        email,
+        username,
+        displayName,
+        passwordHash,
+      },
+    });
+  } catch (e: any) {
+    if (e?.code === "P2002") {
+      return NextResponse.json({ error: "Email o usuario ya en uso" }, { status: 409 });
+    }
+    throw e;
+  }
 
   await createSession(user.id);
 

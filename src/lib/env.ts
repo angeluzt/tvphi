@@ -3,6 +3,21 @@
 // OPENAI_API_KEY se lee con corchetes a propósito: Next sustituye
 // `process.env.ALGO` en compile-time; con `["…"]` se lee al ejecutar (deploy).
 
+export const isProd = (process.env.NODE_ENV ?? "development") === "production";
+
+const DEV_AUTH_SECRET = "dev-secret-change-me-please-0000000000000000";
+
+function secretOrFail(name: string, raw: string | undefined, faltanteDev?: string): string {
+  const v = (raw ?? "").trim();
+  if (v) return v;
+  if (isProd) {
+    throw new Error(
+      `Falta ${name} en producción. La app no arranca sin variables críticas.`,
+    );
+  }
+  return faltanteDev ?? "";
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   /**
@@ -17,8 +32,16 @@ export const env = {
     return (process.env["APP_URL"] ?? "").trim() || "http://localhost:3000";
   },
   port: Number(process.env.PORT ?? 3000),
-  authSecret: process.env.AUTH_SECRET ?? "dev-secret-change-me-please-0000000000000000",
-  databaseUrl: process.env.DATABASE_URL ?? "",
+  /**
+   * En producción NO hay valor por defecto: un despliegue sin AUTH_SECRET
+   * tiene que fallar, no firmar sesiones con un secreto público conocido.
+   */
+  get authSecret() {
+    return secretOrFail("AUTH_SECRET", process.env.AUTH_SECRET, DEV_AUTH_SECRET);
+  },
+  get databaseUrl() {
+    return secretOrFail("DATABASE_URL", process.env.DATABASE_URL, "");
+  },
   /** Clave de OpenAI del despliegue. Nunca se pide ni se guarda desde el navegador. */
   get openaiApiKey() {
     return (process.env["OPENAI_API_KEY"] ?? "").trim();
@@ -32,4 +55,9 @@ export const env = {
   },
 };
 
-export const isProd = env.nodeEnv === "production";
+/** Comprueba variables que no pueden faltar al servir tráfico real. */
+export function assertEnvProduccion() {
+  if (!isProd) return;
+  void env.authSecret;
+  void env.databaseUrl;
+}

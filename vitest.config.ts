@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Evita que módulos con "server-only" fallen fuera de Next.
       "server-only": path.resolve(__dirname, "./src/test/stubs/server-only.ts"),
     },
   },

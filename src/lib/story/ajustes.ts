@@ -14,8 +14,12 @@ export interface AjustesIa {
   calidadImagen: CalidadImagen;
   /** Imágenes con IA por usuario y 24 h. */
   imagenesPorDia: number;
-  /** Capítulos escritos con IA por usuario y 24 h. */
+  /** Capítulos escritos con IA por usuario y 24 h. 0 = apaga la IA de pago. */
   historiasPorDia: number;
+  /** Narraciones OpenAI por usuario y 24 h. */
+  vocesPorDia: number;
+  /** Reescrituras de texto/prompt por usuario y 24 h. */
+  textosPorDia: number;
   /** Si no, la narración la pone el modelo del navegador (gratis). */
   vozDePago: boolean;
   /** Apagarlo deja al usuario normal sin generar imágenes. */
@@ -31,6 +35,8 @@ export const AJUSTES_DEFECTO: AjustesIa = {
   calidadImagen: "low",
   imagenesPorDia: 3,
   historiasPorDia: 3,
+  vocesPorDia: 20,
+  textosPorDia: 30,
   vozDePago: false,
   imagenesIa: true,
 };
@@ -52,6 +58,8 @@ const CLAVES = {
   calidadImagen: "ia_calidad_imagen",
   imagenesPorDia: "ia_imagenes_por_dia",
   historiasPorDia: "story_daily_limit",   // el que ya existía; se respeta el nombre
+  vocesPorDia: "ia_voces_por_dia",
+  textosPorDia: "ia_textos_por_dia",
   vozDePago: "ia_voz_de_pago",
   imagenesIa: "ia_imagenes_activas",
 } as const;
@@ -83,6 +91,8 @@ export async function leerAjustes(): Promise<AjustesIa> {
         : AJUSTES_DEFECTO.calidadImagen,
       imagenesPorDia: entero(m.get(CLAVES.imagenesPorDia), 0, 500) ?? AJUSTES_DEFECTO.imagenesPorDia,
       historiasPorDia: entero(m.get(CLAVES.historiasPorDia), 0, 100) ?? AJUSTES_DEFECTO.historiasPorDia,
+      vocesPorDia: entero(m.get(CLAVES.vocesPorDia), 0, 500) ?? AJUSTES_DEFECTO.vocesPorDia,
+      textosPorDia: entero(m.get(CLAVES.textosPorDia), 0, 500) ?? AJUSTES_DEFECTO.textosPorDia,
       vozDePago: m.get(CLAVES.vozDePago) === "1",
       imagenesIa: m.get(CLAVES.imagenesIa) !== "0",
     };
@@ -107,6 +117,16 @@ export async function guardarAjustes(a: Partial<AjustesIa>): Promise<AjustesIa> 
     const v = entero(a.historiasPorDia, 0, 100);
     if (v == null) throw new Error("Las historias por día tienen que ser un número.");
     pares.push([CLAVES.historiasPorDia, String(v)]);
+  }
+  if (a.vocesPorDia !== undefined) {
+    const v = entero(a.vocesPorDia, 0, 500);
+    if (v == null) throw new Error("Las voces por día tienen que ser un número.");
+    pares.push([CLAVES.vocesPorDia, String(v)]);
+  }
+  if (a.textosPorDia !== undefined) {
+    const v = entero(a.textosPorDia, 0, 500);
+    if (v == null) throw new Error("Los textos por día tienen que ser un número.");
+    pares.push([CLAVES.textosPorDia, String(v)]);
   }
   if (a.vozDePago !== undefined) pares.push([CLAVES.vozDePago, a.vozDePago ? "1" : "0"]);
   if (a.imagenesIa !== undefined) pares.push([CLAVES.imagenesIa, a.imagenesIa ? "1" : "0"]);

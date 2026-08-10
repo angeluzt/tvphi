@@ -14,27 +14,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      # Evita prompts interactivos de `next lint` / CLI.
       CI: "1"
+      # Prisma generate no necesita BD real; URL placeholder basta.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
       AUTH_SECRET: ci-test-secret-not-for-production-use-32chars
 
     steps:
       - uses: actions/checkout@v4
+
       # Version comes from package.json "packageManager" (avoid mismatch with action version).
       - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
+
       - name: Install
         run: pnpm install --frozen-lockfile
+
       - name: Prisma generate
         run: pnpm prisma generate
+
+      - name: Lint
+        run: pnpm lint
+
       - name: Typecheck
         run: pnpm typecheck
+
       - name: Test
         run: pnpm test
+
       - name: Build
         run: pnpm build
         env:
           NODE_ENV: production
+
+      - name: Audit (non-blocking)
+        continue-on-error: true
+        run: pnpm audit --prod --audit-level=high

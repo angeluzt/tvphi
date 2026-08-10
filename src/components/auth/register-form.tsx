@@ -74,7 +74,7 @@ export function RegisterForm({ claveCaptcha }: { claveCaptcha: string }) {
           </div>
           <div>
             <label className="label">Contraseña</label>
-            <input name="password" type="password" className="input mt-1" minLength={6} required />
+            <input name="password" type="password" className="input mt-1" minLength={8} required />
           </div>
 
           {!!claveCaptcha && (

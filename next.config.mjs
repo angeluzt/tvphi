@@ -2,12 +2,13 @@
 const nextConfig = {
   reactStrictMode: true,
   images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "**" },
-    ],
+    // Las imágenes de historias viven en blob:/data: o en APIs propias.
+    // No abrimos el optimizador a internet arbitrario.
+    remotePatterns: [],
   },
   // El compositor/editor usa APIs del navegador; nada especial en server components.
   experimental: {
+    instrumentationHook: true,
     serverComponentsExternalPackages: ["bcryptjs"],
     // La biblioteca de audio vive en assets/, fuera de public/, para que no se
     // pueda descargar sin sesión. Next solo empaqueta public/ y .next, así que

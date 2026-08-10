@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { destroySession, hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { consumirTokenReset, validarTokenReset } from "@/lib/password-reset";
+import { reclamarTokenReset, validarTokenReset } from "@/lib/password-reset";
 
 const schema = z.object({
   token: z.string().min(20).max(200),
-  nueva: z.string().min(6).max(100),
+  nueva: z.string().min(8).max(100),
   confirmar: z.string().min(1),
 }).refine((d) => d.nueva === d.confirmar, {
   message: "Las contraseñas no coinciden",
@@ -28,7 +28,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 
-  const row = await validarTokenReset(parsed.data.token);
+  // Validar y marcar usado en la misma carrera: dos POSTs concurrentes no pasan.
+  const row = await reclamarTokenReset(parsed.data.token);
   if (!row) {
     return NextResponse.json(
       { error: "El enlace no es válido o ya caducó. Pide uno nuevo." },
@@ -37,9 +38,7 @@ export async function POST(req: Request) {
   }
 
   const passwordHash = await hashPassword(parsed.data.nueva);
-  // La fecha es lo que echa a las sesiones que ya estuvieran abiertas. Sin
-  // ella, restablecer la contraseña no servía de nada contra una cookie
-  // robada: seguía entrando hasta que caducara, treinta días después.
+  // La fecha es lo que echa a las sesiones que ya estuvieran abiertas.
   const passwordChangedAt = new Date();
   await prisma.$transaction([
     prisma.user.update({ where: { id: row.userId }, data: { passwordHash, passwordChangedAt } }),
@@ -48,7 +47,6 @@ export async function POST(req: Request) {
       data: { usedAt: new Date() },
     }),
   ]);
-  await consumirTokenReset(row.id);
   destroySession();
 
   return NextResponse.json({ ok: true });
