@@ -59,6 +59,7 @@ export async function DELETE(
 }
 
 const metadatos = z.object({
+  nombre: z.string().trim().min(1).max(60).optional(),
   vista: z.enum(["lateral", "frontal", "trasera", "superior", "libre"]).optional(),
   direccion: z.enum(["derecha", "izquierda", "frente", "espaldas", "arriba", "abajo", "ninguna"]).optional(),
   accion: z.enum(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"]).optional(),

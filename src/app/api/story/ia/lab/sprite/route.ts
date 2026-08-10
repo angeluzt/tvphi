@@ -10,7 +10,6 @@ import { leerAjustes, calidadEfectiva } from "@/lib/story/ajustes";
 import { CROMA } from "@/lib/lab/quitar-fondo";
 import { rejillaSpriteEquilibrada } from "@/lib/lab/sprites";
 import { prisma } from "@/lib/prisma";
-import { normalizeCharacterData } from "@/lib/story/characters";
 
 // Una hoja de sprites: N fotogramas del mismo bicho, en fila.
 //
@@ -44,8 +43,8 @@ const cuerpo = z.object({
   accion: z.enum(["quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro"]).default("otro"),
   calidad: z.enum(["low", "medium", "high"]).optional(),
   modelo: z.string().max(80).optional(),
+  /** Solo personajes del taller de sprites (cuadro maestro), no fichas de Historias. */
   personajeId: z.string().cuid().optional(),
-  storyCharacterId: z.string().cuid().optional(),
 });
 
 const TAMANOS = { tira: "1536x1024", columna: "1024x1536" } as const;
@@ -126,25 +125,21 @@ export async function POST(req: Request) {
   // Esta ruta es solo de admin, así que se le respeta la calidad que pida; si
   // no dice ninguna, manda la del panel, que en pruebas es la barata.
   const calidad = calidadEfectiva(ajustes, admin, parsed.data.calidad);
-  const { que, fotogramas, forma, distribucion, vista, direccion, accion, personajeId, storyCharacterId } = parsed.data;
+  const { que, fotogramas, forma, distribucion, vista, direccion, accion, personajeId } = parsed.data;
   const rejilla = distribucion === "fila" ? { columnas: fotogramas, filas: 1 }
     : distribucion === "columna" ? { columnas: 1, filas: fotogramas }
       : rejillaSpriteEquilibrada(fotogramas, forma);
-  const personaje = personajeId ? await prisma.spriteCharacter.findFirst({ where: { id: personajeId, userId: user.id }, select: { referencia: true } }) : null;
-  if (personajeId && !personaje) return NextResponse.json({ error: "Ese personaje no pertenece a tu biblioteca." }, { status: 404 });
-  const ficha = storyCharacterId ? await prisma.storyCharacter.findFirst({
-    where: { id: storyCharacterId, userId: user.id }, select: { name: true, data: true },
-  }) : null;
-  if (storyCharacterId && !ficha) return NextResponse.json({ error: "Esa ficha de personaje no existe." }, { status: 404 });
-  const fichaData = ficha ? normalizeCharacterData(ficha.data) : null;
-  const identidad = fichaData
-    ? `${que}. Character identity bible for ${ficha!.name}: ${(fichaData.description || fichaData.prompt).slice(0, 2400)}`
-    : que;
+  const personaje = personajeId
+    ? await prisma.spriteCharacter.findFirst({ where: { id: personajeId, userId: user.id }, select: { referencia: true } })
+    : null;
+  if (personajeId && !personaje) {
+    return NextResponse.json({ error: "Ese personaje no pertenece a tu biblioteca de sprites." }, { status: 404 });
+  }
   const editable = /^(gpt-image-2|gpt-image-1\.5|gpt-image-1(?:$|-\d)|chatgpt-image-latest)/i.test(modelo);
   if (personaje && !editable) return NextResponse.json({ error: `«${modelo}» no admite una imagen de referencia.` }, { status: 400 });
 
   try {
-    const p = prompt(identidad, fotogramas, vista, direccion, accion, rejilla.columnas, rejilla.filas, !!personaje);
+    const p = prompt(que, fotogramas, vista, direccion, accion, rejilla.columnas, rejilla.filas, !!personaje);
     let r: Response;
     if (personaje) {
       const form = new FormData();
