@@ -6,7 +6,7 @@ import {
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
   Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
   MapPinned, Plus, RotateCcw, Square, Lock, LockOpen, ChevronsUp, ChevronsDown,
-  Paintbrush,
+  Paintbrush, MoreHorizontal,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
@@ -147,6 +147,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   // Qué grupo de mandos se está viendo. Los dos existen siempre en el árbol:
   // el que no toca se esconde, para no perder focos ni arrastres a medias.
   const [panel, setPanel] = useState<PanelMontaje>("elemento");
+  // La fila de acciones secundarias, plegada por defecto.
+  const [masAcciones, setMasAcciones] = useState(false);
   const [modoEdicion, setModoEdicion] = useState<ModoEdicionCanvas>(null);
   const [moverTodo, setMoverTodo] = useState(false);
   const [volverRuta, setVolverRuta] = useState(true);
@@ -1273,9 +1275,47 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     return [...ida, ...vuelta].slice(0, 24);
   }
 
+  /**
+   * Un punto más en la ruta de una capa normal.
+   *
+   * Los puntos se guardan como DESPLAZAMIENTO respecto al sitio de la capa, no
+   * como posición absoluta: una capa a pantalla completa no tiene «un sitio»
+   * donde esté, tiene el centro del cuadro, así que se mide desde ahí. Tocar en
+   * el centro y tocar en la esquina dan (0,0) y (0.5,0.5).
+   */
+  function anadirPuntoRutaCapa(capa: CapaImg, nx: number, ny: number) {
+    const previos = capa.mov?.tipo === "ruta" ? (capa.mov.pasos ?? []) : [];
+    const pasos = [...previos, {
+      x: Math.round((nx - 0.5) * 1000) / 1000,
+      y: Math.round((ny - 0.5) * 1000) / 1000,
+      segundos: 1.5,
+      suavizado: "suave" as const,
+    }];
+    const mov = normalizarMov({
+      tipo: "ruta",
+      pasos,
+      bucle: capa.mov?.bucle ?? false,
+      volver: capa.mov?.volver ?? volverRuta,
+      espacio: capa.mov?.espacio,
+      referenciaCapaId: capa.mov?.referenciaCapaId,
+    });
+    if (!mov) {
+      setAviso("Ese punto coincide con el sitio de la capa: no habría movimiento.");
+      return;
+    }
+    upd(capa.id, { mov });
+    setRutaVisibleId(capa.id);
+    reiniciarMovimientoCapa(capa.id);
+    setAviso(`Punto ${pasos.length} en la ruta de «${capa.nombre}».`);
+  }
+
   function anadirPuntoRuta(nx: number, ny: number) {
     const capa = capasRef.current.find((c) => c.id === capaActivaId);
-    if (!capa?.spr || capa.bloqueada) return;
+    if (!capa || capa.bloqueada) return;
+    // Una capa normal también puede tener ruta. Antes esto solo valía para
+    // sprites y tocar la escena con un fondo o una nube seleccionada no hacía
+    // nada, sin decir por qué.
+    if (!capa.spr) { anadirPuntoRutaCapa(capa, nx, ny); return; }
     const spr = capa.spr;
     const nucleo = [...(spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover" || p.tipo === "pausa")];
     let lx = spr.x;
@@ -1356,10 +1396,100 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     }));
   }
 
+  /**
+   * Copiar la animación de la capa activa a todas las demás.
+   *
+   * Las BLOQUEADAS se saltan: para eso está el candado —«no me toques esta»— y
+   * un «aplicar a todas» que ignorara el bloqueo lo convertiría en un adorno.
+   *
+   * A las que ya tienen movimiento se les desfasa un poco el ciclo. Cinco capas
+   * meciéndose exactamente a la vez no parecen cinco cosas vivas, parecen una
+   * sola imagen temblando.
+   */
+  function aplicarMovimientoATodas() {
+    const origen = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!origen?.mov) {
+      setAviso("Esta capa no tiene animación que copiar.");
+      return;
+    }
+    // Las cuentas se hacen AQUÍ, no dentro del actualizador de estado: el
+    // actualizador corre durante el render siguiente, así que el mensaje se
+    // armaba con los contadores todavía a cero y siempre decía «0 capas».
+    const otras = capasRef.current.filter((c) => c.id !== origen.id);
+    const destino = otras.filter((c) => !c.bloqueada);
+    const puestas = destino.length;
+    const saltadas = otras.length - puestas;
+    if (!puestas) {
+      setAviso(saltadas
+        ? `Las otras ${saltadas} capas están bloqueadas: quita el candado para aplicarles la animación.`
+        : "No hay otras capas a las que aplicársela.");
+      return;
+    }
+    const ciclico = origen.mov.tipo === "flotar" || origen.mov.tipo === "vaiven" || origen.mov.tipo === "pulso";
+    const desfases = new Map(destino.map((c, i) => [c.id, Math.round(((i + 1) * 0.37 % 1) * 100) / 100]));
+    setCapas((cs) => cs.map((c) => {
+      if (c.id === origen.id || c.bloqueada) return c;
+      return {
+        ...c,
+        mov: normalizarMov({
+          ...origen.mov,
+          ...(ciclico ? { desfase: desfases.get(c.id) } : {}),
+        }),
+      };
+    }));
+    reiniciarMovimientosCapa();
+    setAviso(
+      `Animación aplicada a ${puestas} capa${puestas === 1 ? "" : "s"}`
+      + (saltadas ? ` · ${saltadas} bloqueada${saltadas === 1 ? "" : "s"}, sin tocar` : "")
+      + ".",
+    );
+  }
+
+  /** Quitar la ruta de la capa activa y dejarla quieta. */
+  function borrarRutaCapa() {
+    const capa = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!capa) return;
+    if (capa.spr) {
+      upd(capa.id, { spr: { ...capa.spr, ruta: undefined, trayectoria: undefined } });
+    } else {
+      upd(capa.id, { mov: undefined });
+    }
+    setAviso(`«${capa.nombre}» se queda quieta.`);
+  }
+
+  /** Cuántos puntos tiene lo seleccionado, sea sprite o capa. */
+  function puntosDeLaRuta(): number {
+    const capa = capas.find((c) => c.id === capaActivaId);
+    if (!capa) return 0;
+    if (capa.spr) return (capa.spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover").length;
+    return capa.mov?.tipo === "ruta" ? (capa.mov.pasos ?? []).length : 0;
+  }
+
+  /**
+   * Dejar el lienzo a la vista antes de pedir que lo toquen.
+   *
+   * La cabecera del sitio es pegajosa y flota por encima: si el lienzo ha
+   * quedado alto, su parte de arriba está DEBAJO de la cabecera y los toques
+   * ahí se los queda ella. En un móvil eso es un tercio del lienzo muerto, sin
+   * ninguna pista de por qué. Se centra en pantalla y el problema desaparece.
+   */
+  function acercarLienzo() {
+    caja.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   function movCapaRapido(tipo: string) {
     if (!capaActivaId) return;
     if (!tipo) {
       upd(capaActivaId, { mov: undefined });
+      return;
+    }
+    if (tipo === "ruta") {
+      // Una ruta sin puntos no existe todavía: no hay nada que guardar. Lo que
+      // se hace es dejar el lienzo esperando toques, que es como se construye.
+      // Guardar aquí un `mov` vacío sería guardar un movimiento que no mueve.
+      setModoEdicion("punto");
+      acercarLienzo();
+      setAviso("Toca la escena para ir marcando por dónde pasa. Cada toque, un tramo.");
       return;
     }
     if (tipo === "trayectoria") {
@@ -1437,21 +1567,22 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
             onChange={(e) => { void meter(e.target.files); e.target.value = ""; }}
           />
         </label>
+        {/* Lo de menos uso, plegado.
+            Eran siete botones en fila: en un móvil, cuatro filas de mandos
+            ANTES de ver el lienzo. Y «Mover cámara» sobraba desde que el
+            transporte tiene su propio play, justo debajo de la vista. */}
         <button
-          onClick={() => {
-            if (enSecuencia) pararSecuencia();
-            else {
-              retenerPoseRef.current = false;
-              setMoviendo((v) => !v);
-            }
-          }}
+          type="button"
+          onClick={() => setMasAcciones((v) => !v)}
           className="btn-ghost text-xs"
+          aria-expanded={masAcciones}
         >
-          {moviendo || enSecuencia
-            ? <Pause className="h-3.5 w-3.5 text-accent" />
-            : <Play className="h-3.5 w-3.5 text-accent" />}
-          {enSecuencia ? "Parar secuencia" : moviendo ? "Parar cámara" : "Mover cámara"}
+          <MoreHorizontal className="h-3.5 w-3.5 text-accent" />
+          {masAcciones ? "Menos" : "Más acciones"}
         </button>
+      </div>
+
+      <div className={masAcciones ? "flex flex-wrap items-center gap-2" : "hidden"}>
         <button onClick={centrarTodo} className="btn-ghost text-xs">
           <Crosshair className="h-3.5 w-3.5 text-accent" /> Centrar
         </button>
@@ -1834,7 +1965,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                   <InspectorRapido
                     esSprite={!!capaActiva.spr}
                     modo={modoEdicion}
-                    onModo={setModoEdicion}
+                    onModo={(m) => { setModoEdicion(m); if (m) acercarLienzo(); }}
                     moverTodo={moverTodo}
                     onMoverTodo={setMoverTodo}
                     volverRuta={volverRuta}
@@ -1855,6 +1986,10 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                     onPausaSeg={setPausaSegInspector}
                     onAddPausa={anadirPausaRuta}
                     onMovCapa={movCapaRapido}
+                    onAplicarATodas={aplicarMovimientoATodas}
+                    puedeAplicarATodas={!!capaActiva.mov && capas.length > 1}
+                    onBorrarRuta={borrarRutaCapa}
+                    puntosRuta={puntosDeLaRuta()}
                     movCapaTipo={capaActiva.mov?.tipo ?? ""}
                     bloqueada={capaActiva.bloqueada}
                   />
