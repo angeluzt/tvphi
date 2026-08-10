@@ -272,7 +272,11 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     setBorrandoId(p.id);
     setErrorPersonajes(null);
     try {
-      await pedirJson(`/api/story/sprite-characters/${p.id}`, { method: "DELETE" });
+      // `spriteId` es el id de la fila. `id` lo era también, pero llegó a
+      // llevar un prefijo y esta llamada mandaba la cadena prefijada: el
+      // servidor no encontraba nada y contestaba «ese personaje ya no está»
+      // para personajes que estaban ahí. Se pide el de la fila, explícito.
+      await pedirJson(`/api/story/sprite-characters/${p.spriteId ?? p.id}`, { method: "DELETE" });
       setPersonajes((lista) => lista.filter((x) => x.id !== p.id));
       if (personajeId === p.spriteId || personajeId === p.id) {
         setPersonajeId("");
@@ -1263,7 +1267,14 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
                   <p className="mt-0.5 truncate text-[10px] text-muted" title={p.descripcion || p.prompt}>
                     {resumenPrompt(p.descripcion || p.prompt, 70) || "Sin prompt"}
                   </p>
-                  <p className="text-[9px] text-muted">{p.animaciones.length} animación{p.animaciones.length === 1 ? "" : "es"}</p>
+                  <p className="text-[9px] text-muted">
+                    {p.animaciones.length} animación{p.animaciones.length === 1 ? "" : "es"}
+                    {/* El peso SIEMPRE, también con cero animaciones: un
+                        personaje vacío conserva su miniatura, y «0 animaciones»
+                        se lee como «no ocupa nada». Con el tope de 120 MB por
+                        cuenta, eso es sitio que desaparece sin explicación. */}
+                    {p.bytes > 0 && <> · {pesoLegible(p.bytes)}</>}
+                  </p>
                 </div>
                 {/* Borrar el grupo entero. Antes no se podía: un personaje que
                     salía mal se quedaba ocupando sitio del tope para siempre. */}

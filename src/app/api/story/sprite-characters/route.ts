@@ -91,11 +91,20 @@ export async function GET() {
   const u = await getCurrentUser();
   if (!u) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
+  // `select` explícito, NO `include`: con `include` Prisma se trae además todos
+  // los escalares del personaje, y uno de ellos es `referencia`, el PNG de su
+  // miniatura. Listar veinte personajes bajaba veinte imágenes de la base de
+  // datos para pintar veinte nombres.
   const rows = await prisma.spriteCharacter.findMany({
     where: { userId: u.id },
     orderBy: { updatedAt: "desc" },
     take: MAX_P,
-    include: {
+    select: {
+      id: true,
+      nombre: true,
+      descripcion: true,
+      bytesReferencia: true,
+      updatedAt: true,
       animaciones: {
         orderBy: { updatedAt: "desc" },
         select: {
@@ -109,13 +118,21 @@ export async function GET() {
   });
 
   const personajes: PersonajeSprite[] = rows.map((p) => ({
-    id: `sprite:${p.id}`,
+    // El id, a secas. Llevaba un prefijo «sprite:» de cuando estos personajes
+    // convivían con las fichas de Historias y había que distinguirlos. Ya no
+    // conviven —`storyCharacterId` es siempre null— y el prefijo solo servía
+    // para que quien cogiera `id` en vez de `spriteId` mandara una cadena que
+    // no existe en la tabla. Pasó: el borrado contestaba «ese personaje ya no
+    // está» para personajes que estaban perfectamente.
+    id: p.id,
     spriteId: p.id,
     storyCharacterId: null,
     origen: "sprites" as const,
     nombre: p.nombre,
     descripcion: p.descripcion,
     prompt: p.descripcion,
+    bytes: p.bytesReferencia
+      + p.animaciones.reduce((a, x) => a + x.bytesOriginal + x.bytesTrabajo + x.bytesTira, 0),
     actualizadoEn: p.updatedAt.toISOString(),
     animaciones: p.animaciones.map((a) => ({
       id: a.id,

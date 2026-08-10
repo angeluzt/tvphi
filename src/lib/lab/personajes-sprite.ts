@@ -30,6 +30,14 @@ export interface PersonajeSprite {
   nombre: string;
   descripcion: string;
   prompt: string;
+  /**
+   * Lo que ocupa en total: su miniatura de referencia MÁS sus animaciones.
+   *
+   * Se enseña porque un personaje sin animaciones NO pesa cero —conserva su
+   * referencia— y «0 animaciones» se lee como «no ocupa nada». Con el tope de
+   * 120 MB por cuenta, eso es espacio que desaparece sin explicación.
+   */
+  bytes: number;
   actualizadoEn: string;
   animaciones: AnimacionPersonajeSprite[];
 }

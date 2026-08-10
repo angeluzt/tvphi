@@ -25,11 +25,16 @@ export async function DELETE(
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
+  // Se acepta el prefijo «sprite:» que el listado llegó a publicar. Sin esto,
+  // quien tenga la página abierta de antes seguiría sin poder borrar hasta
+  // recargar, y el síntoma —«ese personaje ya no está»— no lo sugiere.
+  const id = params.id.replace(/^sprite:/, "");
+
   // El `userId` en el where es la autorización: si el personaje es de otro, no
   // aparece y se contesta 404 igual que si no existiera. No se filtra ni
   // siquiera que exista.
   const personaje = await prisma.spriteCharacter.findFirst({
-    where: { id: params.id, userId: user.id },
+    where: { id, userId: user.id },
     select: { id: true, nombre: true, _count: { select: { animaciones: true } } },
   });
   if (!personaje) {
