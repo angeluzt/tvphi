@@ -140,6 +140,9 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   const [cargandoPersonajes, setCargandoPersonajes] = useState(true);
   const [errorPersonajes, setErrorPersonajes] = useState<string | null>(null);
   const [animacionId, setAnimacionId] = useState<string | null>(null);
+  /** "" = cuadro maestro del personaje; si no, id de animación de la que se parte. */
+  const [refAnimacionId, setRefAnimacionId] = useState("");
+  const [refCuadro, setRefCuadro] = useState<"primero" | "ultimo" | "medio">("ultimo");
   const [nombrePersonaje, setNombrePersonaje] = useState("");
   const [descripcionPersonaje, setDescripcionPersonaje] = useState("");
   const [renombrandoId, setRenombrandoId] = useState<string | null>(null);
@@ -170,16 +173,24 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   function seleccionarPersonaje(p: PersonajeSprite | null) {
     setPersonajeId(p?.spriteId ?? "");
     setAnimacionId(null);
+    setRefAnimacionId("");
+    setRefCuadro("ultimo");
     setGuardadoPrivado(false);
     setNombrePersonaje(p?.nombre ?? "");
     setDescripcionPersonaje(p?.descripcion ?? "");
   }
 
-  function nuevaAnimacion(p: PersonajeSprite, rapida?: (typeof ANIM_RAPIDAS)[number]) {
+  function nuevaAnimacion(
+    p: PersonajeSprite,
+    rapida?: (typeof ANIM_RAPIDAS)[number],
+    desdeAnimacionId?: string,
+  ) {
     seleccionarPersonaje(p);
     setHecho(null);
     setGuardado(false);
     setAnimacionId(null);
+    setRefAnimacionId(desdeAnimacionId ?? "");
+    setRefCuadro("ultimo");
     if (rapida) {
       setAccion(rapida.accion);
       if (rapida.anclaje) setAnclaje(rapida.anclaje);
@@ -190,7 +201,14 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       setNombre("");
       setAccion("otro");
     }
-    setAviso(`Nueva animación para «${p.nombre}»${rapida ? ` · ${rapida.label}` : ""}. Describe el movimiento y fabrica.`);
+    const base = desdeAnimacionId
+      ? p.animaciones.find((a) => a.id === desdeAnimacionId)
+      : null;
+    setAviso(
+      base
+        ? `Nueva animación para «${p.nombre}» partiendo de «${base.nombre}» (último cuadro). Describe el siguiente movimiento y fabrica.`
+        : `Nueva animación para «${p.nombre}»${rapida ? ` · ${rapida.label}` : ""}. Describe el movimiento y fabrica.`,
+    );
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -254,8 +272,15 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     try {
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/sprite", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({que:que.trim(),fotogramas:n,forma:distribucion==="columna"||(distribucion==="equilibrada"&&accion==="caer")?"columna":"tira",
-          distribucion,vista,direccion,accion,calidad,personajeId:personajeId||undefined}),
+        body: JSON.stringify({
+          que: que.trim(),
+          fotogramas: n,
+          forma: distribucion === "columna" || (distribucion === "equilibrada" && accion === "caer") ? "columna" : "tira",
+          distribucion, vista, direccion, accion, calidad,
+          personajeId: personajeId || undefined,
+          referenciaAnimacionId: refAnimacionId || undefined,
+          referenciaCuadro: refAnimacionId ? refCuadro : undefined,
+        }),
       });
       if (!r.ok) throw new Error(j.error || "No se pudo");
 
@@ -316,6 +341,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       setPaso(null);
       setAviso(
         `${hoja.fotogramas.length} fotogramas listos`
+        + (j.referenciaDe ? ` · partió de «${j.referenciaDe}»` : j.referenciaUsada ? " · con cuadro maestro" : "")
         + (hoja.descartados ? ` · ${hoja.descartados} salieron vacíos y se tiraron` : "")
         + ` · rejilla ${columnas}×${filas} · ${tira.ancho}×${tira.alto} · ${pesoLegible(tira.blob.size)}`,
       );
@@ -706,10 +732,48 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
           ))}
         </div>
         {personajeSeleccionado && (
-          <p className="mt-2 text-[10px] text-accent">
-            Seleccionado: <b className="text-fg">{personajeSeleccionado.nombre}</b>
-            {" · "}{personajeSeleccionado.animaciones.length} animación{personajeSeleccionado.animaciones.length === 1 ? "" : "es"}
-            {" · "}las nuevas conservan su cuadro maestro.
+          <div className="mt-2 space-y-2">
+            <p className="text-[10px] text-accent">
+              Seleccionado: <b className="text-fg">{personajeSeleccionado.nombre}</b>
+              {" · "}{personajeSeleccionado.animaciones.length} animación{personajeSeleccionado.animaciones.length === 1 ? "" : "es"}
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block text-[10px] text-muted">
+                Partir de (identidad)
+                <select
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  value={refAnimacionId}
+                  onChange={(e) => setRefAnimacionId(e.target.value)}
+                >
+                  <option value="">Cuadro maestro del personaje</option>
+                  {personajeSeleccionado.animaciones.map((a) => (
+                    <option key={a.id} value={a.id}>{a.nombre} · {a.accion}</option>
+                  ))}
+                </select>
+              </label>
+              <label className={`block text-[10px] text-muted ${refAnimacionId ? "" : "opacity-40"}`}>
+                Fotograma de esa animación
+                <select
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  value={refCuadro}
+                  disabled={!refAnimacionId}
+                  onChange={(e) => setRefCuadro(e.target.value as "primero" | "ultimo" | "medio")}
+                >
+                  <option value="ultimo">Último (recomendado para encadenar)</option>
+                  <option value="primero">Primero</option>
+                  <option value="medio">Del medio</option>
+                </select>
+              </label>
+            </div>
+            <p className="text-[10px] text-muted">
+              Ejemplo: personaje sentado → elige esa animación + último cuadro → fabrica «ponerse de pie» →
+              luego parte de «ponerse de pie» para fabricar «caminar».
+            </p>
+          </div>
+        )}
+        {!personajeSeleccionado && (
+          <p className="mt-2 text-[10px] text-muted">
+            Sin personaje seleccionado se crea uno nuevo. Luego puedes encadenar animaciones desde cualquiera.
           </p>
         )}
         <label className="mt-2 block">
@@ -1065,20 +1129,33 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
 
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 {p.animaciones.map((a) => (
-                  <button
+                  <div
                     key={a.id}
-                    type="button"
-                    onClick={() => void editarAnimacion(a.id)}
-                    className="flex items-center gap-2 rounded-md border border-border p-1.5 text-left hover:border-accent"
+                    className="flex items-center gap-2 rounded-md border border-border p-1.5"
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={a.tiraUrl} alt="" className="h-9 w-14 object-contain" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[11px]">{a.nombre}</span>
-                      <span className="block truncate text-[9px] text-muted">{a.accion} · {a.que}</span>
-                    </span>
-                    <Pencil className="h-3 w-3 shrink-0 text-muted" />
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => void editarAnimacion(a.id)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left hover:opacity-90"
+                      title="Abrir para editar"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={a.tiraUrl} alt="" className="h-9 w-14 object-contain" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[11px]">{a.nombre}</span>
+                        <span className="block truncate text-[9px] text-muted">{a.accion} · {a.que}</span>
+                      </span>
+                      <Pencil className="h-3 w-3 shrink-0 text-muted" />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost shrink-0 px-1.5 py-1 text-[9px]"
+                      title="Fabricar la siguiente animación partiendo del último cuadro de esta"
+                      onClick={() => nuevaAnimacion(p, undefined, a.id)}
+                    >
+                      <Plus className="h-3 w-3" /> Partir de aquí
+                    </button>
+                  </div>
                 ))}
                 {!p.animaciones.length && (
                   <p className="text-[10px] text-muted">Todavía no tiene animaciones.</p>

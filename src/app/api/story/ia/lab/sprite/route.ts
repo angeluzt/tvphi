@@ -10,6 +10,8 @@ import { leerAjustes, calidadEfectiva } from "@/lib/story/ajustes";
 import { CROMA } from "@/lib/lab/quitar-fondo";
 import { rejillaSpriteEquilibrada } from "@/lib/lab/sprites";
 import { prisma } from "@/lib/prisma";
+import sharp from "sharp";
+import { reconstruirTiraAnimacion } from "@/lib/lab/atlas-sprite.server";
 
 // Una hoja de sprites: N fotogramas del mismo bicho, en fila.
 //
@@ -45,6 +47,10 @@ const cuerpo = z.object({
   modelo: z.string().max(80).optional(),
   /** Solo personajes del taller de sprites (cuadro maestro), no fichas de Historias. */
   personajeId: z.string().cuid().optional(),
+  /** Animación del mismo personaje de la que se toma un fotograma como identidad. */
+  referenciaAnimacionId: z.string().cuid().optional(),
+  /** Qué cuadro de esa animación usar. Por defecto el último (encadenar pose final → siguiente). */
+  referenciaCuadro: z.enum(["primero", "ultimo", "medio"]).default("ultimo"),
 });
 
 const TAMANOS = { tira: "1536x1024", columna: "1024x1536" } as const;
@@ -125,36 +131,92 @@ export async function POST(req: Request) {
   // Esta ruta es solo de admin, así que se le respeta la calidad que pida; si
   // no dice ninguna, manda la del panel, que en pruebas es la barata.
   const calidad = calidadEfectiva(ajustes, admin, parsed.data.calidad);
-  const { que, fotogramas, forma, distribucion, vista, direccion, accion, personajeId } = parsed.data;
+  const {
+    que, fotogramas, forma, distribucion, vista, direccion, accion,
+    personajeId, referenciaAnimacionId, referenciaCuadro,
+  } = parsed.data;
   const rejilla = distribucion === "fila" ? { columnas: fotogramas, filas: 1 }
     : distribucion === "columna" ? { columnas: 1, filas: fotogramas }
       : rejillaSpriteEquilibrada(fotogramas, forma);
-  const personaje = personajeId
-    ? await prisma.spriteCharacter.findFirst({ where: { id: personajeId, userId: user.id }, select: { referencia: true } })
-    : null;
-  if (personajeId && !personaje) {
-    await liberarUsoIa(reserva.id);
-    return NextResponse.json({ error: "Ese personaje no pertenece a tu biblioteca de sprites." }, { status: 404 });
+
+  let bufferReferencia: Buffer | null = null;
+  let etiquetaRef = "maestro";
+
+  if (referenciaAnimacionId) {
+    const anim = await prisma.spriteAnimation.findFirst({
+      where: {
+        id: referenciaAnimacionId,
+        character: { userId: user.id, ...(personajeId ? { id: personajeId } : {}) },
+      },
+      select: {
+        id: true, nombre: true, characterId: true, tira: true, atlasFrames: true,
+        fotogramas: true, ancho: true, alto: true,
+      },
+    });
+    if (!anim) {
+      await liberarUsoIa(reserva.id);
+      return NextResponse.json({ error: "No encontré esa animación de referencia en tu taller." }, { status: 404 });
+    }
+    if (personajeId && anim.characterId !== personajeId) {
+      await liberarUsoIa(reserva.id);
+      return NextResponse.json({ error: "La animación de referencia no pertenece a ese personaje." }, { status: 400 });
+    }
+    try {
+      const tira = await reconstruirTiraAnimacion({
+        userId: user.id,
+        tira: anim.tira,
+        atlasFrames: anim.atlasFrames,
+        fotogramas: anim.fotogramas,
+        ancho: anim.ancho,
+        alto: anim.alto,
+      });
+      const n = Math.max(1, anim.fotogramas);
+      const idx = referenciaCuadro === "primero" ? 0
+        : referenciaCuadro === "medio" ? Math.floor((n - 1) / 2)
+          : n - 1;
+      bufferReferencia = await sharp(tira)
+        .extract({ left: idx * anim.ancho, top: 0, width: anim.ancho, height: anim.alto })
+        .png()
+        .toBuffer();
+      etiquetaRef = `${anim.nombre} · cuadro ${idx + 1}/${n}`;
+    } catch {
+      await liberarUsoIa(reserva.id);
+      return NextResponse.json({ error: "No se pudo leer el fotograma de la animación de referencia." }, { status: 500 });
+    }
+  } else if (personajeId) {
+    const personaje = await prisma.spriteCharacter.findFirst({
+      where: { id: personajeId, userId: user.id },
+      select: { referencia: true },
+    });
+    if (!personaje) {
+      await liberarUsoIa(reserva.id);
+      return NextResponse.json({ error: "Ese personaje no pertenece a tu biblioteca de sprites." }, { status: 404 });
+    }
+    bufferReferencia = Buffer.from(personaje.referencia);
+    etiquetaRef = "cuadro maestro";
   }
+
   const editable = /^(gpt-image-2|gpt-image-1\.5|gpt-image-1(?:$|-\d)|chatgpt-image-latest)/i.test(modelo);
-  if (personaje && !editable) {
+  if (bufferReferencia && !editable) {
     await liberarUsoIa(reserva.id);
     return NextResponse.json({ error: `«${modelo}» no admite una imagen de referencia.` }, { status: 400 });
   }
 
   let committed = false;
   try {
-    const p = prompt(que, fotogramas, vista, direccion, accion, rejilla.columnas, rejilla.filas, !!personaje);
+    const p = prompt(que, fotogramas, vista, direccion, accion, rejilla.columnas, rejilla.filas, !!bufferReferencia);
     let r: Response;
-    if (personaje) {
+    if (bufferReferencia) {
       const form = new FormData();
       form.set("model", modelo); form.set("prompt", p); form.set("size", TAMANOS[forma]);
       form.set("n", "1"); form.set("quality", calidad); form.set("output_format", "png"); form.set("background", "opaque");
-      form.append("image[]", new Blob([new Uint8Array(personaje.referencia)], { type: "image/png" }), "character-reference.png");
+      form.append("image[]", new Blob([new Uint8Array(bufferReferencia)], { type: "image/png" }), "character-reference.png");
       r = await fetch(OPENAI("/v1/images/edits"), { signal: espera("imagen"), method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
-    } else r = await fetch(OPENAI("/v1/images/generations"), { signal: espera("imagen"), method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: modelo, prompt: p, size: TAMANOS[forma], n: 1, quality: calidad }) });
+    } else {
+      r = await fetch(OPENAI("/v1/images/generations"), { signal: espera("imagen"), method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: modelo, prompt: p, size: TAMANOS[forma], n: 1, quality: calidad }) });
+    }
 
     const texto = await r.text();
     let j: any = null;
@@ -187,7 +249,8 @@ export async function POST(req: Request) {
       croma: CROMA,
       size: TAMANOS[forma],
       columnas: rejilla.columnas, filas: rejilla.filas, distribucion,
-      referenciaUsada: !!personaje,
+      referenciaUsada: !!bufferReferencia,
+      referenciaDe: bufferReferencia ? etiquetaRef : null,
     });
   } catch (e: any) {
     return NextResponse.json({ error: motivoFallo(e, "imagen") }, { status: 502 });
