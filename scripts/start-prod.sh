@@ -13,16 +13,17 @@ if [ -n "${DATABASE_PRIVATE_URL:-}" ]; then
   echo "🔌 Usando DATABASE_PRIVATE_URL (red interna Railway)."
   export DATABASE_URL="$DATABASE_PRIVATE_URL"
 elif [ -n "${DATABASE_URL:-}" ] && echo "$DATABASE_URL" | grep -Eq 'proxy\.rlwy\.net|[.]rlwy\.net:[0-9]+'; then
-  echo "⚠️  DATABASE_URL apunta al proxy PÚBLICO de Railway (*.proxy.rlwy.net / *.rlwy.net:puerto)."
-  echo "   Eso suele fallar a ratos desde el contenedor de la app → Bad gateway 502."
-  echo "   Arreglo en Railway → tu servicio App → Variables:"
-  echo "   • Borra el DATABASE_URL pegado a mano (si lo hay)."
-  echo "   • Añade referencia: \${{ Postgres.DATABASE_URL }}  (red privada), o"
-  echo "   • Define DATABASE_PRIVATE_URL=\${{ Postgres.DATABASE_PRIVATE_URL }} y deja que este script la use."
+  echo "⚠️  DATABASE_URL apunta al proxy PÚBLICO de Railway (*.proxy.rlwy.net)."
+  echo "   Puede fallar a ratos desde el contenedor. Mejor (sin borrar esta URL hasta tener la otra):"
+  echo "   Railway → App → Variables → Define:"
+  echo "   DATABASE_URL=\${{ Postgres.DATABASE_PRIVATE_URL }}"
+  echo "   (cambia Postgres si el servicio se llama distinto)."
 fi
 
 if [ -z "${DATABASE_URL:-}" ]; then
-  echo "❌ Falta DATABASE_URL (o DATABASE_PRIVATE_URL). Sin Postgres la app no arranca."
+  echo "❌ Falta DATABASE_URL en el entorno del contenedor. Sin eso la app no arranca."
+  echo "   Railway → App → Variables: DATABASE_URL=\${{ Postgres.DATABASE_PRIVATE_URL }}"
+  echo "   No dejes la variable vacía; si la referencia falla, revisa el nombre del servicio Postgres."
   exit 1
 fi
 
