@@ -5,7 +5,7 @@ import { urlSprite, type SpriteMeta } from "./biblioteca";
 import type { SpriteEnCapa } from "./sprite-capa";
 import type { SpritePlaneado } from "./plan-escena-viva";
 import { cargarImagen } from "./quitar-fondo";
-import { pngBase64ABlob } from "./png-base64";
+import { blobDeUrlDeImagen, pngBase64ABlob } from "./png-base64";
 import { celdasSpriteEnRejilla, cortarHoja, nombreSprite, tiraDeFotogramas } from "./sprites";
 
 export interface SpriteMontado {
@@ -114,7 +114,7 @@ export async function resolverSpritePlaneado(
     tira = await tiraDeFotogramas(cortada.fotogramas);
     const primerUrl = cortada.fotogramas[0]?.url;
     refBlob = primerUrl
-      ? await (await fetch(primerUrl)).blob()
+      ? await blobDeUrlDeImagen(primerUrl)
       : hojaBlob;
   } finally {
     cortada.fotogramas.forEach((f) => {

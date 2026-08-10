@@ -66,3 +66,22 @@ export async function pedirJsonCrudo(url: string, opts?: RequestInit): Promise<P
   }
   return { datos, respuesta };
 }
+
+/**
+ * El mensaje de un error, en cristiano.
+ *
+ * Red de seguridad para los `catch` que enseñan `e.message` tal cual: si algo
+ * se escapa de `pedirJson` —un `fetch` suelto, una API del navegador— el
+ * usuario acabaría leyendo «Failed to fetch», que no dice qué pasó ni qué
+ * hacer, y encima suena a que el servidor falló cuando muchas veces ni se
+ * llegó a llamar.
+ */
+export function mensajeLegible(e: unknown, porDefecto = "No se pudo completar la operación."): string {
+  const m = (e as Error)?.message?.trim();
+  if (!m) return porDefecto;
+  if (/^(TypeError:\s*)?failed to fetch$/i.test(m) || /^network(\s|error)/i.test(m)) {
+    return "No se pudo conectar con el servidor. Revisa tu conexión y vuelve a intentarlo.";
+  }
+  if (/^AbortError/i.test(m) || /aborted/i.test(m)) return "Se canceló la petición.";
+  return m;
+}

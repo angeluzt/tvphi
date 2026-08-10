@@ -61,7 +61,12 @@ const cuerpo = z.object({
   alto: z.number().int().min(1).max(4096),
   celdas: z.array(celda).min(1).max(24),
   hojaOriginal: z.string().min(100).max(9_000_000),
-  hojaTrabajo: z.string().min(100).max(9_000_000),
+  /**
+   * La hoja retocada. OPCIONAL: nada más generar es idéntica a la original
+   * —nadie la ha tocado todavía— y mandarla era repetir un megabyte por nada,
+   * en una petición que ya iba justa de tamaño. Si falta, vale la original.
+   */
+  hojaTrabajo: z.string().min(100).max(9_000_000).optional(),
   tira: z.string().min(100).max(6_000_000),
   referencia: z.string().min(100).max(3_000_000).optional(),
 });
@@ -207,7 +212,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "La tira sería demasiado ancha." }, { status: 400 });
   }
   const original = png(d.hojaOriginal, MAX_HOJA);
-  const trabajo = png(d.hojaTrabajo, MAX_HOJA);
+  const trabajo = d.hojaTrabajo ? png(d.hojaTrabajo, MAX_HOJA) : original;
   const tira = png(d.tira, MAX_TIRA);
   const ref = d.referencia ? png(d.referencia, MAX_REF) : null;
   if (!original || !trabajo || !tira) {

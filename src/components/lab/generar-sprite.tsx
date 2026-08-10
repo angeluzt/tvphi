@@ -5,13 +5,13 @@ import {
   Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check, FolderOpen, UserRound, Pencil, Plus,
   Search, RefreshCw, ChevronLeft, ChevronRight, Trash2,
 } from "lucide-react";
-import { pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
+import { mensajeLegible, pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
 import {
   celdasSpriteEnRejilla, cortarHoja, fotogramasDeTira, nombreSprite, tiraDeFotogramas,
   type CeldaSprite, type Fotograma,
 } from "@/lib/lab/sprites";
 import { cargarImagen } from "@/lib/lab/quitar-fondo";
-import { pngBase64ABlob } from "@/lib/lab/png-base64";
+import { blobDeUrlDeImagen, pngBase64ABlob } from "@/lib/lab/png-base64";
 import { zip, bajar } from "@/lib/lab/exportar";
 import { leerZip } from "@/lib/story/zip";
 import { VistaSprite } from "./vista-sprite";
@@ -430,10 +430,18 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       setPaso("Guardando en tu taller…");
       let refinadoOk = !!j.guardadoEnDb;
       try {
-        const refBlob = await (await fetch(hechoLocal.fotos[0].url)).blob();
+        // Sin `fetch` sobre el data: URL del fotograma: con hojas grandes
+        // Chromium lo rechaza con «Failed to fetch» ANTES de mandar nada, y
+        // como esta era la primera línea del try, se saltaba el guardado
+        // entero. Pasaba en cada generación.
+        const refBlob = await blobDeUrlDeImagen(hechoLocal.fotos[0].url);
+        // La hoja de trabajo solo se manda si de verdad se ha retocado. Nada
+        // más generar es el MISMO blob que la original, así que mandarla era
+        // repetir un megabyte en una petición que ya iba justa.
+        const retocada = hechoLocal.hoja.blob !== hechoLocal.hoja.originalBlob;
         const [hojaOriginal, hojaTrabajo, tiraB64, referencia] = await Promise.all([
           blobABase64(hechoLocal.hoja.originalBlob),
-          blobABase64(hechoLocal.hoja.blob),
+          retocada ? blobABase64(hechoLocal.hoja.blob) : Promise.resolve(undefined),
           blobABase64(hechoLocal.blob),
           blobABase64(refBlob),
         ]);
@@ -496,7 +504,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       ));
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(mensajeLegible(e));
       setPaso(null);
     }
   }
@@ -621,6 +629,9 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       } : prev);
       setGuardado(false);
       setGuardadoPrivado(false);
+      // Si algo había fallado antes y ESTO sale bien, el error viejo sobra:
+      // dejarlo puesto al lado de un mensaje de éxito no dice cuál manda.
+      setError(null);
       setAviso(
         `${fotos.length} fotogramas corregidos · ${tira.ancho}×${tira.alto}`
         + ` · ${pesoLegible(tira.blob.size)}`,
@@ -669,7 +680,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   }
 
   async function guardarEnPersonaje(){if(!hecho||guardando||edicionPendiente||!nombrePersonaje.trim())return;setGuardando(true);setError(null);try{
-    const refBlob=await(await fetch(hecho.fotos[0].url)).blob();const [hojaOriginal,hojaTrabajo,tira,referencia]=await Promise.all([
+    const refBlob=await blobDeUrlDeImagen(hecho.fotos[0].url);const [hojaOriginal,hojaTrabajo,tira,referencia]=await Promise.all([
       blobABase64(hecho.hoja.originalBlob),blobABase64(hecho.hoja.blob),blobABase64(hecho.blob),blobABase64(refBlob)]);
     const j=await pedirJson("/api/story/sprite-characters",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       personajeId:personajeId||undefined,animacionId:animacionId||undefined,nombrePersonaje:nombrePersonaje.trim(),descripcionPersonaje:descripcionPersonaje.trim()||que.trim(),
@@ -678,7 +689,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       celdas:hecho.hoja.celdas,hojaOriginal,hojaTrabajo,tira,referencia:personajeId?undefined:referencia})});
     setPersonajeId(j.personajeId);setAnimacionId(j.animacionId);setGuardadoPrivado(true);await releerPersonajes();
     setAviso(j.actualizada?`Cambios guardados${j.enAtlas?" y actualizados en el atlas.":"."}`:`Animación guardada${j.enAtlas?" y compactada en el atlas.":"."}`);
-  }catch(e){setError((e as Error).message);}finally{setGuardando(false);}}
+  }catch(e){setError(mensajeLegible(e));}finally{setGuardando(false);}}
 
   /**
    * Abrir una animación guardada para corregirla.
@@ -690,7 +701,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
    */
   async function editarAnimacion(id:string){if(paso)return;setPaso("Abriendo la animación…");setError(null);let uh:string|null=null,ut:string|null=null;try{
     const j=await pedirJson(`/api/story/sprite-characters/animations/${id}`),a=j.animacion as ProyectoAnimacionSprite;
-    const bajar=async(u:string)=>{const r=await fetch(u);if(!r.ok)throw new Error(`No se pudo bajar la imagen (${r.status}).`);return r.blob();};
+    const bajar=blobDeUrlDeImagen;
     const [bo,bh,bt]=await Promise.all([bajar(a.hojaOriginalUrl),bajar(a.hojaTrabajoUrl),bajar(a.tiraUrl)]);
     uh=URL.createObjectURL(bh);ut=URL.createObjectURL(bt);const fotos=await fotogramasDeTira(ut,a.fotogramas);
     setHecho({edicionId:Date.now(),fotos,url:ut,blob:bt,ancho:a.ancho,alto:a.alto,descartados:0,hoja:{sesionId:Date.now(),url:uh,blob:bh,originalBlob:bo,
@@ -699,7 +710,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     setQue(a.que);setNombre(a.nombre);setN(a.fotogramas);setFps(a.fps);setVista(a.vista);setDireccion(a.direccion);setAccion(a.accion);setAnclaje(a.anclaje);
     setForma(a.columnas>=a.filas?"tira":"columna");setDistribucion(a.filas===1?"fila":a.columnas===1?"columna":"equilibrada");setGuardado(false);setGuardadoPrivado(true);
     setCortesPendientes(false);setHojaPendiente(false);setEditorActivo("hoja");setAviso("Animación abierta para corregir.");
-  }catch(e){if(uh)URL.revokeObjectURL(uh);if(ut)URL.revokeObjectURL(ut);setError((e as Error).message);}finally{setPaso(null);}}
+  }catch(e){if(uh)URL.revokeObjectURL(uh);if(ut)URL.revokeObjectURL(ut);setError(mensajeLegible(e));}finally{setPaso(null);}}
 
   const tallerApi = useRef({
     editarAnimacion: async (_id: string) => {},
