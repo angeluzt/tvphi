@@ -32,7 +32,7 @@ export async function GET() {
     select: {
       id: true, nombre: true, que: true, fotogramas: true, fps: true,
       vista: true, direccion: true, accion: true, anclaje: true,
-      ancho: true, alto: true, bytes: true, createdAt: true,
+      ancho: true, alto: true, bytes: true, createdAt: true, animationId: true,
     },
   });
 
@@ -50,7 +50,19 @@ export async function GET() {
     alto: f.alto,
     bytes: f.bytes,
     creadoEn: f.createdAt.toISOString(),
+    animationId: f.animationId,
   }));
+
+  // Solo si el usuario actual es dueño de la plantilla: sirve para Editar / Nueva animación.
+  const enlaces = [...new Set(sprites.map((s) => s.animationId).filter(Boolean))] as string[];
+  let propias: Record<string, string> = {};
+  if (enlaces.length) {
+    const rows = await prisma.spriteAnimation.findMany({
+      where: { id: { in: enlaces }, character: { userId: user.id } },
+      select: { id: true, characterId: true },
+    });
+    propias = Object.fromEntries(rows.map((r) => [r.id, r.characterId]));
+  }
 
   return NextResponse.json({
     sprites,
@@ -58,6 +70,8 @@ export async function GET() {
     // Lo que ocupa todo junto, para saber si esto se está yendo de las manos.
     bytes: sprites.reduce((a, s) => a + s.bytes, 0),
     puedeEditar: esAdminHistorias(user.email),
+    /** animationId → characterId propias del usuario (editables). */
+    plantillas: propias,
   });
 }
 
@@ -74,6 +88,8 @@ const cuerpo = z.object({
   alto: z.number().int().min(1).max(4096),
   /** La tira entera en base64, tal como la compuso el navegador. */
   tira: z.string().min(1),
+  /** Plantilla editable asociada (animación del taller), si ya se guardó. */
+  animationId: z.string().cuid().optional(),
 });
 
 export async function POST(req: Request) {
@@ -124,6 +140,16 @@ export async function POST(req: Request) {
     }, { status: 409 });
   }
 
+  if (d.animationId) {
+    const propia = await prisma.spriteAnimation.findFirst({
+      where: { id: d.animationId, character: { userId: user.id } },
+      select: { id: true },
+    });
+    if (!propia) {
+      return NextResponse.json({ error: "La plantilla enlazada no existe." }, { status: 400 });
+    }
+  }
+
   const fila = await prisma.sprite.create({
     data: {
       nombre: d.nombre,
@@ -139,8 +165,9 @@ export async function POST(req: Request) {
       tira,
       bytes: tira.byteLength,
       creadoPor: user.id,
+      animationId: d.animationId,
     },
-    select: { id: true, createdAt: true },
+    select: { id: true, createdAt: true, animationId: true },
   });
 
   return NextResponse.json({
@@ -159,6 +186,7 @@ export async function POST(req: Request) {
       alto: d.alto,
       bytes: tira.byteLength,
       creadoEn: fila.createdAt.toISOString(),
+      animationId: fila.animationId,
     } satisfies SpriteMeta,
   });
 }

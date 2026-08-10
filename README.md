@@ -7,7 +7,7 @@ componerlas/exportarlas **en el navegador**. El servidor guarda la **cuenta** y 
 ## Qué incluye
 
 - **Historias** (`/story`): generar capítulos con IA, personajes, voz, export ZIP/video.
-- **Personajes** y **sprites** (`/sprites`, `/lab`): biblia y animaciones 2.5D.
+- **Personajes** (Historias) y **sprites** (taller único en `/lab?tab=sprites`).
 - Composición + FFmpeg WASM en el cliente (el video no se sube al servidor).
 - Auth (JWT httpOnly), cupos de IA, panel `/admin` para exentos.
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
-import { LogOut, User, Sparkles, BarChart3, FlaskConical, Bird } from "lucide-react";
+import { LogOut, User, Sparkles, BarChart3, FlaskConical } from "lucide-react";
 
 interface HeaderUser {
   username: string;
@@ -26,7 +26,6 @@ export function SiteHeader({ user }: { user: HeaderUser | null }) {
                 <Sparkles className="h-4 w-4" />
                 <span className="hidden sm:inline">Historias</span>
               </Link>
-              <Link href="/sprites" className="btn-ghost" title="Taller de sprites animados"><Bird className="h-4 w-4 text-accent"/><span className="hidden lg:inline">Sprites</span></Link>
               {user.admin && (
                 <>
                   <Link
@@ -37,13 +36,11 @@ export function SiteHeader({ user }: { user: HeaderUser | null }) {
                     <BarChart3 className="h-4 w-4" />
                     <span className="hidden sm:inline">Uso</span>
                   </Link>
-                  {/* En pruebas: escenas por capas con paralaje. Está aquí para
-                      poder trastear con ello; cuando entre en el editor de
-                      historias, esta pestaña se va. */}
+                  {/* Lab incluye el taller único de sprites (/lab?tab=sprites). */}
                   <Link
                     href="/lab"
                     className="btn-ghost"
-                    title="Escenas por capas con paralaje · en pruebas, solo admin"
+                    title="Escenas por capas y taller de sprites · en pruebas, solo admin"
                   >
                     <FlaskConical className="h-4 w-4 text-gold" />
                     <span className="hidden sm:inline">Lab</span>
