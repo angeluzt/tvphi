@@ -54,20 +54,33 @@ export function HerramientasCapa({
   const promptMapa = capaMapa?.ai?.prompt ?? "";
   const estilo = mapa?.scene.style ?? "";
   const desc = mapa?.scene.description ?? "";
+  const puedeRegenerarIa = !!puedeIa && !!mapa && !!capaMapa;
 
   async function cargarArchivo(file: File | null) {
     if (!file) return;
     setBusy("Cargando imagen…"); setNota(null);
     try {
       const dataUrl = await leerArchivo(file);
+      // Sustituir NUNCA pide mapa: es tu PNG/JPEG. Si el recorte de croma
+      // falla, igual se usa la imagen (mejor que quedarse sin arreglo).
       const rec = await prepararCapa(dataUrl, esFondo);
-      if (rec.problema) throw new Error(
-        rec.problema === "croma-en-fondo"
-          ? "La imagen de fondo tenía magenta técnico"
-          : "No se pudo limpiar el fondo de esta imagen",
+      if (rec.problema && esFondo) {
+        throw new Error(
+          rec.problema === "croma-en-fondo"
+            ? "La imagen de fondo tenía magenta técnico. Sube un fondo opaco sin magenta."
+            : "No se pudo usar esta imagen como fondo.",
+        );
+      }
+      onImagen({
+        url: rec.url,
+        via: rec.problema ? "opaca" : rec.via,
+        vacio: rec.vacio,
+      });
+      setNota(
+        rec.problema
+          ? "Imagen puesta tal cual (no se pudo limpiar el fondo automáticamente)."
+          : "Imagen sustituida. El resto de capas no se tocó.",
       );
-      onImagen({ url: rec.url, via: rec.via, vacio: rec.vacio });
-      setNota("Imagen sustituida. El resto de capas no se tocó.");
     } catch (e) { setNota((e as Error).message); }
     finally { setBusy(null); if (fileRef.current) fileRef.current.value = ""; }
   }
@@ -132,18 +145,29 @@ export function HerramientasCapa({
     }, null, 2);
   }
 
+  function motivoSinRegen(): string {
+    if (!puedeIa) return "La IA del lab no está disponible ahora.";
+    if (!mapa) {
+      return "Para regenerar con IA hace falta el mapa (pestaña «1 · Mapa de la escena»). "
+        + "Si restauraste solo las imágenes, importa el ZIP con «Importar todo» (trae el mapa) "
+        + "o usa «Sustituir imagen» con un PNG hecho fuera.";
+    }
+    if (!capaMapa) {
+      return "Esta capa no está en el mapa (se añadió a mano o cambió el id). "
+        + "Usa «Sustituir imagen» con tu archivo, o regenera una capa que sí salió del mapa.";
+    }
+    return "";
+  }
+
   async function regenerar() {
-    if (!puedeIa) {
-      setNota("La IA del lab no está disponible en este momento.");
+    if (!puedeRegenerarIa) {
+      setNota(motivoSinRegen());
       return;
     }
-    if (!mapa || !capaMapa) {
-      setNota("Hace falta el mapa de la escena (pestaña 1) para regenerar con congruencia.");
-      return;
-    }
+    if (!mapa || !capaMapa) return;
     const texto = (prompt.trim() || promptMapa).trim();
     if (texto.length < 3) {
-      setNota("Escribe qué quieres dibujar en esta capa.");
+      setNota("Escribe qué quieres dibujar en esta capa (o deja el prompt del mapa).");
       return;
     }
     setBusy("Regenerando con IA…"); setNota(null);
@@ -206,36 +230,51 @@ export function HerramientasCapa({
 
       {!esSprite && (
         <>
-          <label className="block text-[10px] text-muted">
-            Prompt para regenerar (o para copiar a otra IA)
-            <textarea
-              className="input mt-0.5 min-h-[4rem] w-full py-1 text-[11px]"
-              placeholder={promptMapa || "Ej: ocean surface seen from above, deep blue water, soft ripples…"}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value.slice(0, 4000))}
-              disabled={!!busy}
-            />
-          </label>
-          {promptMapa && !prompt && (
-            <p className="text-[9px] text-muted truncate" title={promptMapa}>
-              Del mapa: {promptMapa}
+          <div className="rounded border border-accent/30 bg-accent/5 p-1.5 space-y-1.5">
+            <p className="text-[10px] font-medium text-fg">1 · Sustituir con tu archivo</p>
+            <p className="text-[9px] leading-snug text-muted">
+              No necesita mapa ni IA. Sube el PNG/JPEG (p. ej. el océano que hiciste en ChatGPT)
+              y reemplaza solo esta capa.
             </p>
-          )}
-          <div className="flex flex-wrap gap-1">
-            <button type="button" disabled={!!busy || !puedeIa} onClick={() => void regenerar()}
-              className="btn-ghost px-2 py-1 text-[10px] disabled:opacity-40"
-              title="Misma geometría del mapa + estilo de la escena">
+            <button type="button" disabled={!!busy} onClick={() => fileRef.current?.click()}
+              className="btn-brand w-full justify-center px-2 py-1.5 text-[11px]">
+              <Upload className="h-3.5 w-3.5" /> Sustituir imagen…
+            </button>
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+              onChange={(e) => void cargarArchivo(e.target.files?.[0] ?? null)} />
+          </div>
+
+          <div className="rounded border border-border/70 bg-surface/40 p-1.5 space-y-1.5">
+            <p className="text-[10px] font-medium text-fg">2 · Regenerar con IA (opcional)</p>
+            <p className="text-[9px] leading-snug text-muted">
+              {puedeRegenerarIa
+                ? "Usa el mapa de color de esta capa + el estilo de la escena para que encaje."
+                : motivoSinRegen()}
+            </p>
+            <label className="block text-[10px] text-muted">
+              Prompt
+              <textarea
+                className="input mt-0.5 min-h-[3.5rem] w-full py-1 text-[11px]"
+                placeholder={promptMapa || "Ej: ocean surface seen from above, deep blue water…"}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value.slice(0, 4000))}
+                disabled={!!busy || !puedeRegenerarIa}
+              />
+            </label>
+            {promptMapa && !prompt && puedeRegenerarIa && (
+              <p className="text-[9px] text-muted truncate" title={promptMapa}>
+                Del mapa: {promptMapa}
+              </p>
+            )}
+            <button type="button" disabled={!!busy || !puedeRegenerarIa}
+              onClick={() => void regenerar()}
+              className="btn-ghost w-full justify-center px-2 py-1 text-[10px] disabled:opacity-40"
+              title={puedeRegenerarIa ? "Misma geometría del mapa + estilo" : motivoSinRegen()}>
               {busy?.startsWith("Regen") || busy?.startsWith("Corrig")
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 : <Wand2 className="h-3.5 w-3.5 text-accent" />}
               Regenerar con IA
             </button>
-            <button type="button" disabled={!!busy} onClick={() => fileRef.current?.click()}
-              className="btn-ghost px-2 py-1 text-[10px]">
-              <Upload className="h-3.5 w-3.5 text-accent" /> Sustituir imagen
-            </button>
-            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
-              onChange={(e) => void cargarArchivo(e.target.files?.[0] ?? null)} />
           </div>
         </>
       )}
@@ -267,10 +306,6 @@ export function HerramientasCapa({
           </button>
         )}
       </div>
-      <p className="text-[9px] leading-snug text-muted">
-        Regenerar usa el mapa de color de esta capa y el estilo común, para que encaje con el resto.
-        PNG/JSON sirven para pegar el arreglo en ChatGPT u otra IA y volver a «Sustituir imagen».
-      </p>
       {(busy || nota) && (
         <p className={`text-[10px] ${busy ? "text-muted" : "text-fg"}`}>
           {busy ? <><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />{busy}</> : nota}
