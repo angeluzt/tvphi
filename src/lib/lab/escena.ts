@@ -216,17 +216,63 @@ export function esGuia(c: Capa): boolean {
 // una IA, y «layers[2].objects[0]: falta «shape»» le sirve para corregir el
 // prompt; «invalid_type» no.
 
+/**
+ * Acepta el JSON «puro» del mapa y también envoltorios habituales:
+ * - montaje.json del ZIP del proyecto (`{ version, capas, escena: { scene, layers } }`)
+ * - respuestas `{ escena: … }` / `{ bruto: … }`
+ *
+ * Sin esto, reimportar montaje.json en la pestaña Mapa falla con
+ * «falta el bloque scene» aunque el mapa vaya sano dentro de `.escena`.
+ */
+export function desenrollarEntradaMapa(data: unknown): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const d = data as Record<string, unknown>;
+
+  const candidato =
+    (d.escena && typeof d.escena === "object" ? d.escena : null)
+    ?? (d.bruto && typeof d.bruto === "object" ? d.bruto : null)
+    ?? (d.map && typeof d.map === "object" ? d.map : null)
+    ?? data;
+
+  // Si el envoltorio traía el mapa anidado, desenróllalo una sola vez.
+  if (candidato !== data && candidato && typeof candidato === "object") {
+    const c = candidato as Record<string, unknown>;
+    if (c.scene || c.layers) return candidato;
+  }
+  return data;
+}
+
 export function revisar(data: unknown): { escena: Escena } | { error: string } {
   const fallos: string[] = [];
-  const d = data as Escena;
+  const crudo = data as Record<string, unknown> | null;
+  const d = desenrollarEntradaMapa(data) as Escena;
   if (!d || typeof d !== "object") return { error: "El JSON no es un objeto." };
-  if (!d.scene || typeof d.scene !== "object") fallos.push("falta el bloque «scene»");
-  else {
+
+  // Pista concreta cuando alguien sube montaje.json al importador del mapa.
+  const pareceMontaje =
+    !!crudo
+    && typeof crudo === "object"
+    && (Array.isArray(crudo.capas) || crudo.version === 1 || crudo.version === 2)
+    && !crudo.scene
+    && !crudo.layers;
+
+  if (!d.scene || typeof d.scene !== "object") {
+    fallos.push(
+      pareceMontaje && !(crudo as any)?.escena
+        ? "esto parece un montaje.json sin mapa dentro; recupéralo con «Importar todo» en Montaje y paralaje"
+        : "falta el bloque «scene»",
+    );
+  } else {
     if (!d.scene.id) fallos.push("scene.id está vacío");
     if (!(d.scene.width > 0) || !(d.scene.height > 0)) fallos.push("scene.width y scene.height tienen que ser números mayores que cero");
   }
-  if (!Array.isArray(d.layers) || !d.layers.length) fallos.push("«layers» tiene que ser una lista con al menos una capa");
-  else {
+  if (!Array.isArray(d.layers) || !d.layers.length) {
+    fallos.push(
+      pareceMontaje && (crudo as any)?.escena
+        ? "el mapa dentro de montaje.json no trae capas"
+        : "«layers» tiene que ser una lista con al menos una capa",
+    );
+  } else {
     const vistos = new Set<string>();
     d.layers.forEach((capa, i) => {
       if (!capa || typeof capa !== "object") { fallos.push(`layers[${i}] no es un objeto`); return; }
