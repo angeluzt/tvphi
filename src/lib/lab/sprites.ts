@@ -1,4 +1,6 @@
-import { cargarImagen, colorDelFondo, parseHex, quitarColor, CROMA } from "./quitar-fondo";
+import {
+  cargarImagen, colorDelFondo, fraccionCroma, parseHex, quitarColor, CROMA,
+} from "./quitar-fondo";
 
 // Partir una hoja de sprites en fotogramas sueltos, limpios y recortados.
 //
@@ -448,7 +450,25 @@ export async function tiraDeFotogramas(fotos: Fotograma[]): Promise<{
 }
 
 /** Abre una tira guardada y recupera sus cuadros editables sin guardarlos sueltos. */
-export async function fotogramasDeTira(dataUrl: string, fotogramas: number): Promise<Fotograma[]> {
+/**
+ * Parte una tira en fotogramas, quitando el croma si todavía lo lleva.
+ *
+ * POR QUÉ HACE FALTA LIMPIAR AQUÍ. El autoguardado del servidor deja una tira
+ * BRUTA, con el fondo magenta opaco: es el recorte directo de la hoja, sin
+ * pasar por el navegador. Lo normal es que el cliente la sustituya enseguida
+ * por la limpia… y mientras eso falló, quedaron sprites guardados en magenta.
+ *
+ * Al abrirlos para editar se cargaba esa tira y nadie volvía a mirarla, así que
+ * el rosa se quedaba para siempre y se regrababa en cada guardado. Ahora se
+ * mira: si el fotograma sigue teniendo fondo de croma, se le quita. Un sprite
+ * ya limpio no se toca —`fraccionCroma` da casi cero— así que esto no puede
+ * estropear los que están bien.
+ */
+export async function fotogramasDeTira(
+  dataUrl: string,
+  fotogramas: number,
+  croma?: string,
+): Promise<Fotograma[]> {
   const img = await cargarImagen(dataUrl);
   const n = Math.max(1, Math.round(fotogramas));
   if (img.naturalWidth % n !== 0) {
@@ -456,9 +476,18 @@ export async function fotogramasDeTira(dataUrl: string, fotogramas: number): Pro
   }
   const ancho = img.naturalWidth / n;
   const alto = img.naturalHeight;
+  const base = parseHex(croma ?? "") ?? parseHex(CROMA);
   return Array.from({ length: n }, (_, i) => {
     const cv = lienzo(ancho, alto);
-    cv.getContext("2d")!.drawImage(img, i * ancho, 0, ancho, alto, 0, 0, ancho, alto);
+    const c = cv.getContext("2d")!;
+    c.drawImage(img, i * ancho, 0, ancho, alto, 0, 0, ancho, alto);
+    if (base) {
+      const d = c.getImageData(0, 0, cv.width, cv.height).data;
+      // Un quinto del fotograma en el color de fondo ya es un fondo, no un
+      // detalle del dibujo. Por debajo de eso se deja en paz: hay sprites que
+      // legítimamente llevan ese color encima.
+      if (fraccionCroma(d, cv.width, cv.height, base) > 0.2) quitarColor(cv, base);
+    }
     return fotogramaDeLienzo(cv);
   });
 }

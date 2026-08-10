@@ -136,7 +136,19 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   const [nombre, setNombre] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
-  const [guardadoPrivado, setGuardadoPrivado] = useState(false);
+  /**
+   * La firma de lo ÚLTIMO que se guardó en el taller.
+   *
+   * Antes esto era un booleano que ponían a false los `onChange` de cada
+   * campo… menos los que se olvidaron. Cambiar la velocidad, la vista, la
+   * dirección, la acción o el anclaje no lo tocaban, así que el botón se
+   * quedaba deshabilitado diciendo «Guardado» con cambios sin guardar: la
+   * interfaz afirmaba lo contrario de lo que pasaba.
+   *
+   * Comparando firmas no hay nada que recordar: si un campo entra en lo que se
+   * manda, entra en la firma, y el botón se entera solo.
+   */
+  const [firmaGuardada, setFirmaGuardada] = useState<string | null>(null);
   const [personajes, setPersonajes] = useState<PersonajeSprite[]>([]);
   const [personajeId, setPersonajeId] = useState("");
   const [busquedaBiblio, setBusquedaBiblio] = useState("");
@@ -161,6 +173,42 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   const [editorActivo, setEditorActivo] = useState<"hoja" | "cortes" | "fotogramas">("hoja");
   const revisionTira = useRef(0);
   const edicionPendiente = cortesPendientes || hojaPendiente;
+
+  /**
+   * Todo lo que viaja en el guardado, en una cadena.
+   *
+   * `hecho` entra por su `edicionId` y por el tamaño de la tira: eso cubre los
+   * cambios en la IMAGEN —recortes, fotogramas borrados o reordenados— que no
+   * son campos de formulario pero también hay que guardar.
+   */
+  const firmaCon = (pid: string, aid: string | null) => JSON.stringify([
+    nombre.trim(), nombrePersonaje.trim(), descripcionPersonaje.trim(), que.trim(),
+    fps, vista, direccion, accion, anclaje,
+    pid, aid,
+    hecho?.edicionId, hecho?.fotos.length, hecho?.ancho, hecho?.alto, hecho?.blob.size,
+  ]);
+  // Los ids van como parámetro porque al guardar algo NUEVO el servidor los
+  // devuelve y se fijan en el mismo golpe: la firma que hay que recordar es la
+  // de después, con sus ids, no la de antes.
+  const firmaActual = firmaCon(personajeId, animacionId);
+  /** Si lo que hay ahora es exactamente lo último guardado, no hay nada que hacer. */
+  const guardadoPrivado = firmaGuardada !== null && firmaGuardada === firmaActual;
+
+  /**
+   * «Da por guardado lo que haya cuando se asiente el render.»
+   *
+   * Hace falta porque guardar y abrir cambian una docena de campos de golpe, y
+   * la firma que se ve dentro del manejador es la de ANTES de esos cambios.
+   * Sellarla ahí dejaría el botón diciendo que hay cambios recién guardados.
+   * Con el contador, el sello se pone cuando ya está todo puesto.
+   */
+  const [sello, setSello] = useState(0);
+  const marcarGuardado = () => setSello((n) => n + 1);
+  useEffect(() => {
+    if (sello) setFirmaGuardada(firmaActual);
+    // A propósito solo con `sello`: es el disparo, no la firma.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sello]);
   const personajeSeleccionado = personajes.find((p) => personajeId && p.spriteId === personajeId) ?? null;
 
   const terminoBiblio = busquedaBiblio.trim().toLocaleLowerCase("es");
@@ -183,7 +231,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     setAnimacionId(null);
     setRefAnimacionId("");
     setRefCuadro("ultimo");
-    setGuardadoPrivado(false);
+    setFirmaGuardada(null);
     setNombrePersonaje(p?.nombre ?? "");
     setDescripcionPersonaje(p?.descripcion ?? "");
   }
@@ -325,7 +373,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
 
   async function generar() {
     if (!puedeGenerar || que.trim().length < 3) return;
-    setError(null); setAviso(null); setHecho(null); setGuardado(false);setGuardadoPrivado(false);setAnimacionId(null);
+    setError(null); setAviso(null); setHecho(null); setGuardado(false);setFirmaGuardada(null);setAnimacionId(null);
     setPaso("Dibujando la hoja…");
     try {
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/sprite", {
@@ -347,7 +395,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       const aidGuardado = typeof j.animacionId === "string" ? j.animacionId : null;
       if (pidGuardado) setPersonajeId(pidGuardado);
       if (aidGuardado) setAnimacionId(aidGuardado);
-      if (j.guardadoEnDb && aidGuardado) setGuardadoPrivado(true);
+      if (j.guardadoEnDb && aidGuardado) marcarGuardado();
 
       setPaso("Preparando la hoja original…");
       // Nunca fetch("data:…"): con PNGs grandes tira "Failed to fetch" tras un 200.
@@ -477,7 +525,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         });
         setPersonajeId(guard.personajeId);
         setAnimacionId(guard.animacionId);
-        setGuardadoPrivado(true);
+        marcarGuardado();
         refinadoOk = true;
         await releerPersonajes();
       } catch (ge) {
@@ -485,7 +533,10 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         // Si el servidor ya guardó el borrador, NO es pérdida: el taller tiene la hoja.
         if (!j.guardadoEnDb) throw ge;
         refinadoOk = true;
-        setGuardadoPrivado(true);
+        // NO se da por guardado: el recorte limpio no llegó a subir, así que
+        // sí quedan cambios. Dejar el botón activo permite reintentar sin
+        // tener que tocar un campo cualquiera para «despertarlo».
+        setFirmaGuardada(null);
         void releerPersonajes();
         setAviso(
           "Sprite guardado en el taller. El recorte fino no se alcanzó a subir "
@@ -548,7 +599,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       } : prev);
       aceptada = true;
       setGuardado(false);
-      setGuardadoPrivado(false);
+      setFirmaGuardada(null);
       setHojaPendiente(false);
       setEditorActivo("cortes");
       setAviso(
@@ -596,7 +647,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         hoja: { ...prev.hoja, celdas: cortada.celdas },
       } : prev);
       setGuardado(false);
-      setGuardadoPrivado(false);
+      setFirmaGuardada(null);
       setCortesPendientes(false);
       setEditorActivo("fotogramas");
       setAviso(
@@ -628,7 +679,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         alto: tira.alto,
       } : prev);
       setGuardado(false);
-      setGuardadoPrivado(false);
+      setFirmaGuardada(null);
       // Si algo había fallado antes y ESTO sale bien, el error viejo sobra:
       // dejarlo puesto al lado de un mensaje de éxito no dice cuál manda.
       setError(null);
@@ -687,7 +738,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       nombre:nombre.trim()||nombreCorto(que),que:que.trim(),fotogramas:hecho.fotos.length,fps,vista,direccion,accion,anclaje,croma:hecho.hoja.croma,
       columnas:hecho.hoja.columnas,filas:hecho.hoja.filas,anchoHoja:hecho.hoja.ancho,altoHoja:hecho.hoja.alto,ancho:hecho.ancho,alto:hecho.alto,
       celdas:hecho.hoja.celdas,hojaOriginal,hojaTrabajo,tira,referencia:personajeId?undefined:referencia})});
-    setPersonajeId(j.personajeId);setAnimacionId(j.animacionId);setGuardadoPrivado(true);await releerPersonajes();
+    setPersonajeId(j.personajeId);setAnimacionId(j.animacionId);marcarGuardado();await releerPersonajes();
     setAviso(j.actualizada?`Cambios guardados${j.enAtlas?" y actualizados en el atlas.":"."}`:`Animación guardada${j.enAtlas?" y compactada en el atlas.":"."}`);
   }catch(e){setError(mensajeLegible(e));}finally{setGuardando(false);}}
 
@@ -703,12 +754,12 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     const j=await pedirJson(`/api/story/sprite-characters/animations/${id}`),a=j.animacion as ProyectoAnimacionSprite;
     const bajar=blobDeUrlDeImagen;
     const [bo,bh,bt]=await Promise.all([bajar(a.hojaOriginalUrl),bajar(a.hojaTrabajoUrl),bajar(a.tiraUrl)]);
-    uh=URL.createObjectURL(bh);ut=URL.createObjectURL(bt);const fotos=await fotogramasDeTira(ut,a.fotogramas);
+    uh=URL.createObjectURL(bh);ut=URL.createObjectURL(bt);const fotos=await fotogramasDeTira(ut,a.fotogramas,a.croma);
     setHecho({edicionId:Date.now(),fotos,url:ut,blob:bt,ancho:a.ancho,alto:a.alto,descartados:0,hoja:{sesionId:Date.now(),url:uh,blob:bh,originalBlob:bo,
       ancho:a.anchoHoja,alto:a.altoHoja,forma:a.columnas>=a.filas?"tira":"columna",columnas:a.columnas,filas:a.filas,croma:a.croma,celdas:a.celdas}});uh=null;ut=null;
     const p=personajes.find(x=>x.spriteId===a.personajeId);setPersonajeId(a.personajeId);setAnimacionId(a.id);setNombrePersonaje(a.personajeNombre);setDescripcionPersonaje(p?.descripcion??a.que);
     setQue(a.que);setNombre(a.nombre);setN(a.fotogramas);setFps(a.fps);setVista(a.vista);setDireccion(a.direccion);setAccion(a.accion);setAnclaje(a.anclaje);
-    setForma(a.columnas>=a.filas?"tira":"columna");setDistribucion(a.filas===1?"fila":a.columnas===1?"columna":"equilibrada");setGuardado(false);setGuardadoPrivado(true);
+    setForma(a.columnas>=a.filas?"tira":"columna");setDistribucion(a.filas===1?"fila":a.columnas===1?"columna":"equilibrada");setGuardado(false);marcarGuardado();
     setCortesPendientes(false);setHojaPendiente(false);setEditorActivo("hoja");setAviso("Animación abierta para corregir.");
   }catch(e){if(uh)URL.revokeObjectURL(uh);if(ut)URL.revokeObjectURL(ut);setError(mensajeLegible(e));}finally{setPaso(null);}}
 
@@ -847,7 +898,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       setN(proyecto.celdas.length);
       setAnimacionId(null);setPersonajeId("");setNombrePersonaje(proyecto.nombre);setDescripcionPersonaje(proyecto.que);
       setGuardado(false);
-      setGuardadoPrivado(false);
+      setFirmaGuardada(null);
       setCortesPendientes(false);
       setHojaPendiente(false);
       setEditorActivo("hoja");
@@ -953,7 +1004,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
             value={nombrePersonaje}
             maxLength={60}
             placeholder="Lumi, el zorro astral"
-            onChange={(e) => { setNombrePersonaje(e.target.value); setGuardadoPrivado(false); }}
+            onChange={(e) => { setNombrePersonaje(e.target.value); setFirmaGuardada(null); }}
           />
         </label>
       </div>
@@ -1108,6 +1159,8 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
               anchoHoja={hecho.hoja.ancho}
               altoHoja={hecho.hoja.alto}
               forma={hecho.hoja.forma}
+              columnas={hecho.hoja.columnas}
+              filas={hecho.hoja.filas}
               croma={hecho.hoja.croma}
               celdas={hecho.hoja.celdas}
               procesando={actualizando}
@@ -1155,7 +1208,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
                 className="input mt-0.5 w-full py-1 text-xs"
                 value={nombre}
                 maxLength={60}
-                onChange={(e) => { setNombre(e.target.value); setGuardado(false);setGuardadoPrivado(false); }}
+                onChange={(e) => { setNombre(e.target.value); setGuardado(false);setFirmaGuardada(null); }}
                 aria-label="Nombre en la biblioteca"
               />
             </label>

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Crosshair, Crop, Loader2, RotateCcw } from "lucide-react";
 import {
-  celdasSpritePorDefecto, centrarCeldasEnContenido, normalizarCeldasSprite,
+  celdasSpriteEnRejilla, centrarCeldasEnContenido, normalizarCeldasSprite,
   tamanoComunCeldasSprite, type CajaContenido, type CeldaSprite,
 } from "@/lib/lab/sprites";
 import { cargarImagen, colorDelFondo, parseHex } from "@/lib/lab/quitar-fondo";
@@ -44,6 +44,8 @@ export function EditorCortesSprite({
   anchoHoja,
   altoHoja,
   forma,
+  columnas,
+  filas,
   croma,
   celdas,
   procesando,
@@ -52,6 +54,16 @@ export function EditorCortesSprite({
   onPendiente,
 }: {
   hojaUrl: string;
+  /**
+   * La rejilla REAL con la que se generó la hoja.
+   *
+   * Sin esto, «Rejilla original» se reinventaba el reparto a partir de `forma`
+   * —una tira de N en fila o una columna de N— y con una hoja de 3×2 devolvía
+   * tres franjas verticales que no cuadraban con nada. Y no había vuelta atrás:
+   * el reparto bueno ya no estaba en ninguna parte.
+   */
+  columnas: number;
+  filas: number;
   anchoHoja: number;
   altoHoja: number;
   forma: "tira" | "columna";
@@ -200,7 +212,9 @@ export function EditorCortesSprite({
   }
 
   const actual = locales[elegida];
-  const iniciales = celdasSpritePorDefecto(anchoHoja, altoHoja, locales.length, forma);
+  // La rejilla de origen sale de columnas×filas, que es como se cortó de
+  // verdad. `forma` sola no basta: solo distingue apaisada de alta.
+  const iniciales = celdasSpriteEnRejilla(anchoHoja, altoHoja, locales.length, { columnas, filas });
 
   return (
     <div className="space-y-3 rounded-xl border border-gold/35 bg-gold/5 p-3">
