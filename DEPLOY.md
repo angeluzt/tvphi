@@ -60,10 +60,10 @@ Sin migraciones aplicadas la app no sirve historias. En deploy, `start:prod` las
 NODE_ENV=production
 APP_URL=https://tvphi.com
 AUTH_SECRET=<openssl rand -base64 32>
-DATABASE_URL=<Postgres privado / referencia Railway>
-# En Railway (recomendado, una sola var):
-# DATABASE_URL=${{Postgres.DATABASE_PRIVATE_URL}}
-# (Prisma lee solo DATABASE_URL — ver prisma/schema.prisma)```
+DATABASE_URL=${{Postgres.DATABASE_PRIVATE_URL}}
+```
+
+(Cambia `Postgres` si el nombre del servicio es otro. Prisma lee solo `DATABASE_URL`.)
 
 Recomendadas para Historias + admin:
 
