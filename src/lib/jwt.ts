@@ -1,8 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "./env";
 
-// Firma/verificación de sesiones. Sin dependencias de Next, para poder usarse
-// tanto en route handlers como en el servidor de realtime (Socket.IO).
+// Firma/verificación de sesiones JWT (cookie httpOnly).
 
 const secret = new TextEncoder().encode(env.authSecret);
 export const SESSION_COOKIE = "tvphi_session";
