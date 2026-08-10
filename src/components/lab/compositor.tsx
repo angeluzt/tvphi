@@ -30,6 +30,7 @@ import { RangoPreciso } from "./rango-preciso";
 import { EditorCromaCapa, type CromaCorregido } from "./editor-croma-capa";
 import { HerramientasCapa } from "./herramientas-capa";
 import { BarraTransporte } from "./barra-transporte";
+import { PestanasMontaje, PanelMontajeCaja, type PanelMontaje } from "./paneles-montaje";
 import { VistaPreviaFlotante } from "./vista-previa-flotante";
 import { InspectorRapido, ParalajeGlobalSimple, type ModoEdicionCanvas } from "./inspector-rapido";
 import {
@@ -143,6 +144,9 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   const [capaActivaId, setCapaActivaId] = useState<string | null>(null);
   const [editandoCromaId, setEditandoCromaId] = useState<string | null>(null);
   const [previewAbierta, setPreviewAbierta] = useState(false);
+  // Qué grupo de mandos se está viendo. Los dos existen siempre en el árbol:
+  // el que no toca se esconde, para no perder focos ni arrastres a medias.
+  const [panel, setPanel] = useState<PanelMontaje>("elemento");
   const [modoEdicion, setModoEdicion] = useState<ModoEdicionCanvas>(null);
   const [moverTodo, setMoverTodo] = useState(false);
   const [volverRuta, setVolverRuta] = useState(true);
@@ -181,6 +185,21 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
   const borradorListo = useRef(false);
   const canvas = useRef<HTMLCanvasElement>(null);
   const caja = useRef<HTMLDivElement>(null);
+  // El lienzo grande. NO es una copia del pequeño: el bucle de dibujo apunta a
+  // uno o a otro según cuál se esté viendo.
+  //
+  // Antes la vista grande espejaba el lienzo incrustado con un drawImage por
+  // fotograma. Como el incrustado se dimensiona con el ancho de su caja —en un
+  // móvil, 320 px— la «vista previa a pantalla completa» era ese cuadro de 320
+  // px estirado: borroso, y sin más detalle del que ya se veía. Pintar
+  // directamente en el que está delante cuesta lo mismo y sale nítido.
+  const canvasPreview = useRef<HTMLCanvasElement>(null);
+  const cajaPreview = useRef<HTMLDivElement>(null);
+  const previewAbiertaRef = useRef(false);
+  // El bucle de dibujo vive en refs y no ve el estado de React. Sin esto, al
+  // abrir la vista grande se seguiría pintando en el lienzo pequeño y la grande
+  // se quedaría en negro.
+  previewAbiertaRef.current = previewAbierta;
   const raton = useRef({ x: 0, y: 0 });
   const encima = useRef(false);
   const tam = useRef({ w: 1920, h: 1080 });
@@ -743,10 +762,31 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     };
   }
 
+  /**
+   * En qué lienzo toca pintar y de qué ancho.
+   *
+   * Solo uno está delante en cada momento: la vista grande tapa la página
+   * entera. El tope de ancho sube con ella porque ahí sí hay sitio para
+   * aprovecharlo; en el incrustado, pasar de 1200 es gastar píxeles que nadie
+   * ve.
+   */
+  function destinoDibujo(): { cv: HTMLCanvasElement; ancho: number } | null {
+    if (previewAbiertaRef.current && canvasPreview.current) {
+      const disponible = cajaPreview.current?.clientWidth ?? 900;
+      return { cv: canvasPreview.current, ancho: Math.max(320, Math.min(1920, disponible)) };
+    }
+    if (!canvas.current) return null;
+    return {
+      cv: canvas.current,
+      ancho: Math.max(320, Math.min(1200, caja.current?.clientWidth ?? 900)),
+    };
+  }
+
   function pintar(dt: number) {
-    const cv = canvas.current;
-    if (!cv) return;
-    const ancho = Math.max(320, Math.min(1200, caja.current?.clientWidth ?? 900));
+    const destino = destinoDibujo();
+    if (!destino) return;
+    const cv = destino.cv;
+    const ancho = destino.ancho;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.round(ancho * dpr);
     const h = Math.round((w * tam.current.h) / tam.current.w);
@@ -1066,19 +1106,52 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     setAviso("Cámara al centro. La animación vuelve a empezar desde aquí.");
   }
 
+  /**
+   * Reproducir la escena. UNA sola cosa, siempre la misma.
+   *
+   * Antes esto hacía dos cosas distintas según el estado: con cola de cámara
+   * arrancaba la secuencia, y sin cola encendía el vaivén de reposo —que no es
+   * «la escena», es un paseo automático— y además abría la vista grande a la
+   * fuerza. Así que darle al play mostraba cosas distintas según lo que
+   * hubieras hecho antes, que es justo lo que hacía imposible testear.
+   *
+   * Ahora reproducir significa siempre: TODO desde el fotograma cero —cámara si
+   * hay cola, movimiento de capas, rutas y ciclos de sprites—, en el lienzo que
+   * estés mirando. La vista grande se abre cuando tú lo pidas, no sola.
+   */
   function toggleReproduccion() {
-    if (enSecuencia) {
+    if (enSecuencia || moviendo) {
       pararSecuencia();
+      setMoviendo(false);
       return;
     }
-    if (cola.length) {
-      iniciarSecuencia();
-      setPreviewAbierta(true);
-      return;
-    }
+    reproducirTodo();
+  }
+
+  /** Todo a cero y a andar. Es lo que hace el botón grande de play. */
+  function reproducirTodo() {
+    encima.current = false;
     retenerPoseRef.current = false;
-    setMoviendo((v) => !v);
-    setPreviewAbierta(true);
+    progresoUiRef.current = 0;
+    setProgresoUi(0);
+    if (cola.length) {
+      // iniciarSecuencia ya pone los relojes de capas y sprites a cero.
+      iniciarSecuencia();
+      return;
+    }
+    // Sin cola de cámara la escena sigue teniendo vida propia: capas que se
+    // mueven y sprites que ciclan. Se reinician para que empiece por el
+    // principio y no por donde se hubiera quedado.
+    relojRef.current = performance.now();
+    reiniciarMovimientosCapa();
+    reiniciarSpritesSincronizados();
+    refrescarRelojes((n) => n + 1);
+    setMoviendo(true);
+    setAviso(
+      capas.some((c) => c.mov || c.spr)
+        ? "Reproduciendo la escena."
+        : "No hay nada animado todavía: dale movimiento a una capa o mete un sprite.",
+    );
   }
 
   function seekCola(frac: number) {
@@ -1154,8 +1227,16 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
     setAviso(`Paralaje añadido a la cola (${pasos.length} paso${pasos.length === 1 ? "" : "s"}).`);
   }
 
+  /**
+   * Dónde se ha tocado, en 0..1 sobre la escena.
+   *
+   * Se mide contra el CANVAS, no contra su caja: en la vista grande el lienzo
+   * lleva `object-contain`, así que la caja tiene bandas negras a los lados y
+   * usarla desplazaría todo lo que se coloque. El rectángulo del canvas es el
+   * de la imagen de verdad.
+   */
   function coordsEnLienzo(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
-    const el = caja.current;
+    const el = (previewAbiertaRef.current ? canvasPreview.current : canvas.current) ?? caja.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return null;
@@ -1659,6 +1740,30 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
             >
               <canvas ref={canvas} className="block h-auto w-full" />
             </div>
+            {/* El transporte, PEGADO a la vista. Antes vivía al final de todos
+                los mandos: para darle al play había que bajar hasta abajo, y
+                desde ahí ya no se veía lo que estabas reproduciendo. */}
+            <BarraTransporte
+              reproduciendo={enSecuencia || (moviendo && !retenerPoseRef.current && anim !== "quieto")}
+              progreso={progresoUi}
+              disabled={!capas.length}
+              onPlayPause={toggleReproduccion}
+              onReset={() => {
+                pararSecuencia();
+                centrarTodo();
+              }}
+              onSeek={seekCola}
+              onPaso={saltarPaso}
+              onAbrirPreview={() => {
+                setPreviewAbierta(true);
+                if (!enSecuencia && cola.length) iniciarSecuencia();
+              }}
+            />
+            <PestanasMontaje
+              activo={panel}
+              onCambiar={setPanel}
+              contador={capaActiva?.nombre ?? null}
+            />
             {!!cola.length && (
               <div className="flex items-center gap-1">
                 {cola.map((q, i) => (
@@ -1673,6 +1778,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
             )}
             </div>
 
+            <PanelMontajeCaja activo={panel === "elemento"}>
             {capaActiva && (
               <div className={`space-y-2 rounded-lg border p-2 ${
                 capaActiva.bloqueada ? "border-gold/50 bg-gold/5" : "border-accent/35 bg-accent/5"
@@ -1859,6 +1965,8 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
                 </fieldset>
               </div>
             )}
+            </PanelMontajeCaja>
+            <PanelMontajeCaja activo={panel === "camara"}>
             {/* Colocar la toma a mano. Aquí y no abajo del todo porque se usa
                 MIRANDO la vista previa: es un «déjalo así». */}
             <div className="flex flex-wrap items-center gap-2">
@@ -1925,8 +2033,10 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
               </label>
             </div>
             <p className="text-[11px] text-muted">{aviso}</p>
+            </PanelMontajeCaja>
           </div>
 
+          <PanelMontajeCaja activo={panel === "camara"}>
           <ParalajeGlobalSimple
             anim={anim}
             onAnim={(a) => {
@@ -2246,6 +2356,7 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
           )}
 
           </div>
+          </PanelMontajeCaja>
         </div>
       </div>
       {capaEditandoCroma && (
@@ -2259,25 +2370,11 @@ export function Compositor({ semilla, sprite, colaInicial, escena, onEscena, pue
         />
       )}
 
-      <BarraTransporte
-        reproduciendo={enSecuencia || (moviendo && !retenerPoseRef.current && anim !== "quieto")}
-        progreso={progresoUi}
-        disabled={!capas.length}
-        onPlayPause={toggleReproduccion}
-        onReset={() => {
-          pararSecuencia();
-          centrarTodo();
-        }}
-        onSeek={seekCola}
-        onPaso={saltarPaso}
-        onAbrirPreview={() => {
-          setPreviewAbierta(true);
-          if (!enSecuencia && cola.length) iniciarSecuencia();
-        }}
-      />
       <VistaPreviaFlotante
         abierto={previewAbierta}
-        canvasOrigen={canvas}
+        canvasRef={canvasPreview}
+        cajaRef={cajaPreview}
+        titulo={cola.length ? `Vista previa · ${cola.length} pasos de cámara` : "Vista previa"}
         reproduciendo={enSecuencia || moviendo}
         progreso={progresoUi}
         onCerrar={() => setPreviewAbierta(false)}
