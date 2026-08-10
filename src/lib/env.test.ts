@@ -8,8 +8,12 @@ describe("env fail-closed", () => {
     vi.resetModules();
   });
 
+  function setNodeEnv(v: string | undefined) {
+    Object.defineProperty(process.env, "NODE_ENV", { value: v, writable: true, configurable: true });
+  }
+
   it("no exige AUTH_SECRET durante next build (NODE_ENV=production)", async () => {
-    process.env.NODE_ENV = "production";
+    setNodeEnv("production");
     process.env.NEXT_PHASE = "phase-production-build";
     delete process.env.AUTH_SECRET;
     const { env, esFaseBuildNext } = await import("@/lib/env");
@@ -18,7 +22,7 @@ describe("env fail-closed", () => {
   });
 
   it("exige AUTH_SECRET en runtime de producción", async () => {
-    process.env.NODE_ENV = "production";
+    setNodeEnv("production");
     delete process.env.NEXT_PHASE;
     delete process.env.AUTH_SECRET;
     const { env } = await import("@/lib/env");
