@@ -47,6 +47,7 @@ model User {
   spriteCharacters SpriteCharacter[]
   spriteAtlases    SpriteAtlas[]
   aiCredential    AiCredential?
+  aiUsages        AiUsage[]
   chatMessages   ChatMessage[]
   pointsBalances PointsBalance[]
   pointsTx       PointsTransaction[] @relation("PointsTxUser")
@@ -217,6 +218,20 @@ model AiCredential {
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Consumo de IA por usuario. Una fila = una llamada pagada registrada.
+/// Contar por ventana es atómico: se inserta bajo bloqueo advisory, no en un JSON.
+model AiUsage {
+  id        String   @id @default(cuid())
+  userId    String
+  /// capitulo | imagen | voz | texto
+  kind      String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind, createdAt])
 }
 
 model StorySeries {
@@ -582,9 +597,13 @@ model Sprite {
   /// borrar una cuenta no debe llevarse por delante sprites que usa todo el
   /// mundo.
   creadoPor  String?
+  /// Animación editable (plantilla) cuando se guardó con hoja/celdas.
+  /// Sin FK: la plantilla es por usuario y el sprite público es compartido.
+  animationId String?
   createdAt  DateTime @default(now())
 
   @@index([createdAt])
+  @@index([animationId])
 }
 
 model SpriteCharacter {

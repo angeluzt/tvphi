@@ -1,16 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Map, Layers3, FlaskConical, Clapperboard, Bird } from "lucide-react";
 import { MapaEditor } from "./mapa-editor";
 import { Compositor, type Semilla } from "./compositor";
 import { revisar } from "@/lib/lab/escena";
 import { GenerarIa } from "./generar-ia";
-import { GenerarSprite } from "./generar-sprite";
+import { GenerarSprite, type GenerarSpriteHandle } from "./generar-sprite";
 import { BibliotecaSprites } from "./biblioteca-sprites";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { urlSprite, type SpriteMeta } from "@/lib/lab/biblioteca";
 import type { Escena } from "@/lib/lab/escena";
+
+function pestanaInicial(): "mapa" | "compositor" | "sprites" {
+  if (typeof window === "undefined") return "mapa";
+  const t = new URLSearchParams(window.location.search).get("tab");
+  if (t === "sprites" || t === "compositor" || t === "mapa") return t;
+  return "mapa";
+}
 
 export function LabApp({ hayIa }: { hayIa: boolean }) {
   const [pestana, setPestana] = useState<"mapa" | "compositor" | "sprites">("mapa");
@@ -28,6 +35,19 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
   // Qué salió y qué se pagó. Vive aquí y no en la tarjeta de la IA porque esa
   // se cierra justo al terminar, y era donde se contaba.
   const [resumen, setResumen] = useState<string | null>(null);
+  const tallerRef = useRef<GenerarSpriteHandle>(null);
+  const tallerTopRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setPestana(pestanaInicial());
+  }, []);
+
+  function irAlTaller() {
+    setPestana("sprites");
+    requestAnimationFrame(() => {
+      tallerTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 
   // Pasar el mapa al compositor sin salir de la página: cada capa se pinta en
   // su propio PNG transparente y se le da al compositor como si fueran las
@@ -64,6 +84,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
               pedirle a la IA <b className="text-fg">cada capa por separado</b> con fondo
               transparente, y montarlas con profundidad. Al mover la cámara, el fondo y el primer
               plano no van a la misma velocidad, y una imagen plana pasa a tener hondura.
+              El taller de sprites (único) está en la pestaña Sprites.
             </p>
           </div>
         </div>
@@ -100,11 +121,14 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
 
       {pestana === "sprites" && (
         <div className="space-y-4">
-          <GenerarSprite
-            puedeGenerar={hayIa}
-            puedePublicar
-            onGuardado={() => setTandaSprites((v) => v + 1)}
-          />
+          <div ref={tallerTopRef}>
+            <GenerarSprite
+              ref={tallerRef}
+              puedeGenerar={hayIa}
+              puedePublicar
+              onGuardado={() => setTandaSprites((v) => v + 1)}
+            />
+          </div>
           {!hayIa && (
             <p className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
               Hace falta la clave de OpenAI en el servidor para fabricar sprites nuevos. Los que ya
@@ -115,11 +139,15 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
               la IA esté disponible hoy, y esa es justo la gracia de guardarlo. */}
           <BibliotecaSprites
             recargar={tandaSprites}
+            onEditarPlantilla={(animationId) => {
+              irAlTaller();
+              void tallerRef.current?.abrirAnimacion(animationId);
+            }}
+            onNuevaAnimacion={(characterId) => {
+              irAlTaller();
+              void tallerRef.current?.nuevaAnimacionDePersonaje(characterId);
+            }}
             onUsar={(s: SpriteMeta) => {
-              // Se manda al montaje con su velocidad y con un tamaño y un sitio
-              // de salida razonables: cae a media altura y ocupa una quinta
-              // parte del alto, que es de donde se coloca a gusto en dos
-              // arrastres. Aparecer en (0,0) y minúsculo sería peor.
               setSprite({
                 nombre: s.nombre,
                 url: urlSprite(s.id),
@@ -127,8 +155,6 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
                   id: s.id, fotogramas: s.fotogramas, fps: s.fps,
                   vista: s.vista, direccionBase: s.direccion, accion: s.accion, anclaje: s.anclaje,
                   x: 0.5, y: 0.45, alto: 0.2,
-                  // Un sprite nuevo tiene coordenadas propias del lienzo. Solo
-                  // seguirá paneos y zooms si la persona lo elige en Montaje.
                   espacio: "pantalla",
                   sincronizar: true,
                 },
@@ -145,9 +171,6 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
           onEscena={(e) => { setImpuesta(e); setEscena(e); }}
           onAnimacion={(pasos) => setColaIa(pasos)}
           onCapas={(cs, resumen, actores) => {
-            // Las imágenes generadas van directas al montaje: es el final del
-            // recorrido, y hacer que el usuario las baje y las vuelva a subir
-            // no aporta nada.
             const porCapa = new globalThis.Map<string, typeof actores>();
             for (const actor of actores) {
               const grupo = porCapa.get(actor.despuesDe) ?? [];
@@ -177,8 +200,6 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
               }));
               porCapa.delete(capa.id);
             }
-            // Si el mapa cambió entre planear y dibujar, no se pierde el actor:
-            // queda delante y se avisa visualmente en el editor para recolocarlo.
             for (const pendientes of porCapa.values()) {
               pendientes.forEach((actor) => montaje.push({
                 id: actor.id,
@@ -207,15 +228,6 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
         <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} />
       )}
 
-      {/*
-        El compositor se ESCONDE, no se desmonta.
-        Antes se quitaba del árbol al cambiar de pestaña, y con él se iban las
-        capas, la cola y la cámara: ir a buscar un sprite a la biblioteca y
-        volver dejaba el montaje en blanco. Con la biblioteca eso pasa a ser el
-        camino normal —fabricas, eliges, vuelves—, así que desmontarlo era
-        garantizar que el trabajo se pierde. Escondido no cuesta nada: el bucle
-        de dibujo se apoya en el ancho de su caja, que oculta vale 320.
-      */}
       <div className={pestana === "compositor" ? undefined : "hidden"}>
         <Compositor
           semilla={semilla}
@@ -223,8 +235,6 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
           colaInicial={colaIa ?? undefined}
           escena={escena ?? undefined}
           puedeIa={hayIa}
-          // Un ZIP con mapa dentro repone también la pestaña 1: si no, se
-          // recuperaba el montaje y el mapa se quedaba en blanco.
           onEscena={(e) => {
             const rev = revisar(e);
             if ("escena" in rev) { setEscena(rev.escena); setImpuesta(rev.escena); }

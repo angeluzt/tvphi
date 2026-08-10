@@ -56,11 +56,11 @@ function CambiarContrasena() {
         </div>
         <div>
           <label className="label">Nueva contraseña</label>
-          <input name="nueva" type="password" className="input mt-1" autoComplete="new-password" minLength={6} required />
+          <input name="nueva" type="password" className="input mt-1" autoComplete="new-password" minLength={8} required />
         </div>
         <div>
           <label className="label">Repetir nueva</label>
-          <input name="confirmar" type="password" className="input mt-1" autoComplete="new-password" minLength={6} required />
+          <input name="confirmar" type="password" className="input mt-1" autoComplete="new-password" minLength={8} required />
         </div>
         {error && <p className="text-sm text-danger">{error}</p>}
         {ok && <p className="text-sm text-accent">{ok}</p>}

@@ -5,7 +5,7 @@ import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, mot
 import { anotarFallo } from "@/lib/story/fallidos";
 import {
   esAdminHistorias, bloqueoDeGasto, respuestaBloqueo,
-  estadoCupoImagenes, registrarUsoIaImagen, mensajeCupoImagenes,
+  reservarUsoIa, liberarUsoIa, mensajeCupoImagenes,
 } from "@/lib/story/cupo";
 import { leerAjustes, calidadEfectiva, usaReferenciaVfx } from "@/lib/story/ajustes";
 
@@ -124,10 +124,10 @@ export async function POST(req: Request) {
 
   // Cupo de imágenes, aparte del de historias: una historia son varias imágenes
   // y son el 80% de la factura, así que se cuentan por su lado.
-  const cupoImg = await estadoCupoImagenes(user.id, user.email);
-  if (!cupoImg.exento && cupoImg.quedan <= 0) {
+  const reserva = await reservarUsoIa(user.id, user.email, "imagen");
+  if (!reserva.ok) {
     return NextResponse.json({
-      error: mensajeCupoImagenes(cupoImg), sinCupo: true, cupoImagenes: cupoImg,
+      error: reserva.mensaje, sinCupo: true, cupoImagenes: reserva.cupo,
     }, { status: 429 });
   }
 
@@ -136,6 +136,7 @@ export async function POST(req: Request) {
     ? parsed.data.modelo
     : guardados.imagen;
   if (!modelo) {
+    await liberarUsoIa(reserva.id);
     return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 400 });
   }
   const size = TAMANOS[parsed.data.formato ?? "16:9"] ?? TAMANOS["16:9"];
@@ -147,6 +148,7 @@ export async function POST(req: Request) {
   const imgBytes = ref ? pngBytes(ref.imagen) : null;
   const maskBytes = ref?.mascara ? pngBytes(ref.mascara) : null;
 
+  let committed = false;
   try {
     let r: Response;
     let referenciaVfxUsada = false;
@@ -242,17 +244,15 @@ export async function POST(req: Request) {
         modeloMal: true, modelo,
       }, { status: 502 });
     }
-    // Se anota DESPUÉS de que haya salido: un fallo de OpenAI no debe gastarle
-    // una imagen del cupo a nadie.
-    if (!cupoImg.exento) await registrarUsoIaImagen(user.id);
+    committed = true;
     return NextResponse.json({
       ok: true, formato: "png", imagen: b64, size, referenciaVfxUsada,
       calidad,
-      cupoImagenes: cupoImg.exento
-        ? null
-        : { ...cupoImg, usadas: cupoImg.usadas + 1, quedan: Math.max(0, cupoImg.quedan - 1) },
+      cupoImagenes: reserva.cupo.exento ? null : reserva.cupo,
     });
   } catch (e: any) {
     return NextResponse.json({ error: motivoFallo(e, "imagen") }, { status: 502 });
+  } finally {
+    if (!committed) await liberarUsoIa(reserva.id);
   }
 }

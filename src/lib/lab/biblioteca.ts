@@ -26,6 +26,8 @@ export interface SpriteMeta {
   accion: AccionSprite;
   /** Centro para objetos voladores; pies para personajes apoyados en superficies. */
   anclaje: AnclajeSprite;
+  /** Si existe, se puede reabrir la plantilla editable (hoja/celdas) en el taller. */
+  animationId?: string | null;
 }
 
 /**
