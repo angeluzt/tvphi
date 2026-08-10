@@ -56,3 +56,81 @@ export const pesoLegible = (b: number) =>
 
 /** De dónde se baja el PNG de un sprite. Un solo sitio para no equivocarse. */
 export const urlSprite = (id: string) => `/api/story/lab/sprites/${id}`;
+
+// ── Nombres que quepan en la biblioteca ─────────────────────────────────────
+//
+// EL PROBLEMA. Cuando nadie escribe un nombre, se usaba el prompt cortado a 60
+// letras. Los prompts que funcionan son largos a propósito —«Beautiful
+// anime-aesthetic girl sprite sheet of the same full-body character, standing
+// and facing forward while gently breathing. Clean 2D cel shading…»— así que la
+// biblioteca acababa siendo una lista de párrafos cortados a media palabra,
+// todos empezando igual y por tanto imposibles de distinguir de un vistazo.
+//
+// LA IDEA. Lo que identifica un sprite está al PRINCIPIO del prompt, antes de
+// la primera coma; el resto son instrucciones de dibujo que se repiten en todos.
+// Así que se corta ahí, se tira la palabrería técnica y se deja algo corto.
+
+/**
+ * Ruido que aparece en casi todos los prompts y no distingue a nadie.
+ * Se quita por completo, no se acorta: «sprite sheet of the same full-body
+ * character» es exactamente igual en los doce sprites que tengas.
+ */
+const RELLENO = [
+  /\bsprite\s*-?\s*sheet\b/gi,
+  /\bof\s+the\s+same\b/gi,
+  /\bfull[-\s]?body\b/gi,
+  /\bcharacter\b/gi,
+  /\bclean\s+2d\s+cel\s+shading\b/gi,
+  /\btransparent\s+background\b/gi,
+  /\bequal[-\s]?size\s+cells?\b/gi,
+  /\bno\s+scenery\b/gi,
+  /\bside\s+view\b/gi,
+  /\bfront\s+view\b/gi,
+];
+
+const TOPE_NOMBRE = 38;
+
+/**
+ * Un nombre corto y legible a partir de lo que se le pidió al modelo.
+ *
+ * No pretende ser bonito, pretende ser DISTINGUIBLE: es lo que se lee en una
+ * lista de treinta sprites. Si al limpiar no queda nada aprovechable, se cae al
+ * prompt crudo recortado, que es feo pero al menos dice algo.
+ */
+export function nombreCorto(que: string, porDefecto = "Sprite"): string {
+  const crudo = (que ?? "").trim();
+  if (!crudo) return porDefecto;
+
+  // La primera oración: lo que viene después son instrucciones de dibujo.
+  const primera = crudo.split(/[.;\n]|,\s+(?=[a-z])/)[0] ?? crudo;
+
+  let limpio = primera;
+  for (const r of RELLENO) limpio = limpio.replace(r, " ");
+  limpio = limpio.replace(/\s{2,}/g, " ").replace(/^[\s,\-–—]+|[\s,\-–—]+$/g, "");
+
+  // Si la limpieza se lo comió todo, mejor el original que una cadena vacía.
+  const base = limpio.length >= 3 ? limpio : primera.trim();
+  if (!base) return porDefecto;
+
+  const corto = recortarPalabras(base, TOPE_NOMBRE);
+  return corto.charAt(0).toLocaleUpperCase("es") + corto.slice(1);
+}
+
+/** Recorta sin partir palabras: «Beautiful anime…» y no «Beautiful anim…». */
+function recortarPalabras(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const trozo = s.slice(0, max);
+  const corte = trozo.lastIndexOf(" ");
+  // Si la primera palabra ya pasa del tope, no queda otra que cortarla.
+  return (corte > max * 0.5 ? trozo.slice(0, corte) : trozo).replace(/[\s,\-–—]+$/, "") + "…";
+}
+
+/**
+ * Lo que se enseña debajo del nombre: el prompt, pero acotado.
+ *
+ * Se deja más largo que el nombre porque aquí sí importa poder leer en qué se
+ * diferencian dos sprites parecidos, pero no tanto como para que una tarjeta
+ * ocupe media pantalla.
+ */
+export const resumenPrompt = (que: string, max = 120) =>
+  recortarPalabras((que ?? "").trim().replace(/\s+/g, " "), max);

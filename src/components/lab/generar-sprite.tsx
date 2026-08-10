@@ -3,7 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check, FolderOpen, UserRound, Pencil, Plus,
-  Search, RefreshCw, ChevronLeft, ChevronRight,
+  Search, RefreshCw, ChevronLeft, ChevronRight, Trash2,
 } from "lucide-react";
 import { pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
 import {
@@ -19,7 +19,8 @@ import { EditorSprite } from "./editor-sprite";
 import { EditorCortesSprite } from "./editor-cortes-sprite";
 import { EditorHojaSprite } from "./editor-hoja-sprite";
 import {
-  esPng, pesoLegible, type AccionSprite, type AnclajeSprite, type DireccionSprite,
+  esPng, nombreCorto, pesoLegible, resumenPrompt,
+  type AccionSprite, type AnclajeSprite, type DireccionSprite,
   type SpriteMeta, type VistaSprite as TipoVistaSprite,
 } from "@/lib/lab/biblioteca";
 import {
@@ -27,7 +28,9 @@ import {
   archivosProyectoSprite, crearProyectoSprite, normalizarProyectoSprite,
 } from "@/lib/lab/sprite-proyecto";
 import { RangoPreciso } from "./rango-preciso";
-import type { PersonajeSprite, ProyectoAnimacionSprite } from "@/lib/lab/personajes-sprite";
+import type {
+  AnimacionPersonajeSprite, PersonajeSprite, ProyectoAnimacionSprite,
+} from "@/lib/lab/personajes-sprite";
 
 // Fabricar un sprite animado: un bicho, varios fotogramas, fondo fuera.
 //
@@ -148,6 +151,10 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   const [descripcionPersonaje, setDescripcionPersonaje] = useState("");
   const [renombrandoId, setRenombrandoId] = useState<string | null>(null);
   const [nombreEdit, setNombreEdit] = useState("");
+  // Qué se está borrando ahora mismo y qué está esperando un «seguro que sí».
+  // Un id solo: no tiene sentido confirmar dos borrados a la vez.
+  const [borrandoId, setBorrandoId] = useState<string | null>(null);
+  const [confirmarBorrado, setConfirmarBorrado] = useState<string | null>(null);
   const [actualizando, setActualizando] = useState(false);
   const [cortesPendientes, setCortesPendientes] = useState(false);
   const [hojaPendiente, setHojaPendiente] = useState(false);
@@ -231,6 +238,52 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       setAviso(`Renombrado a «${nombre}».`);
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  /**
+   * Borrar una animación suelta.
+   *
+   * Se pide confirmación en la UI antes de llegar aquí: no hay papelera, y
+   * rehacer la animación cuesta otra llamada pagada.
+   */
+  async function borrarAnimacion(p: PersonajeSprite, a: AnimacionPersonajeSprite) {
+    setBorrandoId(a.id);
+    setErrorPersonajes(null);
+    try {
+      await pedirJson(`/api/story/sprite-characters/animations/${a.id}`, { method: "DELETE" });
+      setPersonajes((lista) => lista.map((x) => (
+        x.id === p.id ? { ...x, animaciones: x.animaciones.filter((y) => y.id !== a.id) } : x
+      )));
+      // Si era la que estaba abierta en el taller, se suelta: seguir editando
+      // algo que ya no existe acaba en un guardado que falla sin explicar nada.
+      if (animacionId === a.id) setAnimacionId(null);
+      setConfirmarBorrado(null);
+      setAviso(`Animación «${a.nombre}» borrada.`);
+    } catch (e) {
+      setErrorPersonajes((e as Error).message);
+    } finally {
+      setBorrandoId(null);
+    }
+  }
+
+  /** Borrar el personaje entero. Se lleva todas sus animaciones por delante. */
+  async function borrarPersonaje(p: PersonajeSprite) {
+    setBorrandoId(p.id);
+    setErrorPersonajes(null);
+    try {
+      await pedirJson(`/api/story/sprite-characters/${p.id}`, { method: "DELETE" });
+      setPersonajes((lista) => lista.filter((x) => x.id !== p.id));
+      if (personajeId === p.spriteId || personajeId === p.id) {
+        setPersonajeId("");
+        setAnimacionId(null);
+      }
+      setConfirmarBorrado(null);
+      setAviso(`«${p.nombre}» y sus ${p.animaciones.length} animaciones, borrados.`);
+    } catch (e) {
+      setErrorPersonajes((e as Error).message);
+    } finally {
+      setBorrandoId(null);
     }
   }
 
@@ -358,7 +411,9 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       setCortesPendientes(false);
       setHojaPendiente(false);
       setEditorActivo("hoja");
-      const nom = nombreSprite(que);
+      // Nombre VISIBLE, no de archivo: `nombreSprite` da un slug con
+      // guiones, que se lee fatal en una lista. Para archivos sigue valiendo.
+      const nom = nombreCorto(que);
       setNombre(nom);
       const nomPers = personajeId || pidGuardado ? nombrePersonaje.trim() || nom : nom;
       if (!personajeId && !pidGuardado) {
@@ -585,7 +640,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       const j = await pedirJson("/api/story/lab/sprites", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nombre: nombre.trim() || nombreSprite(que),
+          nombre: nombre.trim() || nombreCorto(que),
           que: que.trim(),
           fotogramas: hecho.fotos.length,
           fps,
@@ -614,7 +669,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       blobABase64(hecho.hoja.originalBlob),blobABase64(hecho.hoja.blob),blobABase64(hecho.blob),blobABase64(refBlob)]);
     const j=await pedirJson("/api/story/sprite-characters",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       personajeId:personajeId||undefined,animacionId:animacionId||undefined,nombrePersonaje:nombrePersonaje.trim(),descripcionPersonaje:descripcionPersonaje.trim()||que.trim(),
-      nombre:nombre.trim()||nombreSprite(que),que:que.trim(),fotogramas:hecho.fotos.length,fps,vista,direccion,accion,anclaje,croma:hecho.hoja.croma,
+      nombre:nombre.trim()||nombreCorto(que),que:que.trim(),fotogramas:hecho.fotos.length,fps,vista,direccion,accion,anclaje,croma:hecho.hoja.croma,
       columnas:hecho.hoja.columnas,filas:hecho.hoja.filas,anchoHoja:hecho.hoja.ancho,altoHoja:hecho.hoja.alto,ancho:hecho.ancho,alto:hecho.alto,
       celdas:hecho.hoja.celdas,hojaOriginal,hojaTrabajo,tira,referencia:personajeId?undefined:referencia})});
     setPersonajeId(j.personajeId);setAnimacionId(j.animacionId);setGuardadoPrivado(true);await releerPersonajes();
@@ -1195,11 +1250,42 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
                       </button>
                     </div>
                   )}
-                  <p className="mt-0.5 line-clamp-2 text-[10px] text-muted" title={p.descripcion || p.prompt}>
-                    {p.descripcion || p.prompt || "Sin prompt"}
+                  {/* El prompt entero mata la tarjeta: los buenos son párrafos.
+                      Se acota a una línea y el completo queda en el title. */}
+                  <p className="mt-0.5 truncate text-[10px] text-muted" title={p.descripcion || p.prompt}>
+                    {resumenPrompt(p.descripcion || p.prompt, 70) || "Sin prompt"}
                   </p>
                   <p className="text-[9px] text-muted">{p.animaciones.length} animación{p.animaciones.length === 1 ? "" : "es"}</p>
                 </div>
+                {/* Borrar el grupo entero. Antes no se podía: un personaje que
+                    salía mal se quedaba ocupando sitio del tope para siempre. */}
+                {confirmarBorrado === p.id ? (
+                  <div className="flex shrink-0 flex-wrap items-center gap-1">
+                    <span className="text-[9px] text-danger">
+                      ¿Borrar {p.animaciones.length ? `y sus ${p.animaciones.length} animaciones` : "este personaje"}?
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded-md border border-danger/50 px-1.5 py-0.5 text-[10px] text-danger disabled:opacity-40"
+                      disabled={borrandoId === p.id}
+                      onClick={() => void borrarPersonaje(p)}
+                    >
+                      {borrandoId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Sí"}
+                    </button>
+                    <button type="button" className="btn-ghost px-1.5 py-0.5 text-[10px]" onClick={() => setConfirmarBorrado(null)}>
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md border border-border p-1 text-muted hover:border-danger/50 hover:text-danger"
+                    title={`Borrar «${p.nombre}» y todas sus animaciones`}
+                    onClick={() => setConfirmarBorrado(p.id)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                )}
               </div>
 
               <div className="mt-2 flex flex-wrap gap-1">
@@ -1234,19 +1320,53 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={a.tiraUrl} alt="" className="h-9 w-14 object-contain" />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[11px]">{a.nombre}</span>
-                        <span className="block truncate text-[9px] text-muted">{a.accion} · {a.que}</span>
+                        <span className="block truncate text-[11px]" title={a.nombre}>
+                          {nombreCorto(a.nombre)}
+                        </span>
+                        <span className="block truncate text-[9px] text-muted" title={a.que}>
+                          {a.accion} · {resumenPrompt(a.que, 48)}
+                        </span>
                       </span>
                       <Pencil className="h-3 w-3 shrink-0 text-muted" />
                     </button>
-                    <button
-                      type="button"
-                      className="btn-ghost shrink-0 px-1.5 py-1 text-[9px]"
-                      title="Fabricar la siguiente animación partiendo del último cuadro de esta"
-                      onClick={() => nuevaAnimacion(p, undefined, a.id)}
-                    >
-                      <Plus className="h-3 w-3" /> Partir de aquí
-                    </button>
+                    {confirmarBorrado === a.id ? (
+                      <>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-md border border-danger/50 px-1.5 py-1 text-[9px] text-danger disabled:opacity-40"
+                          disabled={borrandoId === a.id}
+                          onClick={() => void borrarAnimacion(p, a)}
+                        >
+                          {borrandoId === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Borrar"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost shrink-0 px-1.5 py-1 text-[9px]"
+                          onClick={() => setConfirmarBorrado(null)}
+                        >
+                          No
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-ghost shrink-0 px-1.5 py-1 text-[9px]"
+                          title="Fabricar la siguiente animación partiendo del último cuadro de esta"
+                          onClick={() => nuevaAnimacion(p, undefined, a.id)}
+                        >
+                          <Plus className="h-3 w-3" /> Partir de aquí
+                        </button>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-md border border-border p-1 text-muted hover:border-danger/50 hover:text-danger"
+                          title={`Borrar la animación «${a.nombre}»`}
+                          onClick={() => setConfirmarBorrado(a.id)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 ))}
                 {!p.animaciones.length && (

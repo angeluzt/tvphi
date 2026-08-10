@@ -6,7 +6,7 @@ import {
   ChevronLeft, ChevronRight, Film,
 } from "lucide-react";
 import { pedirJson } from "@/lib/pedir-json";
-import { pesoLegible, urlSprite, type SpriteMeta } from "@/lib/lab/biblioteca";
+import { nombreCorto, pesoLegible, resumenPrompt, urlSprite, type SpriteMeta } from "@/lib/lab/biblioteca";
 import { VistaSprite } from "./vista-sprite";
 
 const POR_PAGINA = 9;
@@ -189,7 +189,7 @@ export function BibliotecaSprites({ recargar, onUsar, onEditarPlantilla, onNueva
                         </div>
                       ) : (
                         <div className="flex items-center gap-1">
-                          <p className="min-w-0 truncate text-xs font-medium text-fg" title={s.nombre}>{s.nombre}</p>
+                          <p className="min-w-0 truncate text-xs font-medium text-fg" title={s.nombre}>{nombreCorto(s.nombre)}</p>
                           {puedeEditar && (
                             <button
                               type="button"
@@ -202,7 +202,7 @@ export function BibliotecaSprites({ recargar, onUsar, onEditarPlantilla, onNueva
                           )}
                         </div>
                       )}
-                      <p className="truncate text-[10px] text-muted" title={s.que}>{s.que}</p>
+                      <p className="truncate text-[10px] text-muted" title={s.que}>{resumenPrompt(s.que, 70)}</p>
                       <p className="truncate text-[10px] text-muted">
                         {s.fotogramas} fotogramas · {s.fps}/s · {s.ancho}×{s.alto} · {pesoLegible(s.bytes)}
                       </p>
