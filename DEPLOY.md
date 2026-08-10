@@ -24,16 +24,21 @@ Arranque recomendado: `pnpm start:prod` (`prisma migrate deploy` + `next start`)
 1. Neon → New Project → copia `DATABASE_URL` (`postgresql://…?sslmode=require`), **o**
 2. Railway → Database → PostgreSQL.
 
-**Importante (Railway):** enlaza la variable con la URL **privada**, no la pública.
+**Importante (Railway) — una sola variable:**
 
-En el servicio de la **App** → Variables:
+En la **App** → Variables define:
 
-- `DATABASE_URL` = referencia `${{Postgres.DATABASE_URL}}` (red interna), **o**
-- `DATABASE_PRIVATE_URL` = `${{Postgres.DATABASE_PRIVATE_URL}}` (el arranque la preferirá)
+```text
+DATABASE_URL=${{Postgres.DATABASE_PRIVATE_URL}}
+```
 
-Si pegas a mano una URL con `*.proxy.rlwy.net`, el contenedor a veces **no alcanza** Postgres
-(`Prisma P1001` / `Connection reset`) y Cloudflare enseña **502 Bad gateway**. Antes
-podía “funcionar a ratos”; tras un redeploy suele romper.
+(Sustituye `Postgres` por el **nombre exacto** de tu servicio Postgres en Railway si es otro.)
+
+- Prisma y el arranque leen **`DATABASE_URL`** (no otra clave).
+- Con `DATABASE_PRIVATE_URL` como valor de referencia evitas el proxy público (`*.proxy.rlwy.net`) que corta conexiones → `failed to fetch` / P1017.
+- **No** dejes `DATABASE_URL` vacío. Si la referencia no resuelve, arregla el nombre del servicio; no pegues la pública otra vez salvo como apaño temporal.
+
+Opcional: si también defines `DATABASE_PRIVATE_URL` aparte, el arranque la preferirá; no hace falta si ya metiste la privada dentro de `DATABASE_URL`.
 
 Sin migraciones aplicadas la app no sirve historias. En deploy, `start:prod` las aplica.
 
@@ -56,9 +61,9 @@ NODE_ENV=production
 APP_URL=https://tvphi.com
 AUTH_SECRET=<openssl rand -base64 32>
 DATABASE_URL=<Postgres privado / referencia Railway>
-# Opcional en Railway (prioridad sobre DATABASE_URL):
-# DATABASE_PRIVATE_URL=${{Postgres.DATABASE_PRIVATE_URL}}
-```
+# En Railway (recomendado, una sola var):
+# DATABASE_URL=${{Postgres.DATABASE_PRIVATE_URL}}
+# (Prisma lee solo DATABASE_URL — ver prisma/schema.prisma)```
 
 Recomendadas para Historias + admin:
 
