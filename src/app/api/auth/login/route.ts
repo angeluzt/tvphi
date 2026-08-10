@@ -17,11 +17,10 @@ export async function POST(req: Request) {
   const { emailOrUsername, password } = parsed.data;
   const user = await prisma.user.findFirst({
     where: { OR: [{ email: emailOrUsername }, { username: emailOrUsername }] },
-    include: { channel: true },
   });
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
     return NextResponse.json({ error: "Credenciales incorrectas" }, { status: 401 });
   }
   await createSession(user.id);
-  return NextResponse.json({ ok: true, slug: user.channel?.slug ?? null });
+  return NextResponse.json({ ok: true });
 }
