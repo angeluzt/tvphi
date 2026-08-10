@@ -1,0 +1,29 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { olvidarTodo, pasarse, origen } from "./rate-limit";
+
+describe("rate-limit", () => {
+  beforeEach(() => olvidarTodo());
+
+  it("deja pasar bajo el tope", () => {
+    expect(pasarse("a", 3, 60_000)).toBe(false);
+    expect(pasarse("a", 3, 60_000)).toBe(false);
+    expect(pasarse("a", 3, 60_000)).toBe(false);
+  });
+
+  it("bloquea al superar el tope", () => {
+    for (let i = 0; i < 3; i++) pasarse("b", 3, 60_000);
+    expect(pasarse("b", 3, 60_000)).toBe(true);
+  });
+
+  it("aísla claves", () => {
+    for (let i = 0; i < 3; i++) pasarse("c", 3, 60_000);
+    expect(pasarse("d", 3, 60_000)).toBe(false);
+  });
+
+  it("origen usa la primera IP de x-forwarded-for", () => {
+    const req = new Request("http://x", {
+      headers: { "x-forwarded-for": "1.2.3.4, 10.0.0.1" },
+    });
+    expect(origen(req)).toBe("1.2.3.4");
+  });
+});

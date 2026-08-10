@@ -1,6 +1,5 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { defaultScenes } from "../src/lib/scene";
 
 const prisma = new PrismaClient();
 
@@ -8,8 +7,8 @@ async function main() {
   const pass = await bcrypt.hash("demo1234", 10);
 
   const demos = [
-    { username: "phi", displayName: "Phi", title: "Bienvenido a TVPHI", live: true },
-    { username: "gamer", displayName: "GamerPro", title: "Gameplay en vivo", live: false },
+    { username: "phi", displayName: "Phi", email: "phi@tvphi.com" },
+    { username: "demo", displayName: "Demo", email: "demo@tvphi.com" },
   ];
 
   for (const d of demos) {
@@ -17,39 +16,22 @@ async function main() {
     if (existing) continue;
     await prisma.user.create({
       data: {
-        email: `${d.username}@tvphi.com`,
+        email: d.email,
         username: d.username,
         displayName: d.displayName,
         passwordHash: pass,
-        channel: {
-          create: {
-            slug: d.username,
-            title: d.title,
-            description: "Canal de demostración de TVPHI.",
-            isLive: d.live,
-            lastLiveAt: d.live ? new Date() : null,
-            scenes: {
-              create: defaultScenes().map((s, i) => ({ id: `${d.username}_${s.id}`, name: s.name, order: i, layers: s.layers as any })),
-            },
-            overlayTokens: { create: { label: "Overlay principal" } },
-            rewards: {
-              create: [
-                { title: "Saludo en pantalla", cost: 100, action: "SHOW_MESSAGE" },
-                { title: "Reproducir sonido", cost: 250, action: "PLAY_SOUND" },
-              ],
-            },
-          },
-        },
+        // emailVerifiedAt nulo: en local conviene marcarlo a mano o verificar
+        // si se prueba el flujo de IA.
       },
     });
-    console.log(`✓ usuario demo: ${d.username} / demo1234`);
+    console.log(`Usuario ${d.username} / demo1234`);
   }
 }
 
 main()
   .then(() => prisma.$disconnect())
-  .catch((e) => {
+  .catch(async (e) => {
     console.error(e);
-    prisma.$disconnect();
+    await prisma.$disconnect();
     process.exit(1);
   });

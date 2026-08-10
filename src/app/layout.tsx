@@ -3,9 +3,9 @@ import "./globals.css";
 import { env } from "@/lib/env";
 
 export const metadata: Metadata = {
-  title: "TVPHI — Streaming en vivo, sin OBS",
+  title: "TVPHI — Historias narradas",
   description:
-    "Plataforma de streaming moderna: transmite desde el navegador con escenas, capas y alertas. Chat con moderación, puntos y donaciones.",
+    "Crea historias narradas con IA: texto, imágenes, voz y exportación en el navegador.",
   metadataBase: new URL(env.appUrl),
 };
 
