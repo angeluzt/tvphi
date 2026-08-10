@@ -167,6 +167,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   // Qué grupo de mandos se está viendo. Los dos existen siempre en el árbol:
   // el que no toca se esconde, para no perder focos ni arrastres a medias.
   const [panel, setPanel] = useState<PanelMontaje>("elemento");
+  /** Dentro de «Elemento»: animar (lo de siempre) o tocar la imagen (raro). */
+  const [subPanel, setSubPanel] = useState<"animar" | "imagen">("animar");
   // La fila de acciones secundarias, plegada por defecto.
   const [masAcciones, setMasAcciones] = useState(false);
   // Los efectos del motor colgados de la escena.
@@ -1701,8 +1703,14 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
         <p className="text-[10px] text-muted">{borradorInfo}</p>
       )}
 
-      <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div className="card order-2 space-y-2 self-start p-3 lg:order-1 lg:sticky lg:top-2">
+      {/* `minmax(0,…)` en las DOS pistas, no solo en la ancha.
+          Sin el 0, una pista de grid no puede encoger por debajo de su
+          contenido: un sprite con nombre largo estiraba la columna de capas a
+          454 px dentro de una ventana de 390, la página cogía scroll
+          horizontal y todo parecía «hacerse gigante». El `min-w-0` de las
+          tarjetas es lo que deja que los `truncate` de dentro funcionen. */}
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+        <div className="card order-2 min-w-0 space-y-2 self-start p-3 lg:order-1 lg:sticky lg:top-2">
           <div className="flex items-center gap-2">
             <span className="label">Capas · vista compacta</span>
             <span className="chip ml-auto bg-surface-2 text-muted">{capas.length}</span>
@@ -2020,6 +2028,33 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                     </button>
                   </div>
 
+                  {/* Dos grupos, no cuatro bloques apilados.
+                      Antes se montaban a la vez el inspector, los mandos de
+                      movimiento, los del sprite Y las herramientas de imagen:
+                      2.199 px de alto en un móvil, con la vista previa fuera
+                      de pantalla en cuanto tocabas algo. «Imagen» es lo que
+                      casi nunca se usa —sustituir, regenerar, exportar— así
+                      que deja de estorbar por defecto. */}
+                  <div className="flex gap-1" role="tablist" aria-label="Qué editar de esta capa">
+                    {([["animar", "Animar"], ["imagen", "Imagen"]] as const).map(([id, et]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        role="tab"
+                        aria-selected={subPanel === id}
+                        onClick={() => setSubPanel(id)}
+                        className={`flex-1 rounded-md border px-2 py-1 text-[10px] ${
+                          subPanel === id
+                            ? "border-accent bg-accent/15 text-accent"
+                            : "border-border text-muted hover:bg-surface-2"
+                        }`}
+                      >
+                        {et}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className={subPanel === "animar" ? "space-y-2" : "hidden"}>
                   <InspectorRapido
                     esSprite={!!capaActiva.spr}
                     modo={modoEdicion}
@@ -2122,6 +2157,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   )}
                     </div>
                   </details>
+                  </div>
+                  <div className={subPanel === "imagen" ? "space-y-2" : "hidden"}>
                   <HerramientasCapa
                     nombre={capaActiva.nombre}
                     clave={capaActiva.clave}
@@ -2155,6 +2192,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                       })();
                     }}
                   />
+                  </div>
                 </fieldset>
               </div>
             )}

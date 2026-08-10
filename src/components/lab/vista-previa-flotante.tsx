@@ -65,13 +65,26 @@ export function VistaPreviaFlotante({
 
   if (!abierto || typeof document === "undefined") return null;
 
+  // OPACO del todo. Con el 92% de antes se transparentaba la cabecera del
+  // sitio justo detrás de esta barra: se veían dos títulos y dos botones
+  // superpuestos, y parecía que el cerrar estuviera «arriba de la página».
+  // El `safe-area-inset-top` lo baja del notch, que era el otro sitio donde
+  // quedaba fuera del alcance.
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex flex-col bg-black/92" role="dialog" aria-modal aria-label="Vista previa de la animación">
-      <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+    <div className="fixed inset-0 z-[80] flex flex-col bg-[#05070d]" role="dialog" aria-modal aria-label="Vista previa de la animación">
+      <div
+        className="flex items-center gap-2 border-b border-white/10 px-3 py-2"
+        style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
+      >
         <p className="min-w-0 flex-1 truncate text-sm font-medium text-white">
           {titulo ?? "Vista previa"}
         </p>
-        <button type="button" className="rounded-lg border border-white/20 p-2 text-white" onClick={onCerrar} aria-label="Cerrar">
+        <button
+          type="button"
+          className="shrink-0 rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-white hover:bg-white/20"
+          onClick={onCerrar}
+          aria-label="Cerrar la vista previa"
+        >
           <X className="h-4 w-4" />
         </button>
       </div>
