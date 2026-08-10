@@ -22,7 +22,18 @@ Arranque recomendado: `pnpm start:prod` (`prisma migrate deploy` + `next start`)
 ## Paso 1 — Base de datos
 
 1. Neon → New Project → copia `DATABASE_URL` (`postgresql://…?sslmode=require`), **o**
-2. Railway → Database → PostgreSQL (inyecta `DATABASE_URL`).
+2. Railway → Database → PostgreSQL.
+
+**Importante (Railway):** enlaza la variable con la URL **privada**, no la pública.
+
+En el servicio de la **App** → Variables:
+
+- `DATABASE_URL` = referencia `${{Postgres.DATABASE_URL}}` (red interna), **o**
+- `DATABASE_PRIVATE_URL` = `${{Postgres.DATABASE_PRIVATE_URL}}` (el arranque la preferirá)
+
+Si pegas a mano una URL con `*.proxy.rlwy.net`, el contenedor a veces **no alcanza** Postgres
+(`Prisma P1001` / `Connection reset`) y Cloudflare enseña **502 Bad gateway**. Antes
+podía “funcionar a ratos”; tras un redeploy suele romper.
 
 Sin migraciones aplicadas la app no sirve historias. En deploy, `start:prod` las aplica.
 
@@ -44,7 +55,9 @@ Sin migraciones aplicadas la app no sirve historias. En deploy, `start:prod` las
 NODE_ENV=production
 APP_URL=https://tvphi.com
 AUTH_SECRET=<openssl rand -base64 32>
-DATABASE_URL=<Postgres>
+DATABASE_URL=<Postgres privado / referencia Railway>
+# Opcional en Railway (prioridad sobre DATABASE_URL):
+# DATABASE_PRIVATE_URL=${{Postgres.DATABASE_PRIVATE_URL}}
 ```
 
 Recomendadas para Historias + admin:
