@@ -26,7 +26,7 @@ export function SiteHeader({ user }: { user: HeaderUser | null }) {
                 <Sparkles className="h-4 w-4" />
                 <span className="hidden sm:inline">Historias</span>
               </Link>
-              <Link href="/sprites" className="btn-ghost" title="Personajes animados"><Bird className="h-4 w-4 text-accent"/><span className="hidden lg:inline">Sprites</span></Link>
+              <Link href="/sprites" className="btn-ghost" title="Taller de sprites animados"><Bird className="h-4 w-4 text-accent"/><span className="hidden lg:inline">Sprites</span></Link>
               {user.admin && (
                 <>
                   <Link

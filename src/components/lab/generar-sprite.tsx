@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check, FolderOpen, UserRound, Pencil, Plus,
-  Search, RefreshCw,
+  Search, RefreshCw, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
 import {
@@ -51,7 +51,27 @@ const IDEAS = [
   "candle flame flickering",
   "flag waving in the wind",
 ];
-const blobABase64=(blob:Blob)=>new Promise<string>((res,rej)=>{const f=new FileReader();f.onload=()=>res(String(f.result).replace(/^data:[^,]+,/,""));f.onerror=()=>rej(new Error("No se pudo leer la imagen."));f.readAsDataURL(blob);});
+
+/** Atajos para pedir una animación nueva sobre un personaje ya guardado. */
+const ANIM_RAPIDAS: { accion: AccionSprite; label: string; que: string; anclaje?: AnclajeSprite }[] = [
+  { accion: "caminar", label: "Caminar", que: "walking cycle, side view", anclaje: "pies" },
+  { accion: "correr", label: "Correr", que: "running cycle, side view", anclaje: "pies" },
+  { accion: "volar", label: "Volar", que: "flying, wings flapping", anclaje: "centro" },
+  { accion: "otro", label: "Saltar", que: "jumping up and landing", anclaje: "pies" },
+  { accion: "flotar", label: "Flotar", que: "hovering gently in place", anclaje: "centro" },
+  { accion: "nadar", label: "Nadar", que: "swimming cycle, side view", anclaje: "centro" },
+  { accion: "caer", label: "Caer", que: "falling downward", anclaje: "centro" },
+  { accion: "quieto", label: "Quieto", que: "idle breathing pose", anclaje: "pies" },
+];
+
+const POR_PAGINA = 6;
+
+const blobABase64 = (blob: Blob) => new Promise<string>((res, rej) => {
+  const f = new FileReader();
+  f.onload = () => res(String(f.result).replace(/^data:[^,]+,/, ""));
+  f.onerror = () => rej(new Error("No se pudo leer la imagen."));
+  f.readAsDataURL(blob);
+});
 
 /** Lo que queda tras cortar la hoja: los fotogramas y la tira ya pegada. */
 interface Hecho {
@@ -105,32 +125,103 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
   const [nombre, setNombre] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
-  const [guardadoPrivado,setGuardadoPrivado]=useState(false);
-  const [personajes,setPersonajes]=useState<PersonajeSprite[]>([]);
-  const [personajeId,setPersonajeId]=useState("");
-  const [storyCharacterId,setStoryCharacterId]=useState("");
-  const [busquedaPersonaje,setBusquedaPersonaje]=useState("");
-  const [cargandoPersonajes,setCargandoPersonajes]=useState(true);
-  const [errorPersonajes,setErrorPersonajes]=useState<string|null>(null);
-  const [animacionId,setAnimacionId]=useState<string|null>(null);
-  const [nombrePersonaje,setNombrePersonaje]=useState("");
-  const [descripcionPersonaje,setDescripcionPersonaje]=useState("");
+  const [guardadoPrivado, setGuardadoPrivado] = useState(false);
+  const [personajes, setPersonajes] = useState<PersonajeSprite[]>([]);
+  const [personajeId, setPersonajeId] = useState("");
+  const [busquedaBiblio, setBusquedaBiblio] = useState("");
+  const [paginaBiblio, setPaginaBiblio] = useState(0);
+  const [cargandoPersonajes, setCargandoPersonajes] = useState(true);
+  const [errorPersonajes, setErrorPersonajes] = useState<string | null>(null);
+  const [animacionId, setAnimacionId] = useState<string | null>(null);
+  const [nombrePersonaje, setNombrePersonaje] = useState("");
+  const [descripcionPersonaje, setDescripcionPersonaje] = useState("");
+  const [renombrandoId, setRenombrandoId] = useState<string | null>(null);
+  const [nombreEdit, setNombreEdit] = useState("");
   const [actualizando, setActualizando] = useState(false);
   const [cortesPendientes, setCortesPendientes] = useState(false);
   const [hojaPendiente, setHojaPendiente] = useState(false);
   const [editorActivo, setEditorActivo] = useState<"hoja" | "cortes" | "fotogramas">("hoja");
   const revisionTira = useRef(0);
   const edicionPendiente = cortesPendientes || hojaPendiente;
-  const personajeSeleccionado=personajes.find(p=>(personajeId&&p.spriteId===personajeId)||(storyCharacterId&&p.storyCharacterId===storyCharacterId))??null;
-  const terminoPersonaje=busquedaPersonaje.trim().toLocaleLowerCase("es");
-  const personajesFiltrados=personajes.filter(p=>!terminoPersonaje||`${p.nombre} ${p.descripcion}`.toLocaleLowerCase("es").includes(terminoPersonaje));
-  function seleccionarPersonaje(p:PersonajeSprite|null){
-    setPersonajeId(p?.spriteId??"");setStoryCharacterId(p?.storyCharacterId??"");setAnimacionId(null);setGuardadoPrivado(false);
-    setNombrePersonaje(p?.nombre??"");setDescripcionPersonaje(p?.descripcion??"");
-    if(p&&!que.trim())setQue((p.prompt||p.descripcion).slice(0,400));
+  const personajeSeleccionado = personajes.find((p) => personajeId && p.spriteId === personajeId) ?? null;
+
+  const terminoBiblio = busquedaBiblio.trim().toLocaleLowerCase("es");
+  const personajesFiltrados = personajes.filter((p) => {
+    if (!terminoBiblio) return true;
+    const haystack = [
+      p.nombre,
+      p.descripcion,
+      p.prompt,
+      ...p.animaciones.map((a) => `${a.nombre} ${a.que} ${a.accion}`),
+    ].join(" ").toLocaleLowerCase("es");
+    return haystack.includes(terminoBiblio);
+  });
+  const totalPaginas = Math.max(1, Math.ceil(personajesFiltrados.length / POR_PAGINA));
+  const paginaClamped = Math.min(paginaBiblio, totalPaginas - 1);
+  const personajesPagina = personajesFiltrados.slice(paginaClamped * POR_PAGINA, paginaClamped * POR_PAGINA + POR_PAGINA);
+
+  function seleccionarPersonaje(p: PersonajeSprite | null) {
+    setPersonajeId(p?.spriteId ?? "");
+    setAnimacionId(null);
+    setGuardadoPrivado(false);
+    setNombrePersonaje(p?.nombre ?? "");
+    setDescripcionPersonaje(p?.descripcion ?? "");
   }
-  async function releerPersonajes(){setCargandoPersonajes(true);setErrorPersonajes(null);try{const j=await pedirJson("/api/story/sprite-characters");setPersonajes(j.personajes??[]);}catch(e){setErrorPersonajes((e as Error).message||"No se pudieron cargar tus personajes.");}finally{setCargandoPersonajes(false);}}
-  useEffect(()=>{void releerPersonajes();},[]);
+
+  function nuevaAnimacion(p: PersonajeSprite, rapida?: (typeof ANIM_RAPIDAS)[number]) {
+    seleccionarPersonaje(p);
+    setHecho(null);
+    setGuardado(false);
+    setAnimacionId(null);
+    if (rapida) {
+      setAccion(rapida.accion);
+      if (rapida.anclaje) setAnclaje(rapida.anclaje);
+      setQue(rapida.que);
+      setNombre(`${p.nombre} · ${rapida.label}`);
+    } else {
+      setQue("");
+      setNombre("");
+      setAccion("otro");
+    }
+    setAviso(`Nueva animación para «${p.nombre}»${rapida ? ` · ${rapida.label}` : ""}. Describe el movimiento y fabrica.`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function renombrarPersonaje(p: PersonajeSprite) {
+    const nombre = nombreEdit.trim();
+    if (!p.spriteId || !nombre || nombre === p.nombre) {
+      setRenombrandoId(null);
+      return;
+    }
+    try {
+      await pedirJson("/api/story/sprite-characters", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ personajeId: p.spriteId, nombre }),
+      });
+      setPersonajes((lista) => lista.map((x) => (x.id === p.id ? { ...x, nombre } : x)));
+      if (personajeId === p.spriteId) setNombrePersonaje(nombre);
+      setRenombrandoId(null);
+      setAviso(`Renombrado a «${nombre}».`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function releerPersonajes() {
+    setCargandoPersonajes(true);
+    setErrorPersonajes(null);
+    try {
+      const j = await pedirJson("/api/story/sprite-characters");
+      setPersonajes(j.personajes ?? []);
+    } catch (e) {
+      setErrorPersonajes((e as Error).message || "No se pudieron cargar tus sprites.");
+    } finally {
+      setCargandoPersonajes(false);
+    }
+  }
+  useEffect(() => { void releerPersonajes(); }, []);
+  useEffect(() => { setPaginaBiblio(0); }, [busquedaBiblio]);
 
   // Cada correccion crea una URL nueva para la vista previa. La anterior deja
   // de hacer falta en cuanto React cambia de imagen.
@@ -154,7 +245,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/sprite", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({que:que.trim(),fotogramas:n,forma:distribucion==="columna"||(distribucion==="equilibrada"&&accion==="caer")?"columna":"tira",
-          distribucion,vista,direccion,accion,calidad,personajeId:personajeId||undefined,storyCharacterId:storyCharacterId||undefined}),
+          distribucion,vista,direccion,accion,calidad,personajeId:personajeId||undefined}),
       });
       if (!r.ok) throw new Error(j.error || "No se pudo");
 
@@ -211,7 +302,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
       setHojaPendiente(false);
       setEditorActivo("hoja");
       setNombre(nombreSprite(que));
-      if(!personajeId&&!storyCharacterId){setNombrePersonaje(nombreSprite(que));setDescripcionPersonaje(que.trim());}
+      if (!personajeId) { setNombrePersonaje(nombreSprite(que)); setDescripcionPersonaje(que.trim()); }
       setPaso(null);
       setAviso(
         `${hoja.fotogramas.length} fotogramas listos`
@@ -394,7 +485,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
     const refBlob=await(await fetch(hecho.fotos[0].url)).blob();const [hojaOriginal,hojaTrabajo,tira,referencia]=await Promise.all([
       blobABase64(hecho.hoja.originalBlob),blobABase64(hecho.hoja.blob),blobABase64(hecho.blob),blobABase64(refBlob)]);
     const j=await pedirJson("/api/story/sprite-characters",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-      personajeId:personajeId||undefined,storyCharacterId:storyCharacterId||undefined,animacionId:animacionId||undefined,nombrePersonaje:nombrePersonaje.trim(),descripcionPersonaje:descripcionPersonaje.trim()||que.trim(),
+      personajeId:personajeId||undefined,animacionId:animacionId||undefined,nombrePersonaje:nombrePersonaje.trim(),descripcionPersonaje:descripcionPersonaje.trim()||que.trim(),
       nombre:nombre.trim()||nombreSprite(que),que:que.trim(),fotogramas:hecho.fotos.length,fps,vista,direccion,accion,anclaje,croma:hecho.hoja.croma,
       columnas:hecho.hoja.columnas,filas:hecho.hoja.filas,anchoHoja:hecho.hoja.ancho,altoHoja:hecho.hoja.alto,ancho:hecho.ancho,alto:hecho.alto,
       celdas:hecho.hoja.celdas,hojaOriginal,hojaTrabajo,tira,referencia:personajeId?undefined:referencia})});
@@ -408,7 +499,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
     uh=URL.createObjectURL(bh);ut=URL.createObjectURL(bt);const fotos=await fotogramasDeTira(ut,a.fotogramas);
     setHecho({edicionId:Date.now(),fotos,url:ut,blob:bt,ancho:a.ancho,alto:a.alto,descartados:0,hoja:{sesionId:Date.now(),url:uh,blob:bh,originalBlob:bo,
       ancho:a.anchoHoja,alto:a.altoHoja,forma:a.columnas>=a.filas?"tira":"columna",columnas:a.columnas,filas:a.filas,croma:a.croma,celdas:a.celdas}});uh=null;ut=null;
-    const p=personajes.find(x=>x.spriteId===a.personajeId);setPersonajeId(a.personajeId);setStoryCharacterId(p?.storyCharacterId??"");setAnimacionId(a.id);setNombrePersonaje(a.personajeNombre);setDescripcionPersonaje(p?.descripcion??a.que);
+    const p=personajes.find(x=>x.spriteId===a.personajeId);setPersonajeId(a.personajeId);setAnimacionId(a.id);setNombrePersonaje(a.personajeNombre);setDescripcionPersonaje(p?.descripcion??a.que);
     setQue(a.que);setNombre(a.nombre);setN(a.fotogramas);setFps(a.fps);setVista(a.vista);setDireccion(a.direccion);setAccion(a.accion);setAnclaje(a.anclaje);
     setForma(a.columnas>=a.filas?"tira":"columna");setDistribucion(a.filas===1?"fila":a.columnas===1?"columna":"equilibrada");setGuardado(false);setGuardadoPrivado(true);
     setCortesPendientes(false);setHojaPendiente(false);setEditorActivo("hoja");setAviso("Animación abierta para corregir.");
@@ -527,7 +618,7 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
       setForma(proyecto.forma);
       setDistribucion(proyecto.filas===1?"fila":proyecto.columnas===1?"columna":"equilibrada");
       setN(proyecto.celdas.length);
-      setAnimacionId(null);setPersonajeId("");setStoryCharacterId("");setNombrePersonaje(proyecto.nombre);setDescripcionPersonaje(proyecto.que);
+      setAnimacionId(null);setPersonajeId("");setNombrePersonaje(proyecto.nombre);setDescripcionPersonaje(proyecto.que);
       setGuardado(false);
       setGuardadoPrivado(false);
       setCortesPendientes(false);
@@ -557,30 +648,49 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
       </div>
 
       <div className="rounded-lg border border-accent/25 bg-accent/5 p-2">
-        <div className="flex items-center gap-1.5 text-xs font-semibold"><UserRound className="h-3.5 w-3.5 text-accent"/> Identidad del personaje</div>
-        <div className="relative mt-2">
-          <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-muted"/>
-          <input className="input w-full py-1.5 pl-7 pr-2 text-xs" value={busquedaPersonaje} onChange={e=>setBusquedaPersonaje(e.target.value)} placeholder="Buscar un personaje existente…" aria-label="Buscar personaje"/>
+        <div className="flex items-center gap-1.5 text-xs font-semibold">
+          <UserRound className="h-3.5 w-3.5 text-accent" /> Identidad del sprite
         </div>
-        {cargandoPersonajes?<p className="mt-2 flex items-center gap-1.5 text-[10px] text-muted"><Loader2 className="h-3 w-3 animate-spin"/> Cargando tus personajes…</p>
-        :errorPersonajes?<div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-danger/35 bg-danger/5 p-2 text-[10px] text-danger"><span>No se pudieron cargar: {errorPersonajes}</span><button type="button" className="btn-ghost shrink-0 px-2 py-1 text-[10px]" onClick={()=>void releerPersonajes()}><RefreshCw className="h-3 w-3"/> Reintentar</button></div>
-        :<div className="mt-2 max-h-36 space-y-1 overflow-y-auto pr-0.5">
-          <button type="button" onClick={()=>seleccionarPersonaje(null)} className={`flex w-full items-center gap-2 rounded-md border p-2 text-left ${!personajeSeleccionado?"border-accent bg-accent/10":"border-border hover:border-accent/60"}`}>
-            <Plus className="h-3.5 w-3.5 shrink-0 text-accent"/><span className="text-[11px] font-medium">Crear un personaje nuevo</span>
+        <p className="mt-1 text-[10px] text-muted">
+          Solo personajes creados aquí. Las fichas de Historias no se usan para fabricar sprites.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => seleccionarPersonaje(null)}
+            className={`rounded-md border px-2 py-1 text-[11px] ${!personajeSeleccionado ? "border-accent bg-accent/10 text-fg" : "border-border text-muted hover:border-accent/60"}`}
+          >
+            <Plus className="mr-1 inline h-3 w-3" /> Personaje nuevo
           </button>
-          {personajesFiltrados.map(p=><button key={p.id} type="button" onClick={()=>seleccionarPersonaje(p)} className={`flex w-full items-center gap-2 rounded-md border p-2 text-left ${personajeSeleccionado?.id===p.id?"border-accent bg-accent/10":"border-border hover:border-accent/60"}`}>
-            {p.animaciones[0]?<img src={p.animaciones[0].tiraUrl} alt="" className="h-9 w-9 shrink-0 object-contain"/>:<UserRound className="h-6 w-9 shrink-0 text-muted"/>}
-            <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{p.nombre}</span><span className="block truncate text-[9px] text-muted">{p.origen==="historias"?"Ficha de Historias":"Identidad de sprites"} · {p.animaciones.length} anim.</span></span>
-          </button>)}
-          {!personajesFiltrados.length&&<p className="px-2 py-1 text-[10px] text-muted">No hay personajes que coincidan con la búsqueda.</p>}
-        </div>}
-        {personajeSeleccionado&&<div className="mt-2 rounded-md border border-accent/35 bg-surface/60 p-2">
-          <div className="flex items-start justify-between gap-2"><span className="min-w-0"><span className="block truncate text-xs font-semibold">Seleccionado: {personajeSeleccionado.nombre}</span><span className="block text-[9px] text-accent">{personajeSeleccionado.origen==="historias"?"Ficha de Historias":"Personaje del laboratorio"}</span></span><span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9px] text-muted">{personajeSeleccionado.animaciones.length} anim.</span></div>
-          <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-muted">{personajeSeleccionado.descripcion}</p>
-          {!personajeSeleccionado.spriteId&&<p className="mt-1 text-[10px] text-accent">Aún no tiene sprites: el primero creará su cuadro maestro.</p>}
-        </div>}
-        <label className="mt-2 block"><span className="text-[10px] text-muted">Nombre del personaje</span><input className="input mt-1 w-full py-1 text-xs" value={nombrePersonaje} maxLength={60} placeholder="Lumi, el zorro astral" onChange={e=>{setNombrePersonaje(e.target.value);setGuardadoPrivado(false);}}/></label>
-        <p className="mt-1 text-[10px] text-muted">Al elegir uno existente, las nuevas animaciones conservan su identidad y reutilizan su cuadro maestro después del primer sprite.</p>
+          {personajes.slice(0, 8).map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => seleccionarPersonaje(p)}
+              className={`max-w-[10rem] truncate rounded-md border px-2 py-1 text-[11px] ${personajeSeleccionado?.id === p.id ? "border-accent bg-accent/10 text-fg" : "border-border text-muted hover:border-accent/60"}`}
+              title={p.nombre}
+            >
+              {p.nombre}
+            </button>
+          ))}
+        </div>
+        {personajeSeleccionado && (
+          <p className="mt-2 text-[10px] text-accent">
+            Seleccionado: <b className="text-fg">{personajeSeleccionado.nombre}</b>
+            {" · "}{personajeSeleccionado.animaciones.length} animación{personajeSeleccionado.animaciones.length === 1 ? "" : "es"}
+            {" · "}las nuevas conservan su cuadro maestro.
+          </p>
+        )}
+        <label className="mt-2 block">
+          <span className="text-[10px] text-muted">Nombre del personaje</span>
+          <input
+            className="input mt-1 w-full py-1 text-xs"
+            value={nombrePersonaje}
+            maxLength={60}
+            placeholder="Lumi, el zorro astral"
+            onChange={(e) => { setNombrePersonaje(e.target.value); setGuardadoPrivado(false); }}
+          />
+        </label>
       </div>
 
       <div>
@@ -815,12 +925,163 @@ export function GenerarSprite({ onGuardado, puedeGenerar = true, puedePublicar =
           </div>
         </>
       )}
-      {!!personajes.length&&<div className="space-y-2 border-t border-border pt-3"><div className="flex items-center gap-1.5 text-xs font-semibold"><Library className="h-3.5 w-3.5 text-accent"/> Mis personajes y animaciones</div>
-        {personajes.map(p=><div key={p.id} className="rounded-lg border border-border p-2"><div className="flex items-center justify-between"><span className="text-xs font-semibold">{p.nombre}</span>
-          <button className="btn-ghost px-2 py-1 text-[10px]" onClick={()=>{seleccionarPersonaje(p);setHecho(null);window.scrollTo({top:0,behavior:"smooth"});}}><Plus className="h-3 w-3"/> Nueva animación</button></div>
-          <div className="mt-2 grid gap-1 sm:grid-cols-2">{p.animaciones.map(a=><button key={a.id} onClick={()=>void editarAnimacion(a.id)} className="flex items-center gap-2 rounded-md border border-border p-1.5 text-left hover:border-accent">
-            {/* eslint-disable-next-line @next/next/no-img-element */}<img src={a.tiraUrl} alt="" className="h-9 w-14 object-contain"/><span className="min-w-0 flex-1"><span className="block truncate text-[11px]">{a.nombre}</span><span className="block text-[9px] text-muted">{a.accion} · {a.fotogramas} · {a.columnas}×{a.filas}</span></span><Pencil className="h-3 w-3"/></button>)}
-            {!p.animaciones.length&&<p className="text-[10px] text-muted">Todavía no tiene animaciones.</p>}</div></div>)}</div>}
+      <div className="space-y-3 border-t border-border pt-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Library className="h-3.5 w-3.5 shrink-0 text-accent" />
+          <span className="text-xs font-semibold text-fg">Biblioteca de sprites</span>
+          <button type="button" onClick={() => void releerPersonajes()} className="btn-ghost ml-auto px-2 py-1 text-[10px]" title="Releer">
+            {cargandoPersonajes ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+          </button>
+        </div>
+
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-muted" />
+          <input
+            className="input w-full py-1.5 pl-7 text-xs"
+            value={busquedaBiblio}
+            onChange={(e) => setBusquedaBiblio(e.target.value)}
+            placeholder="Buscar por nombre o prompt…"
+            aria-label="Buscar en la biblioteca de sprites"
+          />
+        </div>
+
+        {errorPersonajes && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-danger/35 bg-danger/5 p-2 text-[10px] text-danger">
+            <span>{errorPersonajes}</span>
+            <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-[10px]" onClick={() => void releerPersonajes()}>
+              Reintentar
+            </button>
+          </div>
+        )}
+
+        {!cargandoPersonajes && !personajes.length && !errorPersonajes && (
+          <p className="rounded-lg border border-dashed border-border p-3 text-[11px] text-muted">
+            Todavía no hay personajes aquí. Fabrica uno arriba y guárdalo: a partir de ahí puedes añadirle correr, volar, saltar…
+          </p>
+        )}
+
+        {!cargandoPersonajes && !!personajes.length && !personajesFiltrados.length && (
+          <p className="text-[11px] text-muted">Ningún sprite coincide con «{busquedaBiblio.trim()}».</p>
+        )}
+
+        <div className="space-y-2">
+          {personajesPagina.map((p) => (
+            <div key={p.id} className="rounded-lg border border-border bg-surface-2/30 p-2">
+              <div className="flex flex-wrap items-start gap-2">
+                {p.animaciones[0] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.animaciones[0].tiraUrl} alt="" className="h-12 w-12 shrink-0 object-contain" />
+                ) : (
+                  <UserRound className="h-10 w-12 shrink-0 text-muted" />
+                )}
+                <div className="min-w-0 flex-1">
+                  {renombrandoId === p.id ? (
+                    <div className="flex flex-wrap gap-1">
+                      <input
+                        className="input min-w-0 flex-1 py-1 text-xs"
+                        value={nombreEdit}
+                        maxLength={60}
+                        autoFocus
+                        onChange={(e) => setNombreEdit(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void renombrarPersonaje(p);
+                          if (e.key === "Escape") setRenombrandoId(null);
+                        }}
+                      />
+                      <button type="button" className="btn-brand px-2 py-1 text-[10px]" onClick={() => void renombrarPersonaje(p)}>
+                        <Check className="h-3 w-3" />
+                      </button>
+                      <button type="button" className="btn-ghost px-2 py-1 text-[10px]" onClick={() => setRenombrandoId(null)}>
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <span className="min-w-0 truncate text-xs font-semibold text-fg">{p.nombre}</span>
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted hover:text-accent"
+                        title="Renombrar"
+                        onClick={() => { setRenombrandoId(p.id); setNombreEdit(p.nombre); }}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+                  <p className="mt-0.5 line-clamp-2 text-[10px] text-muted" title={p.descripcion || p.prompt}>
+                    {p.descripcion || p.prompt || "Sin prompt"}
+                  </p>
+                  <p className="text-[9px] text-muted">{p.animaciones.length} animación{p.animaciones.length === 1 ? "" : "es"}</p>
+                </div>
+              </div>
+
+              <div className="mt-2 flex flex-wrap gap-1">
+                <button type="button" className="btn-brand px-2 py-1 text-[10px]" onClick={() => nuevaAnimacion(p)}>
+                  <Plus className="h-3 w-3" /> Nueva animación
+                </button>
+                {ANIM_RAPIDAS.map((r) => (
+                  <button
+                    key={r.label}
+                    type="button"
+                    className="rounded-md border border-border px-1.5 py-1 text-[10px] text-muted hover:border-accent hover:text-fg"
+                    onClick={() => nuevaAnimacion(p, r)}
+                    title={`Fabricar «${r.label}» para ${p.nombre}`}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                {p.animaciones.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => void editarAnimacion(a.id)}
+                    className="flex items-center gap-2 rounded-md border border-border p-1.5 text-left hover:border-accent"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={a.tiraUrl} alt="" className="h-9 w-14 object-contain" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[11px]">{a.nombre}</span>
+                      <span className="block truncate text-[9px] text-muted">{a.accion} · {a.que}</span>
+                    </span>
+                    <Pencil className="h-3 w-3 shrink-0 text-muted" />
+                  </button>
+                ))}
+                {!p.animaciones.length && (
+                  <p className="text-[10px] text-muted">Todavía no tiene animaciones.</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {personajesFiltrados.length > POR_PAGINA && (
+          <div className="flex items-center justify-between gap-2 text-[11px] text-muted">
+            <button
+              type="button"
+              className="btn-ghost px-2 py-1 text-[10px] disabled:opacity-40"
+              disabled={paginaClamped <= 0}
+              onClick={() => setPaginaBiblio((p) => Math.max(0, p - 1))}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" /> Anterior
+            </button>
+            <span className="tabular-nums">
+              {paginaClamped + 1} / {totalPaginas}
+              {" · "}{personajesFiltrados.length} resultado{personajesFiltrados.length === 1 ? "" : "s"}
+            </span>
+            <button
+              type="button"
+              className="btn-ghost px-2 py-1 text-[10px] disabled:opacity-40"
+              disabled={paginaClamped >= totalPaginas - 1}
+              onClick={() => setPaginaBiblio((p) => Math.min(totalPaginas - 1, p + 1))}
+            >
+              Siguiente <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
