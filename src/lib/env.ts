@@ -51,6 +51,10 @@ export const env = {
     return secretOrFail("AUTH_SECRET", process.env.AUTH_SECRET, DEV_AUTH_SECRET);
   },
   get databaseUrl() {
+    // Railway inyecta a veces DATABASE_PRIVATE_URL (red *.railway.internal).
+    // Preferirla evita el proxy público inestable desde el mismo proyecto.
+    const privada = (process.env["DATABASE_PRIVATE_URL"] ?? "").trim();
+    if (privada) return privada;
     return secretOrFail("DATABASE_URL", process.env.DATABASE_URL, "");
   },
   /** Clave de OpenAI del despliegue. Nunca se pide ni se guarda desde el navegador. */
