@@ -237,6 +237,28 @@ export async function POST(req: Request) {
     }
     committed = true;
 
+    // Persistir YA (antes de confiar en el navegador). Si el cliente muere al
+    // convertir el base64, la imagen pagada sigue en el taller.
+    let guardado: { personajeId: string; animacionId: string; enAtlas: boolean } | null = null;
+    let errorGuardado: string | null = null;
+    try {
+      const { persistirSpriteGenerado } = await import("@/lib/lab/persistir-sprite-generado.server");
+      guardado = await persistirSpriteGenerado(user.id, Buffer.from(b64, "base64"), {
+        que,
+        fotogramas,
+        columnas: rejilla.columnas,
+        filas: rejilla.filas,
+        vista,
+        direccion,
+        accion,
+        croma: CROMA,
+        personajeId,
+      });
+    } catch (e: any) {
+      console.error("No se pudo autoguardar el sprite generado", e);
+      errorGuardado = e?.message || "No se pudo guardar en la base de datos.";
+    }
+
     return NextResponse.json({
       ok: true,
       imagen: b64,
@@ -251,6 +273,11 @@ export async function POST(req: Request) {
       columnas: rejilla.columnas, filas: rejilla.filas, distribucion,
       referenciaUsada: !!bufferReferencia,
       referenciaDe: bufferReferencia ? etiquetaRef : null,
+      personajeId: guardado?.personajeId ?? null,
+      animacionId: guardado?.animacionId ?? null,
+      enAtlas: guardado?.enAtlas ?? false,
+      guardadoEnDb: !!guardado,
+      errorGuardado,
     });
   } catch (e: any) {
     return NextResponse.json({ error: motivoFallo(e, "imagen") }, { status: 502 });
