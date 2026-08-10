@@ -257,7 +257,8 @@ export function MapaEditor({
               Son los mapas de colores para dárselos a una IA de fuera, no tu
               trabajo. Para guardar y recuperar el proyecto entero —imágenes,
               mapa y cámara— usa <b className="text-fg">Descargar todo</b> en
-              «Montaje y paralaje».
+              «Montaje y paralaje», y reábrelo allí con <b className="text-fg">Importar todo</b>
+              (no subas montaje.json aquí: el mapa va dentro, y este cuadro solo quiere el JSON del mapa).
             </p>
             <button onClick={() => exportar("png", marcadas)} disabled={trabajando || !esc} className="btn-ghost w-full text-xs">
               <ImageIcon className="h-3.5 w-3.5 text-accent" /> Marcadas en un PNG

@@ -51,4 +51,26 @@ describe("idle estático y decorado quieto", () => {
     expect(rev.escena.layers.find((c) => c.id === "islas")?.mov).toBeUndefined();
     expect(rev.escena.layers.find((c) => c.id === "nube")?.mov?.tipo).toBe("deriva");
   });
+
+  it("acepta montaje.json desenrollando .escena", () => {
+    const mapa = {
+      scene: { id: "m", title: "m", width: 16, height: 9 },
+      layers: [{
+        id: "fondo", name: "Fondo", depth: 0.05,
+        objects: [{ id: "s", shape: "rect", semantic: "sky", x: 0, y: 0, w: 1, h: 1 }],
+      }],
+    };
+    const rev = revisar({
+      version: 2,
+      width: 1920,
+      height: 1080,
+      capas: [{ nombre: "Fondo", depth: 0.05, archivo: "0-fondo.png" }],
+      escena: mapa,
+      cola: [{ mov: "acercar", durMs: 3000 }],
+    });
+    expect("escena" in rev).toBe(true);
+    if (!("escena" in rev)) return;
+    expect(rev.escena.scene.id).toBe("m");
+    expect(rev.escena.layers).toHaveLength(1);
+  });
 });
