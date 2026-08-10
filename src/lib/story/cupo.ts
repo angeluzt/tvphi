@@ -196,6 +196,10 @@ export async function reservarUsoIa(
               : mensajeCupoAgotado(resultado.cupo),
       };
     }
+    // Traza ligera para operación (sin PII más allá del id interno).
+    console.info(JSON.stringify({
+      evt: "ai_usage_reservado", kind, userId, usoId: resultado.id, quedan: resultado.cupo.quedan,
+    }));
     return resultado;
   } catch (e) {
     console.error("[cupo] reserva falló", e);

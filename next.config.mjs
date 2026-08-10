@@ -2,9 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
   images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "**" },
-    ],
+    // Las imágenes de historias viven en blob:/data: o en APIs propias.
+    // No abrimos el optimizador a internet arbitrario.
+    remotePatterns: [],
   },
   // El compositor/editor usa APIs del navegador; nada especial en server components.
   experimental: {

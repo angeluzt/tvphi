@@ -3,6 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { estadoCupoHistorias } from "@/lib/story/cupo";
+import {
+  MAX_BYTES_JSON_CAPITULO, MAX_PROYECTOS_POR_USUARIO,
+  bytesJson, cuerpoDemasiadoGrande,
+} from "@/lib/story/limites";
+import { resolverSeriesId } from "@/lib/story/series-id";
 
 // Metadatos del proyecto (ligeros): texto/movimiento/transición de cada slide y
 // capas de audio. Las imágenes/audios pesados viven en IndexedDB del navegador y
@@ -199,6 +204,8 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  const peso = cuerpoDemasiadoGrande(req);
+  if (peso) return NextResponse.json({ error: peso }, { status: 413 });
   const parsed = saveSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     const detalle = parsed.error.issues
@@ -211,22 +218,36 @@ export async function POST(req: Request) {
     );
   }
   const { id, name, data, seriesId } = parsed.data;
+  if (bytesJson(data) > MAX_BYTES_JSON_CAPITULO) {
+    return NextResponse.json({
+      error: "Este capítulo es demasiado grande para guardarlo en el servidor. Exporta el ZIP y aligera escenas.",
+    }, { status: 413 });
+  }
+  const serie = await resolverSeriesId(user.id, seriesId);
+  if (!serie.ok) return NextResponse.json({ error: serie.error }, { status: 403 });
 
   if (id) {
     const existing = await prisma.storyProject.findFirst({ where: { id, userId: user.id }, select: { id: true } });
     if (!existing) return NextResponse.json({ error: "Ese capítulo ya no existe en tu cuenta" }, { status: 404 });
     const project = await prisma.storyProject.update({
       where: { id },
-      data: { name, data: data as any, ...(seriesId !== undefined ? { seriesId } : {}) },
+      data: { name, data: data as any, ...(serie.seriesId !== undefined ? { seriesId: serie.seriesId } : {}) },
       select: { id: true, name: true, seriesId: true, updatedAt: true },
     });
     return NextResponse.json({ ok: true, project });
   }
 
-  // Crear: sin cupo. El límite de 3/24 h solo aplica a generar con IA
-  // (/api/story/ia/capitulo). Aquí el usuario puede guardar las que quiera.
+  const cuantos = await prisma.storyProject.count({ where: { userId: user.id } });
+  if (cuantos >= MAX_PROYECTOS_POR_USUARIO) {
+    return NextResponse.json({
+      error: `Has llegado al tope de ${MAX_PROYECTOS_POR_USUARIO} capítulos. Borra alguno antes de crear otro.`,
+    }, { status: 409 });
+  }
+
+  // Crear: sin cupo. El límite de historias/día solo aplica a generar con IA
+  // (/api/story/ia/capitulo). Aquí el usuario puede guardar las que quiera (hasta el tope).
   const project = await prisma.storyProject.create({
-    data: { userId: user.id, name, data: data as any, seriesId: seriesId ?? null },
+    data: { userId: user.id, name, data: data as any, seriesId: serie.seriesId ?? null },
     select: { id: true, name: true, seriesId: true, updatedAt: true },
   });
   return NextResponse.json({ ok: true, project });
