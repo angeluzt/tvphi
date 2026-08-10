@@ -31,10 +31,34 @@ export interface TrayectoriaSprite {
   bucle?: boolean;
 }
 
+/**
+ * Otra animación del MISMO personaje, lista para adoptarla a mitad de ruta.
+ *
+ * QUÉ RESUELVE. Un actor era una tira de fotogramas y se acabó: si caminaba,
+ * caminaba todo el rato. Un personaje que llega andando, se para y saluda
+ * necesitaba TRES capas con la misma criatura, encendidas y apagadas a mano en
+ * los momentos exactos —imposible de cuadrar y un desastre al mover la ruta—.
+ *
+ * Aquí la capa lleva sus animaciones colgadas y la ruta dice cuándo cambia.
+ * Cada una tiene sus propios fotogramas y su propio fps porque un ciclo de
+ * correr y uno de estar quieto no duran lo mismo ni de lejos.
+ */
+export interface AnimLigada {
+  /** Nombre corto con el que la ruta la llama. Único dentro de la capa. */
+  clave: string;
+  /** Id de la animación en la biblioteca, para volver a bajar su tira. */
+  id?: string;
+  fotogramas: number;
+  fps: number;
+}
+
 /** Un tramo declarativo de una ruta. También se puede escribir desde la IA. */
 export interface PasoRutaSprite {
-  /** mover interpola; pausa conserva el punto; voltear cambia el sentido. */
-  tipo: "mover" | "pausa" | "voltear";
+  /**
+   * mover interpola; pausa conserva el punto; voltear cambia el sentido;
+   * cambiar sustituye la animación por otra de las ligadas.
+   */
+  tipo: "mover" | "pausa" | "voltear" | "cambiar";
   /** Destino del tramo. Solo se usa al mover. */
   x?: number;
   y?: number;
@@ -44,6 +68,12 @@ export interface PasoRutaSprite {
   suavizado?: "lineal" | "suave";
   /** Sentido durante este paso. En voltear, si falta, invierte el anterior. */
   espejo?: boolean;
+  /**
+   * cambiar: a qué animación ligada se pasa. Cadena vacía vuelve a la de la
+   * capa. Los pasos de mover y pausa también lo admiten, que es lo cómodo:
+   * «vete allí CORRIENDO» en un solo paso en vez de dos.
+   */
+  anim?: string;
 }
 
 export interface RutaSprite {
@@ -79,6 +109,13 @@ export interface SpriteEnCapa {
   trayectoria?: TrayectoriaSprite;
   /** Secuencia de movimientos, pausas y giros. Tiene prioridad sobre trayectoria. */
   ruta?: RutaSprite;
+  /**
+   * Otras animaciones del mismo personaje que la ruta puede activar.
+   *
+   * La tira de `fotogramas`/`fps` de arriba sigue siendo la de partida; estas
+   * son las que se encadenan con pasos «cambiar».
+   */
+  anims?: AnimLigada[];
   /** Voltearlo para que mire al otro lado. */
   espejo?: boolean;
   /** Reiniciar la ruta al reproducir la cámara/transición. Por defecto sí. */
@@ -133,14 +170,49 @@ export function normalizarSprite(s: any): SpriteEnCapa | undefined {
       ...(s.trayectoria.bucle ? { bucle: true } : {}),
     };
   }
+  // Las animaciones ligadas se normalizan ANTES que la ruta: un paso que llame
+  // a una animación que no existe no debe quedarse guardado, o al reproducir el
+  // actor desaparecería sin decir por qué.
+  if (Array.isArray(s.anims)) {
+    const vistas = new Set<string>();
+    const anims: AnimLigada[] = [];
+    for (const a of s.anims.slice(0, 8)) {
+      if (!a || typeof a !== "object") continue;
+      const clave = String(a.clave ?? "").trim().slice(0, 40);
+      const fot = Math.round(acotar(num(a.fotogramas, 0), 1, 24));
+      if (!clave || !fot || vistas.has(clave)) continue;
+      vistas.add(clave);
+      anims.push({
+        clave,
+        fotogramas: fot,
+        fps: Math.round(acotar(num(a.fps, spr.fps), 1, 60)),
+        ...(typeof a.id === "string" && a.id ? { id: a.id } : {}),
+      });
+    }
+    if (anims.length) spr.anims = anims;
+  }
+  const claves = new Set((spr.anims ?? []).map((a) => a.clave));
+
   if (s.ruta && typeof s.ruta === "object" && Array.isArray(s.ruta.pasos)) {
     const pasos = s.ruta.pasos.slice(0, 24).flatMap((p: any): PasoRutaSprite[] => {
-      if (!p || typeof p !== "object" || !["mover", "pausa", "voltear"].includes(p.tipo)) return [];
+      if (!p || typeof p !== "object" || !["mover", "pausa", "voltear", "cambiar"].includes(p.tipo)) return [];
+      // La cadena vacía es válida y significa «vuelve a la de la capa». Por eso
+      // se distingue de «no lo han puesto», que no debe tocar la animación.
+      const anim = typeof p.anim === "string" ? p.anim.trim().slice(0, 40) : undefined;
+      const animOk = anim !== undefined && (anim === "" || claves.has(anim));
+      // Un «cambiar» a una animación que no existe no es un paso: sería una
+      // espera invisible que además descuadra el resto de los tiempos.
+      if (p.tipo === "cambiar" && !animOk) return [];
       const comun = {
         tipo: p.tipo,
-        segundos: acotar(num(p.segundos, p.tipo === "mover" ? 4 : p.tipo === "pausa" ? 1 : 0.1), 0.1, 120),
+        segundos: acotar(
+          num(p.segundos, p.tipo === "mover" ? 4 : p.tipo === "pausa" ? 1 : 0.1),
+          p.tipo === "cambiar" ? 0 : 0.1,
+          120,
+        ),
         ...(p.tipo === "mover" && p.suavizado === "suave" ? { suavizado: "suave" as const } : {}),
         ...(typeof p.espejo === "boolean" ? { espejo: p.espejo } : {}),
+        ...(animOk ? { anim } : {}),
       } as PasoRutaSprite;
       if (p.tipo === "mover") {
         comun.x = acotar(num(p.x, spr.x), -0.5, 1.5);
@@ -153,6 +225,12 @@ export function normalizarSprite(s: any): SpriteEnCapa | undefined {
   return spr;
 }
 
+/** Los fotogramas y el fps que tocan según la animación activa. */
+export function animDeSprite(spr: SpriteEnCapa, clave: string): { fotogramas: number; fps: number } {
+  const a = clave ? spr.anims?.find((x) => x.clave === clave) : undefined;
+  return a ? { fotogramas: a.fotogramas, fps: a.fps } : { fotogramas: spr.fotogramas, fps: spr.fps };
+}
+
 export interface EstadoSprite {
   x: number;
   y: number;
@@ -161,12 +239,27 @@ export interface EstadoSprite {
   paso: number;
   avance: number;
   terminado: boolean;
+  /** Animación ligada activa. Cadena vacía = la de la capa. */
+  anim: string;
+  /** Segundos desde que se adoptó esa animación, para no cortarle el ciclo. */
+  desdeAnim: number;
 }
+
+/**
+ * Lo que dura un paso.
+ *
+ * Un «cambiar» de cero segundos es legítimo —es un cambio instantáneo, no una
+ * espera— y por eso no comparte el mínimo de 0.1 con los demás: si lo
+ * compartiera, tres cambios encadenados meterían tres décimas de parón que
+ * nadie ha pedido y descuadrarían la ruta con la cámara.
+ */
+const durPaso = (p: PasoRutaSprite) =>
+  p.tipo === "cambiar" ? Math.max(0, p.segundos) : Math.max(0.1, p.segundos);
 
 /** Duración espacial total; no altera el ciclo interno de fotogramas. */
 export function duracionRutaSprite(spr: SpriteEnCapa) {
   if (spr.ruta?.pasos.length) {
-    return spr.ruta.pasos.reduce((total, p) => total + Math.max(0.1, p.segundos), 0);
+    return spr.ruta.pasos.reduce((total, p) => total + durPaso(p), 0);
   }
   return spr.trayectoria ? Math.max(0.1, spr.trayectoria.segundos) : 0;
 }
@@ -183,12 +276,25 @@ export function estadoSpriteEn(spr: SpriteEnCapa, t: number): EstadoSprite {
     let x = spr.x;
     let y = spr.y;
     let espejo = !!spr.espejo;
+    // La animación activa y CUÁNDO empezó. El reloj propio importa: si el ciclo
+    // de fotogramas siguiera contando desde el principio de la ruta, al pasar
+    // de «andar» (6 cuadros) a «saludar» (3) el nuevo empezaría por un cuadro
+    // cualquiera y el cambio se vería como un tirón.
+    let anim = "";
+    let inicioAnim = 0;
+    let transcurrido = 0;
     for (let i = 0; i < pasos.length; i++) {
       const paso = pasos[i];
-      const dur = Math.max(0.1, paso.segundos);
+      const dur = durPaso(paso);
       const sentido = typeof paso.espejo === "boolean"
         ? paso.espejo
         : paso.tipo === "voltear" ? !espejo : espejo;
+      // El cambio de animación es lo PRIMERO del paso: si el paso es «vete
+      // allí corriendo», corre desde el primer fotograma, no desde el último.
+      if (paso.anim !== undefined && paso.anim !== anim) {
+        anim = paso.anim;
+        inicioAnim = transcurrido;
+      }
       if (tiempo < dur) {
         const crudo = paso.tipo === "mover" ? tiempo / dur : 0;
         const avance = paso.tipo === "mover" && paso.suavizado === "suave"
@@ -201,21 +307,30 @@ export function estadoSpriteEn(spr: SpriteEnCapa, t: number): EstadoSprite {
           paso: i,
           avance,
           terminado: false,
+          anim,
+          desdeAnim: transcurrido + tiempo - inicioAnim,
         };
       }
       tiempo -= dur;
+      transcurrido += dur;
       if (paso.tipo === "mover") {
         x = paso.x ?? x;
         y = paso.y ?? y;
       }
       espejo = sentido;
     }
-    return { x, y, espejo, paso: pasos.length - 1, avance: 1, terminado: !enBucle };
+    return {
+      x, y, espejo, paso: pasos.length - 1, avance: 1, terminado: !enBucle,
+      anim, desdeAnim: transcurrido - inicioAnim,
+    };
   }
 
   const tr = spr.trayectoria;
   if (!tr) {
-    return { x: spr.x, y: spr.y, espejo: !!spr.espejo, paso: -1, avance: 0, terminado: false };
+    return {
+      x: spr.x, y: spr.y, espejo: !!spr.espejo, paso: -1, avance: 0, terminado: false,
+      anim: "", desdeAnim: Math.max(0, t),
+    };
   }
   const dur = Math.max(0.1, tr.segundos);
   const tiempo = Math.max(0, t);
@@ -227,6 +342,8 @@ export function estadoSpriteEn(spr: SpriteEnCapa, t: number): EstadoSprite {
     paso: -1,
     avance: p,
     terminado: !tr.bucle && tiempo >= dur,
+    anim: "",
+    desdeAnim: tiempo,
   };
 }
 
@@ -239,11 +356,32 @@ export function posicionSprite(spr: SpriteEnCapa, t: number) {
 /** Ausente solo en objetos viejos aún no normalizados: esos seguían la cámara. */
 export const spriteSigueCamara = (spr: SpriteEnCapa) => spr.espacio !== "pantalla";
 
-/** Qué fotograma toca en el segundo `t`. */
+/** Qué fotograma toca a los `t` segundos de una tira de `fotogramas` a `fps`. */
+export function fotogramaDeAnim(fotogramas: number, fps: number, t: number): number {
+  if (fotogramas < 2) return 0;
+  const i = Math.floor(t * fps) % fotogramas;
+  return i < 0 ? i + fotogramas : i;
+}
+
+/** Qué fotograma toca en el segundo `t`, con la tira de partida de la capa. */
 export function fotogramaEn(spr: SpriteEnCapa, t: number): number {
-  if (spr.fotogramas < 2) return 0;
-  const i = Math.floor(t * spr.fps) % spr.fotogramas;
-  return i < 0 ? i + spr.fotogramas : i;
+  return fotogramaDeAnim(spr.fotogramas, spr.fps, t);
+}
+
+/**
+ * Todo lo que hace falta para pintar el sprite en un instante: qué tira, qué
+ * trozo de ella y hacia dónde mira. Lo usan la vista previa y la exportación,
+ * así que vive aquí y no en el dibujante.
+ */
+export function fotogramaActivo(spr: SpriteEnCapa, t: number) {
+  const estado = estadoSpriteEn(spr, t);
+  const { fotogramas, fps } = animDeSprite(spr, estado.anim);
+  return {
+    estado,
+    anim: estado.anim,
+    fotogramas,
+    indice: fotogramaDeAnim(fotogramas, fps, estado.desdeAnim),
+  };
 }
 
 /** El plano de una capa: dónde ha quedado el rectángulo completo, ya con cámara. */
@@ -323,6 +461,13 @@ export function rutasSpriteParaIA() {
         { tipo: "voltear", segundos: 0.1 },
         { tipo: "mover", x: -0.2, y: 0.5, segundos: 4 },
       ],
+    },
+    animaciones: {
+      anims: "otras animaciones del MISMO personaje, cada una con su clave, fotogramas y fps",
+      cambiar: "paso {tipo:'cambiar', anim:'saludar', segundos:0} para adoptarla a mitad de ruta; segundos 0 es instantáneo y no alarga nada",
+      enElPaso: "un mover o un pausa también admite anim: «vete allí corriendo» en un solo paso",
+      volver: "anim:'' devuelve la animación de partida de la capa",
+      ojo: "solo valen claves declaradas en anims; el ciclo de la nueva empieza siempre por su primer cuadro",
     },
     sincronizar: "true reinicia la ruta al reproducir cámara/transiciones; false usa su reloj independiente",
     espacio: "capa si usa suelo/vía/agua y debe conservar el apoyo durante zoom/paralaje; pantalla solo para ruta absoluta que ignora cámara",

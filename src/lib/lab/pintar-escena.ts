@@ -1,5 +1,5 @@
 import {
-  cajaSprite, estadoSpriteEn, fotogramaEn, pintarSprite, spriteSigueCamara,
+  cajaSprite, fotogramaActivo, pintarSprite, spriteSigueCamara,
   type Plano, type SpriteEnCapa,
 } from "@/lib/lab/sprite-capa";
 import { copiarPlanoBucle, moverPlano, planoCentrado } from "@/lib/lab/plano-movimiento";
@@ -33,6 +33,14 @@ export interface CapaPintable {
   opacidad: number;
   mov?: MovCapa;
   spr?: SpriteEnCapa;
+  /**
+   * Las tiras de las animaciones ligadas, por clave.
+   *
+   * `img` sigue siendo la de partida. Si un paso de la ruta activa otra y su
+   * tira no está cargada, se pinta la de partida: es mejor ver al personaje
+   * quieto que verlo desaparecer a mitad de escena.
+   */
+  tiras?: Record<string, HTMLImageElement>;
 }
 
 export interface OpcionesPintado {
@@ -55,6 +63,29 @@ export interface GuiaRuta {
   spr: SpriteEnCapa;
   plano: Plano;
   tiempo: number;
+}
+
+/**
+ * Qué tira toca en este instante y de qué tamaño son sus cuadros.
+ *
+ * Cada animación ligada tiene su PROPIO número de fotogramas, así que el ancho
+ * de cuadro se saca de la tira que se va a pintar. Sacarlo de la de partida
+ * —que es lo que hacía cuando solo había una— cortaría a la mitad los cuadros
+ * de cualquier animación con un recuento distinto.
+ */
+function tiraActiva(capa: CapaPintable, spr: SpriteEnCapa, t: number) {
+  const { estado, anim, fotogramas, indice } = fotogramaActivo(spr, t);
+  const tira = (anim && capa.tiras?.[anim]) || capa.img;
+  // Sin tira propia cargada se cae a la de partida, y con ella su recuento:
+  // usar el de la ligada leería fuera de la imagen y pintaría un trozo vacío.
+  const cuadros = tira === capa.img && anim ? spr.fotogramas : fotogramas;
+  return {
+    tira,
+    af: tira.naturalWidth / Math.max(1, cuadros),
+    hf: tira.naturalHeight,
+    i: Math.min(indice, cuadros - 1),
+    estado,
+  };
 }
 
 /**
@@ -81,10 +112,7 @@ export function pintarCapas(
       // Plano fijo del lienzo: no usa vista.ox, vista.zoom, profundidad ni
       // alphaCapa. Así una transición de cámara no dobla la trayectoria A→B
       // ni hace desaparecer al sprite. Zoom y opacidad manuales sí mandan.
-      const af = capa.img.naturalWidth / capa.spr.fotogramas;
-      const hf = capa.img.naturalHeight;
-      const i = fotogramaEn(capa.spr, tiempo);
-      const estado = estadoSpriteEn(capa.spr, tiempo);
+      const { tira, af, hf, i, estado } = tiraActiva(capa, capa.spr, tiempo);
       const spr = {
         ...capa.spr,
         alto: capa.spr.alto * capa.escala * propio.escala,
@@ -93,15 +121,15 @@ export function pintarCapas(
       const plano = { x0: propio.dx * w, y0: propio.dy * h, w, h };
       c.save();
       c.globalAlpha = capa.opacidad;
-      pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, plano, tiempo));
+      pintarSprite(c, tira, spr, af, hf, i, cajaSprite(spr, af, hf, plano, tiempo));
       if (propio.repetir) {
         if (capa.mov?.x) {
           const p2 = { ...plano, x0: plano.x0 - Math.sign(capa.mov.x) * 2 * w };
-          pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
+          pintarSprite(c, tira, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
         }
         if (capa.mov?.y) {
           const p2 = { ...plano, y0: plano.y0 - Math.sign(capa.mov.y) * 2 * h };
-          pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
+          pintarSprite(c, tira, spr, af, hf, i, cajaSprite(spr, af, hf, p2, tiempo));
         }
       }
       c.restore();
@@ -162,17 +190,14 @@ export function pintarCapas(
     if (capa.spr) {
       // Este es el modo opcional «seguir cámara»: el sprite vive dentro del
       // plano transformado y por eso sí hereda paralaje, zoom y fundidos.
-      const af = capa.img.naturalWidth / capa.spr.fotogramas;
-      const hf = capa.img.naturalHeight;
-      const i = fotogramaEn(capa.spr, tiempo);
-      const estado = estadoSpriteEn(capa.spr, tiempo);
+      const { tira, af, hf, i, estado } = tiraActiva(capa, capa.spr, tiempo);
       const spr = { ...capa.spr, espejo: estado.espejo };
       const plano = { x0, y0, w: dw, h: dh };
-      pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, plano, tiempo));
+      pintarSprite(c, tira, spr, af, hf, i, cajaSprite(spr, af, hf, plano, tiempo));
       if (propio.repetir) {
         const copias = copiarPlanoBucle(plano, capa.mov!, "capa", w, h);
-        if (copias.horizontal) pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, copias.horizontal, tiempo));
-        if (copias.vertical) pintarSprite(c, capa.img, spr, af, hf, i, cajaSprite(spr, af, hf, copias.vertical, tiempo));
+        if (copias.horizontal) pintarSprite(c, tira, spr, af, hf, i, cajaSprite(spr, af, hf, copias.horizontal, tiempo));
+        if (copias.vertical) pintarSprite(c, tira, spr, af, hf, i, cajaSprite(spr, af, hf, copias.vertical, tiempo));
       }
       c.restore();
       if (rutaVisibleId === capa.id) guiaRuta = { spr, plano, tiempo };

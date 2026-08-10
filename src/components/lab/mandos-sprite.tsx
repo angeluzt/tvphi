@@ -5,11 +5,12 @@ import {
   ChevronDown, ChevronUp, MapPinned, Play, Plus, RotateCcw, Square, Trash2,
 } from "lucide-react";
 import { MOVS_CAPA, type MovCapa } from "@/lib/lab/movimiento-capa";
-import type { PasoRutaSprite, SpriteEnCapa } from "@/lib/lab/sprite-capa";
+import type { AnimLigada, PasoRutaSprite, SpriteEnCapa } from "@/lib/lab/sprite-capa";
 import type { SuperficieNavegable } from "@/lib/lab/escena";
 import { ajustarSpriteALaEscena } from "@/lib/lab/navegacion-escena";
 import { Barra } from "./controles-basicos";
 import { CamposMovimientoCapa } from "./mandos-movimiento";
+import { LigarAnimaciones } from "./ligar-animaciones";
 
 // Los mandos de una capa que es un sprite: dónde está, de qué tamaño, hacia
 // dónde mira y por qué ruta pasa.
@@ -18,7 +19,7 @@ import { CamposMovimientoCapa } from "./mandos-movimiento";
 // resto: entra un sprite, sale un sprite.
 
 export function MandosSprite({
-  spr, mov, superficies, onSpr, onMov,
+  spr, mov, superficies, onSpr, onMov, onLigarAnim, onDesligarAnim,
   corriendo, rutaVisible, onReproducir, onPausar, onReiniciar, onRutaVisible,
 }: {
   spr: SpriteEnCapa;
@@ -26,6 +27,9 @@ export function MandosSprite({
   superficies: SuperficieNavegable[];
   onSpr: (p: Partial<SpriteEnCapa>) => void;
   onMov: (m: MovCapa | undefined) => void;
+  /** Colgar otra animación del mismo actor, con su tira ya cargada. */
+  onLigarAnim: (anim: AnimLigada, img: HTMLImageElement) => void;
+  onDesligarAnim: (clave: string) => void;
   corriendo: boolean;
   rutaVisible: boolean;
   onReproducir: () => void;
@@ -34,6 +38,7 @@ export function MandosSprite({
   onRutaVisible: (visible: boolean) => void;
 }) {
   const modo = spr.ruta ? "ruta" : spr.trayectoria ? "trayectoria" : (mov?.tipo ?? "");
+  const ligadas = spr.anims ?? [];
   const [pasoAbierto, setPasoAbierto] = useState<number | null>(0);
   const espejoHacia = (desde: number, hasta: number) => {
     if (spr.vista !== "lateral" || Math.abs(hasta - desde) < 0.005) return !!spr.espejo;
@@ -257,6 +262,7 @@ export function MandosSprite({
         onCambio={(v) => onSpr({ alto: v })} formato={(v) => `${Math.round(v * 100)}%`} />
       <Barra etiqueta="Velocidad" valor={spr.fps} min={1} max={30} paso={1}
         onCambio={(v) => onSpr({ fps: Math.round(v) })} formato={(v) => `${v}/s`} />
+      <LigarAnimaciones spr={spr} onLigar={onLigarAnim} onQuitar={onDesligarAnim} />
       <label className="flex items-center gap-1.5 text-[10px] text-muted">
         <span className="w-16 shrink-0">Se mueve</span>
         <select
@@ -331,7 +337,7 @@ export function MandosSprite({
         <div className="space-y-1.5 rounded border border-accent/30 bg-surface/40 p-1.5">
           <div className="flex items-center gap-1">
             <span className="text-[9px] font-medium text-fg">Secuencia encadenada</span>
-            <span className="ml-auto text-[8px] text-muted">mover · esperar · voltear</span>
+            <span className="ml-auto text-[8px] text-muted">mover · esperar · voltear{ligadas.length ? " · cambiar" : ""}</span>
           </div>
           {spr.ruta.pasos.map((paso, i) => (
             <div key={i} className="space-y-1 rounded border border-border/70 bg-surface-2/45 p-1">
@@ -344,12 +350,15 @@ export function MandosSprite({
                     const tipo = e.target.value as PasoRutaSprite["tipo"];
                     if (tipo === "mover") reemplazarPaso(i, { tipo, ...destinoAntes(i), segundos: 2 });
                     else if (tipo === "pausa") reemplazarPaso(i, { tipo, segundos: 1 });
+                    // Un cambio dura cero: no es una espera, es un corte seco.
+                    else if (tipo === "cambiar") reemplazarPaso(i, { tipo, segundos: 0, anim: ligadas[0]?.clave ?? "" });
                     else reemplazarPaso(i, { tipo, segundos: 0.1 });
                   }}
                 >
                   <option value="mover">Mover a un punto</option>
                   <option value="pausa">Detenerse aquí</option>
                   <option value="voltear">Darse la vuelta</option>
+                  {!!ligadas.length && <option value="cambiar">Cambiar de animación</option>}
                 </select>
                 <button type="button" onClick={() => moverPaso(i, -1)} disabled={i === 0}
                   className="rounded border border-border p-0.5 text-muted disabled:opacity-25" aria-label="Subir paso">
@@ -380,8 +389,40 @@ export function MandosSprite({
                         onCambio={(v) => cambiarPaso(i, { y: v })} formato={(v) => v.toFixed(2)} />
                     </>
                   )}
-                  {paso.tipo !== "voltear" ? (
+                  {paso.tipo === "cambiar" && (
+                    <label className="flex items-center gap-1 text-[8px] text-muted">
+                      <span>Pasa a</span>
+                      <select className="input min-w-0 flex-1 py-0.5 text-[8px]"
+                        value={paso.anim ?? ""}
+                        onChange={(e) => cambiarPaso(i, { anim: e.target.value })}>
+                        <option value="">La animación de la capa</option>
+                        {ligadas.map((a) => (
+                          <option key={a.clave} value={a.clave}>{a.clave} · {a.fotogramas}c</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {paso.tipo !== "voltear" && paso.tipo !== "cambiar" ? (
                     <>
+                      {!!ligadas.length && (
+                        <label className="flex items-center gap-1 text-[8px] text-muted">
+                          <span>Lo hace</span>
+                          {/* «Conservar» es lo que había siempre y sigue siendo
+                              lo normal; poner una animación aquí ahorra un paso
+                              «cambiar» delante y evita descuadrar los tiempos. */}
+                          <select className="input min-w-0 flex-1 py-0.5 text-[8px]"
+                            value={paso.anim ?? "conservar"}
+                            onChange={(e) => cambiarPaso(i, {
+                              anim: e.target.value === "conservar" ? undefined : e.target.value,
+                            })}>
+                            <option value="conservar">Con la animación que venga</option>
+                            <option value="">Con la de la capa</option>
+                            {ligadas.map((a) => (
+                              <option key={a.clave} value={a.clave}>Con «{a.clave}»</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                       {paso.tipo === "mover" && (
                         <label className="flex items-center gap-1 text-[8px] text-muted">
                           <span>Ritmo</span>
@@ -412,7 +453,11 @@ export function MandosSprite({
                       </label>
                     </>
                   ) : (
-                    <p className="text-[8px] text-muted">Invierte el sentido en este punto y los pasos siguientes lo conservan.</p>
+                    <p className="text-[8px] text-muted">
+                      {paso.tipo === "voltear"
+                        ? "Invierte el sentido en este punto y los pasos siguientes lo conservan."
+                        : "El cambio es instantáneo y no alarga la ruta. La animación nueva arranca por su primer cuadro."}
+                    </p>
                   )}
                 </div>
               )}
@@ -437,6 +482,13 @@ export function MandosSprite({
             ])} className="btn-ghost px-1.5 py-0.5 text-[8px]">
               <Plus className="h-3 w-3" /> Giro
             </button>
+            {!!ligadas.length && (
+              <button type="button" onClick={() => guardarPasos([
+                ...spr.ruta!.pasos, { tipo: "cambiar", segundos: 0, anim: ligadas[0].clave },
+              ])} className="btn-ghost px-1.5 py-0.5 text-[8px]">
+                <Plus className="h-3 w-3" /> Cambio
+              </button>
+            )}
             <label className="ml-auto flex items-center gap-1 text-[8px] text-muted">
               <input type="checkbox" checked={!!spr.ruta.bucle}
                 onChange={(e) => onSpr({ ruta: { ...spr.ruta!, bucle: e.target.checked } })} />

@@ -15,7 +15,7 @@ import { desplazamientoCapa, normalizarMov, MOVS_CAPA, type MovCapa } from "@/li
 import { copiarPlanoBucle, moverPlano, planoCentrado } from "@/lib/lab/plano-movimiento";
 import {
   cajaSprite, estadoSpriteEn, fotogramaEn, normalizarSprite, pintarSprite, spriteSigueCamara,
-  type PasoRutaSprite, type Plano, type SpriteEnCapa,
+  type AnimLigada, type PasoRutaSprite, type Plano, type SpriteEnCapa,
 } from "@/lib/lab/sprite-capa";
 import { ajustarSpriteALaEscena, superficiesDeEscena } from "@/lib/lab/navegacion-escena";
 import type { Escena, SuperficieNavegable } from "@/lib/lab/escena";
@@ -41,6 +41,10 @@ import { pintarGuiaRuta } from "@/lib/lab/guia-ruta";
 import { pintarCapas } from "@/lib/lab/pintar-escena";
 import { MandosMovimientoCapa, movimientoInicial } from "./mandos-movimiento";
 import { MandosSprite } from "./mandos-sprite";
+import { PanelGrupo } from "./panel-grupo";
+import {
+  profundidadesEscalonadas, movimientoParaGrupo, repartirPorCandado, resumenDelGrupo,
+} from "@/lib/lab/grupo-capas";
 import { VistaPreviaFlotante } from "./vista-previa-flotante";
 import { InspectorRapido, ParalajeGlobalSimple, type ModoEdicionCanvas } from "./inspector-rapido";
 import {
@@ -97,6 +101,14 @@ interface CapaImg {
    * Sin esto, la imagen se pinta a pantalla completa, como siempre.
    */
   spr?: SpriteEnCapa;
+  /**
+   * Las tiras de las animaciones ligadas del sprite, por clave.
+   *
+   * Van fuera de `spr` porque `spr` se serializa tal cual al ZIP y al
+   * borrador, y una imagen del DOM ahí dentro no sobrevive a un JSON.stringify.
+   * `spr.anims` guarda los datos; esto guarda los píxeles.
+   */
+  tiras?: Record<string, HTMLImageElement>;
 }
 
 export interface Semilla {
@@ -167,6 +179,21 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   // Qué grupo de mandos se está viendo. Los dos existen siempre en el árbol:
   // el que no toca se esconde, para no perder focos ni arrastres a medias.
   const [panel, setPanel] = useState<PanelMontaje>("elemento");
+  /** Dentro de «Elemento»: animar (lo de siempre), varias a la vez, o la imagen. */
+  const [subPanel, setSubPanel] = useState<"animar" | "grupo" | "imagen">("animar");
+  /**
+   * Las capas marcadas para trabajar EN BLOQUE.
+   *
+   * Va aparte de `capaActivaId` a propósito. La activa es «la que estoy
+   * editando» y solo puede haber una; el grupo es «sobre estas quiero actuar»
+   * y sobrevive mientras se pasea por ellas de una en una para comprobar cómo
+   * han quedado. Fundirlos obligaría a rehacer la selección cada vez que se
+   * mira una capa.
+   */
+  const [grupo, setGrupo] = useState<string[]>([]);
+  const [grupoFondo, setGrupoFondo] = useState(0.15);
+  const [grupoFrente, setGrupoFrente] = useState(0.85);
+  const [desacompasarGrupo, setDesacompasarGrupo] = useState(true);
   // La fila de acciones secundarias, plegada por defecto.
   const [masAcciones, setMasAcciones] = useState(false);
   // Los efectos del motor colgados de la escena.
@@ -317,6 +344,14 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   useEffect(() => {
     if (rutaVisibleId && rutaVisibleId !== capaActivaId) setRutaVisibleId(null);
   }, [capaActivaId, rutaVisibleId]);
+  // Una capa borrada tiene que salir del grupo o «Separarlas» contaría
+  // fantasmas y el número del panel dejaría de cuadrar con la lista.
+  useEffect(() => {
+    setGrupo((g) => {
+      const vivos = g.filter((id) => capas.some((c) => c.id === id));
+      return vivos.length === g.length ? g : vivos;
+    });
+  }, [capas]);
 
   /** ¿Hay un montaje auto-guardado tras una recarga? */
   const [borradorPendiente, setBorradorPendiente] = useState<Awaited<ReturnType<typeof leerBorradorMontaje>>>(null);
@@ -355,6 +390,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               mov: c.mov,
               spr: c.spr,
               dataUrl: await imgADataUrl(c.img),
+              ...(await tirasADataUrls(c.tiras)),
             });
           }
           await guardarBorradorMontaje({
@@ -392,6 +428,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
           depth: c.depth, escala: c.escala, opacidad: c.opacidad,
           bloqueada: c.bloqueada, via: c.via, vacio: c.vacio,
           mov: normalizarMov(c.mov), spr: normalizarSprite(c.spr),
+          tiras: await cargarTiras(c.tiras),
         });
       }
       relojesSpriteRef.current.clear();
@@ -601,6 +638,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
         capas: capas.map((c) => ({
           clave: c.clave, nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
           bloqueada: c.bloqueada, via: c.via, vacio: c.vacio, mov: c.mov, spr: c.spr, img: c.img,
+          tiras: c.tiras,
         })),
       });
       setAviso(
@@ -647,6 +685,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
           bloqueada: c.bloqueada,
           mov: normalizarMov(c.mov),
           spr: normalizarSprite(c.spr),
+          tiras: await cargarTiras(c.tiras),
         });
       }
       if (!nuevas.length) throw new Error("El ZIP no trae capas.");
@@ -1281,9 +1320,21 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     };
   }
 
+  /**
+   * Los pasos que describen el VIAJE DE IDA, y que por tanto se conservan al
+   * reconstruir la ruta.
+   *
+   * Los «voltear» no están porque se vuelven a poner solos según el sentido de
+   * cada tramo. Los «cambiar» SÍ: son decisiones que tomó la persona —«aquí
+   * saluda»— y tirarlos cada vez que se toca la escena para añadir un punto
+   * borraría el trabajo sin decir nada.
+   */
+  const esPasoDeIda = (p: PasoRutaSprite) =>
+    p.tipo === "mover" || p.tipo === "pausa" || p.tipo === "cambiar";
+
   function aplicarVolverRuta(pasos: PasoRutaSprite[], spr: SpriteEnCapa): PasoRutaSprite[] {
     if (!volverRuta || pasos.length < 1) return pasos.slice(0, 24);
-    const ida = pasos.filter((p) => p.tipo === "mover" || p.tipo === "pausa");
+    const ida = pasos.filter(esPasoDeIda);
     const vuelta: PasoRutaSprite[] = [];
     let x = spr.x;
     let y = spr.y;
@@ -1350,7 +1401,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     // nada, sin decir por qué.
     if (!capa.spr) { anadirPuntoRutaCapa(capa, nx, ny); return; }
     const spr = capa.spr;
-    const nucleo = [...(spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover" || p.tipo === "pausa")];
+    const nucleo = [...(spr.ruta?.pasos ?? []).filter(esPasoDeIda)];
     let lx = spr.x;
     let ly = spr.y;
     for (const p of nucleo) {
@@ -1377,7 +1428,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     const capa = capasRef.current.find((c) => c.id === capaActivaId);
     if (!capa?.spr || capa.bloqueada) return;
     const spr = capa.spr;
-    const nucleo = [...(spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover" || p.tipo === "pausa")];
+    const nucleo = [...(spr.ruta?.pasos ?? []).filter(esPasoDeIda)];
     nucleo.push({ tipo: "pausa", segundos: pausaSegInspector });
     const finales = aplicarVolverRuta(nucleo, spr);
     upd(capa.id, { spr: { ...spr, ruta: { pasos: finales, bucle: !!spr.ruta?.bucle || volverRuta }, trayectoria: undefined } });
@@ -1476,6 +1527,152 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
       + (saltadas ? ` · ${saltadas} bloqueada${saltadas === 1 ? "" : "s"}, sin tocar` : "")
       + ".",
     );
+  }
+
+  // ── Animaciones ligadas del actor ─────────────────────────────────────────
+
+  /**
+   * Colgarle otra animación al actor. Los datos van a `spr.anims` y los píxeles
+   * a `tiras`, porque `spr` se serializa a JSON y una imagen del DOM no cabe.
+   */
+  function ligarAnimacion(id: string, anim: AnimLigada, img: HTMLImageElement) {
+    setCapas((cs) => cs.map((c) => {
+      if (c.id !== id || !c.spr) return c;
+      return {
+        ...c,
+        spr: { ...c.spr, anims: [...(c.spr.anims ?? []), anim] },
+        tiras: { ...(c.tiras ?? {}), [anim.clave]: img },
+      };
+    }));
+    setAviso(
+      `«${anim.clave}» ligada · ${anim.fotogramas} cuadros. Añade un paso «Cambio» a la ruta para usarla.`,
+    );
+  }
+
+  /**
+   * Desligarla, y de paso limpiar los pasos que la llamaban.
+   *
+   * Dejarlos apuntando a una clave que ya no existe sería una espera invisible
+   * en la ruta: el actor se quedaría clavado unos segundos sin motivo visible.
+   */
+  function desligarAnimacion(id: string, clave: string) {
+    setCapas((cs) => cs.map((c) => {
+      if (c.id !== id || !c.spr) return c;
+      const tiras = { ...(c.tiras ?? {}) };
+      delete tiras[clave];
+      const pasos = (c.spr.ruta?.pasos ?? [])
+        .filter((p) => !(p.tipo === "cambiar" && p.anim === clave))
+        .map((p) => (p.anim === clave ? { ...p, anim: undefined } : p));
+      return {
+        ...c,
+        spr: {
+          ...c.spr,
+          anims: (c.spr.anims ?? []).filter((a) => a.clave !== clave),
+          ...(c.spr.ruta ? { ruta: { ...c.spr.ruta, pasos } } : {}),
+        },
+        tiras: Object.keys(tiras).length ? tiras : undefined,
+      };
+    }));
+    setAviso(`«${clave}» desligada. Los pasos que la usaban vuelven a la animación de la capa.`);
+  }
+
+  // ── El grupo: varias capas a la vez ───────────────────────────────────────
+  //
+  // Todo lo de aquí abajo pasa por `repartirPorCandado` antes de tocar nada.
+  // El candado es la única forma de decir «esta no» sin sacarla del grupo, y
+  // si una acción en bloque se lo saltara dejaría de significar nada justo
+  // donde más falta hace.
+
+  /**
+   * Profundidades escalonadas entre las capas marcadas: esto ES el paralaje.
+   *
+   * Se escalona en el orden de la PILA, no en el que se marcaron. La pila ya
+   * dice qué está detrás de qué —es lo que se ve—, y escalonar por el orden de
+   * los clics daría un fondo delante de un primer plano en cuanto alguien
+   * marcara de abajo arriba.
+   */
+  function separarGrupo() {
+    const { destino, bloqueadas } = repartirPorCandado(capasRef.current, grupo);
+    if (!destino.length) {
+      setAviso(resumenDelGrupo(0, bloqueadas.length, "separarlas"));
+      return;
+    }
+    const depths = profundidadesEscalonadas(destino.map((c) => c.id), grupoFondo, grupoFrente);
+    setCapas((cs) => cs.map((c) => (depths.has(c.id) ? { ...c, depth: depths.get(c.id)! } : c)));
+    setAviso(
+      resumenDelGrupo(destino.length, bloqueadas.length, "paralaje repartido")
+      + ` De ${grupoFondo.toFixed(2)} a ${grupoFrente.toFixed(2)}.`,
+    );
+  }
+
+  /** La misma profundidad para todas: se mueven como si fueran un solo dibujo. */
+  function juntarGrupo() {
+    const { destino, bloqueadas } = repartirPorCandado(capasRef.current, grupo);
+    if (!destino.length) {
+      setAviso(resumenDelGrupo(0, bloqueadas.length, "juntarlas"));
+      return;
+    }
+    const d = Math.round(grupoFondo * 100) / 100;
+    const ids = new Set(destino.map((c) => c.id));
+    setCapas((cs) => cs.map((c) => (ids.has(c.id) ? { ...c, depth: d } : c)));
+    setAviso(resumenDelGrupo(destino.length, bloqueadas.length, `misma profundidad (${d.toFixed(2)})`));
+  }
+
+  /** La animación de la capa activa, copiada a las marcadas. */
+  function copiarMovAlGrupo() {
+    const origen = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!origen?.mov) {
+      setAviso("La capa que estás editando no tiene animación que copiar.");
+      return;
+    }
+    // La de origen se queda como está: ya tiene el movimiento, y desfasarla
+    // movería justo la que se acaba de dejar a gusto.
+    const { destino, bloqueadas } = repartirPorCandado(
+      capasRef.current, grupo.filter((id) => id !== origen.id),
+    );
+    if (!destino.length) {
+      setAviso(resumenDelGrupo(0, bloqueadas.length, "copiarles la animación"));
+      return;
+    }
+    const movs = movimientoParaGrupo(origen.mov, destino.map((c) => c.id), {
+      desfasar: desacompasarGrupo,
+    });
+    setCapas((cs) => cs.map((c) => (movs.has(c.id) ? { ...c, mov: movs.get(c.id) } : c)));
+    reiniciarMovimientosCapa();
+    setAviso(resumenDelGrupo(destino.length, bloqueadas.length, "animación copiada"));
+  }
+
+  /** Dejar quietas las marcadas, sean sprites o capas normales. */
+  function quitarMovDelGrupo() {
+    const { destino, bloqueadas } = repartirPorCandado(capasRef.current, grupo);
+    if (!destino.length) {
+      setAviso(resumenDelGrupo(0, bloqueadas.length, "dejarlas quietas"));
+      return;
+    }
+    const ids = new Set(destino.map((c) => c.id));
+    setCapas((cs) => cs.map((c) => (ids.has(c.id)
+      ? { ...c, mov: undefined, ...(c.spr ? { spr: { ...c.spr, ruta: undefined, trayectoria: undefined } } : {}) }
+      : c)));
+    setAviso(resumenDelGrupo(destino.length, bloqueadas.length, "quietas"));
+  }
+
+  /** Bloquear o soltar de golpe. Este SÍ pasa por encima del candado: es él. */
+  function bloquearGrupo(bloquear: boolean) {
+    const ids = new Set(grupo);
+    if (!ids.size) { setAviso("No hay capas en el grupo."); return; }
+    setCapas((cs) => cs.map((c) => (ids.has(c.id) ? { ...c, bloqueada: bloquear } : c)));
+    setAviso(`${ids.size} capa${ids.size === 1 ? "" : "s"} ${bloquear ? "bloqueada" : "suelta"}${ids.size === 1 ? "" : "s"}.`);
+  }
+
+  function verGrupo(visible: boolean) {
+    const { destino, bloqueadas } = repartirPorCandado(capasRef.current, grupo);
+    if (!destino.length) {
+      setAviso(resumenDelGrupo(0, bloqueadas.length, visible ? "mostrarlas" : "ocultarlas"));
+      return;
+    }
+    const ids = new Set(destino.map((c) => c.id));
+    setCapas((cs) => cs.map((c) => (ids.has(c.id) ? { ...c, visible } : c)));
+    setAviso(resumenDelGrupo(destino.length, bloqueadas.length, visible ? "visibles" : "ocultas"));
   }
 
   /** Quitar la ruta de la capa activa y dejarla quieta. */
@@ -1701,15 +1898,22 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
         <p className="text-[10px] text-muted">{borradorInfo}</p>
       )}
 
-      <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div className="card order-2 space-y-2 self-start p-3 lg:order-1 lg:sticky lg:top-2">
+      {/* `minmax(0,…)` en las DOS pistas, no solo en la ancha.
+          Sin el 0, una pista de grid no puede encoger por debajo de su
+          contenido: un sprite con nombre largo estiraba la columna de capas a
+          454 px dentro de una ventana de 390, la página cogía scroll
+          horizontal y todo parecía «hacerse gigante». El `min-w-0` de las
+          tarjetas es lo que deja que los `truncate` de dentro funcionen. */}
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+        <div className="card order-2 min-w-0 space-y-2 self-start p-3 lg:order-1 lg:sticky lg:top-2">
           <div className="flex items-center gap-2">
             <span className="label">Capas · vista compacta</span>
             <span className="chip ml-auto bg-surface-2 text-muted">{capas.length}</span>
           </div>
           {!!capas.length && (
             <p className="text-[10px] text-muted">
-              Elige una aquí y edítala junto a la vista. Arriba queda detrás; abajo, delante.
+              Toca el nombre para editarla; marca la casilla para meterla en el grupo y aplicarle
+              paralaje o animación en bloque. Arriba queda detrás; abajo, delante.
             </p>
           )}
           {!capas.length && (
@@ -1723,6 +1927,18 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               <div key={c.id} className={`flex items-center gap-1 rounded-lg border p-1 ${
                 c.id === capaActivaId ? "border-accent bg-accent/10" : "border-border bg-surface-2/50"
               }`}>
+                {/* Marcar aquí es lo que construye el grupo. Vive en la lista
+                    de siempre a propósito: si solo estuviera dentro de la
+                    pestaña «Grupo», nadie descubriría que se puede trabajar
+                    con varias capas a la vez. */}
+                <input
+                  type="checkbox"
+                  checked={grupo.includes(c.id)}
+                  onChange={() => setGrupo((g) => (g.includes(c.id) ? g.filter((x) => x !== c.id) : [...g, c.id]))}
+                  className="ml-0.5 h-3 w-3 shrink-0 accent-accent"
+                  title="Trabajar con esta capa en grupo"
+                  aria-label={`${grupo.includes(c.id) ? "Quitar" : "Añadir"} ${c.nombre} del grupo`}
+                />
                 <button type="button" onClick={() => setCapaActivaId(c.id)}
                   className="min-w-0 flex-1 truncate px-1 py-1 text-left text-[11px] font-medium"
                   title={c.nombre}>
@@ -2020,6 +2236,62 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                     </button>
                   </div>
 
+                  {/* Dos grupos, no cuatro bloques apilados.
+                      Antes se montaban a la vez el inspector, los mandos de
+                      movimiento, los del sprite Y las herramientas de imagen:
+                      2.199 px de alto en un móvil, con la vista previa fuera
+                      de pantalla en cuanto tocabas algo. «Imagen» es lo que
+                      casi nunca se usa —sustituir, regenerar, exportar— así
+                      que deja de estorbar por defecto. */}
+                  <div className="flex gap-1" role="tablist" aria-label="Qué editar de esta capa">
+                    {([
+                      ["animar", "Animar"],
+                      ["grupo", grupo.length ? `Grupo · ${grupo.length}` : "Grupo"],
+                      ["imagen", "Imagen"],
+                    ] as const).map(([id, et]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        role="tab"
+                        aria-selected={subPanel === id}
+                        onClick={() => setSubPanel(id)}
+                        className={`flex-1 rounded-md border px-2 py-1 text-[10px] ${
+                          subPanel === id
+                            ? "border-accent bg-accent/15 text-accent"
+                            : "border-border text-muted hover:bg-surface-2"
+                        }`}
+                      >
+                        {et}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className={subPanel === "grupo" ? "" : "hidden"}>
+                    <PanelGrupo
+                      capas={capas.map((c) => ({
+                        id: c.id, nombre: c.nombre, depth: c.depth,
+                        visible: c.visible, bloqueada: c.bloqueada, tieneMov: !!c.mov,
+                      }))}
+                      seleccion={grupo}
+                      onSeleccion={setGrupo}
+                      fondo={grupoFondo}
+                      frente={grupoFrente}
+                      onFondo={setGrupoFondo}
+                      onFrente={setGrupoFrente}
+                      onEscalonar={separarGrupo}
+                      onJuntas={juntarGrupo}
+                      nombreOrigen={capaActiva?.mov ? capaActiva.nombre : null}
+                      puedeCopiar={!!capaActiva?.mov}
+                      desacompasar={desacompasarGrupo}
+                      onDesacompasar={setDesacompasarGrupo}
+                      onCopiarMov={copiarMovAlGrupo}
+                      onQuitarMov={quitarMovDelGrupo}
+                      onBloquear={bloquearGrupo}
+                      onVisible={verGrupo}
+                    />
+                  </div>
+
+                  <div className={subPanel === "animar" ? "space-y-2" : "hidden"}>
                   <InspectorRapido
                     esSprite={!!capaActiva.spr}
                     modo={modoEdicion}
@@ -2031,7 +2303,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                       setVolverRuta(v);
                       const capa = capasRef.current.find((c) => c.id === capaActivaId);
                       if (!capa?.spr) return;
-                      const nucleo = (capa.spr.ruta?.pasos ?? []).filter((p) => p.tipo === "mover" || p.tipo === "pausa");
+                      const nucleo = (capa.spr.ruta?.pasos ?? []).filter(esPasoDeIda);
                       if (!nucleo.length) return;
                       const finales = v ? aplicarVolverRuta(nucleo, capa.spr) : nucleo;
                       upd(capa.id, {
@@ -2112,6 +2384,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                         });
                       }}
                       onMov={(m) => upd(capaActiva.id, { mov: m })}
+                      onLigarAnim={(anim, img) => ligarAnimacion(capaActiva.id, anim, img)}
+                      onDesligarAnim={(clave) => desligarAnimacion(capaActiva.id, clave)}
                       corriendo={spriteCorriendo(capaActiva.id)}
                       rutaVisible={rutaVisibleId === capaActiva.id}
                       onReproducir={() => reproducirSprite(capaActiva.id)}
@@ -2122,6 +2396,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   )}
                     </div>
                   </details>
+                  </div>
+                  <div className={subPanel === "imagen" ? "space-y-2" : "hidden"}>
                   <HerramientasCapa
                     nombre={capaActiva.nombre}
                     clave={capaActiva.clave}
@@ -2155,6 +2431,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                       })();
                     }}
                   />
+                  </div>
                 </fieldset>
               </div>
             )}
@@ -2608,6 +2885,37 @@ const cargar = (url: string) =>
     i.onerror = () => rej(new Error("imagen ilegible"));
     i.src = url;
   });
+
+/**
+ * Las tiras ligadas, de URL a imagen.
+ *
+ * Una que no cargue se DESCARTA en vez de tumbar la importación entera: el
+ * dibujante ya cae a la tira de partida, así que se pierde un cambio de
+ * animación y se conserva el resto del montaje. Al revés —perder el proyecto
+ * porque falta un PNG secundario— sería mucho peor.
+ */
+async function cargarTiras(
+  urls: Record<string, string> | undefined,
+): Promise<Record<string, HTMLImageElement> | undefined> {
+  const entradas = Object.entries(urls ?? {});
+  if (!entradas.length) return undefined;
+  const out: Record<string, HTMLImageElement> = {};
+  for (const [clave, url] of entradas) {
+    try { out[clave] = await cargar(url); } catch { /* se pinta la de partida */ }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Y al revés, para el autoguardado, que solo sabe de texto. */
+async function tirasADataUrls(
+  tiras: Record<string, HTMLImageElement> | undefined,
+): Promise<{ tiras?: Record<string, string> }> {
+  const entradas = Object.entries(tiras ?? {});
+  if (!entradas.length) return {};
+  const out: Record<string, string> = {};
+  for (const [clave, img] of entradas) out[clave] = await imgADataUrl(img);
+  return { tiras: out };
+}
 
 function hacerCapa(nombre: string, img: HTMLImageElement): CapaImg {
   const id = `c${++contador}`;
