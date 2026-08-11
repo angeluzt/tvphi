@@ -24,7 +24,7 @@ import {
   type SpriteMeta, type VistaSprite as TipoVistaSprite,
 } from "@/lib/lab/biblioteca";
 import {
-  encargosDeTanda, conCadena, pasoNuevo,
+  encargosDeTanda, conCadena, pasoNuevo, normalizarPlan,
   type EncargoSprite, type PasoTanda,
 } from "@/lib/lab/tanda-sprites";
 import { PanelTanda, type EstadoTanda } from "./panel-tanda";
@@ -178,6 +178,9 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   const [tandaDescripcion, setTandaDescripcion] = useState("");
   const [tandaPasos, setTandaPasos] = useState<PasoTanda[]>(() => [pasoNuevo("p1")]);
   const [tanda, setTanda] = useState<EstadoTanda | null>(null);
+  /** La idea entera, en una frase, para que la reparta la IA. */
+  const [tandaIdea, setTandaIdea] = useState("");
+  const [planeando, setPlaneando] = useState(false);
   /** Para poder pararla entre animaciones. Va en ref: el bucle no re-renderiza. */
   const pararTanda = useRef(false);
   const tandaOcupada = !!tanda && !tanda.fallo && tanda.actual <= tanda.total;
@@ -401,6 +404,40 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
    * siguiente, así que un bucle que fuera cambiando los campos generaría cinco
    * veces lo mismo.
    */
+  /**
+   * De una frase a la lista de animaciones.
+   *
+   * NO dibuja: rellena el formulario de abajo para que se revise. Planear
+   * cuesta una llamada de texto; generar son N imágenes que se pagan, así que
+   * entre las dos cosas va una persona mirando.
+   */
+  async function planearTanda() {
+    if (!puedeGenerar || tandaIdea.trim().length < 6 || planeando || tandaOcupada) return;
+    setPlaneando(true);
+    setError(null);
+    try {
+      const j = await pedirJson("/api/story/ia/lab/tanda", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idea: tandaIdea.trim() }),
+      });
+      const plan = normalizarPlan(j.plan, (i) => `ia${Date.now().toString(36)}${i}`);
+      if (!plan.pasos.length) throw new Error("El plan volvió sin acciones.");
+      setTandaPersonaje(plan.personaje);
+      setTandaDescripcion(plan.descripcion);
+      setTandaPasos(plan.pasos);
+      setTanda(null);
+      setAviso(
+        `Plan listo: ${plan.pasos.length} animaciones. Revísalas y toca «Generar» `
+        + "cuando encajen — hasta entonces no se ha dibujado nada.",
+      );
+    } catch (e) {
+      setError(mensajeLegible(e, "No se pudo planear la tanda."));
+    } finally {
+      setPlaneando(false);
+    }
+  }
+
   /**
    * Generar la tanda entera, una detrás de otra.
    *
@@ -1252,6 +1289,11 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         onArrancar={() => void generarTanda()}
         onParar={() => { pararTanda.current = true; }}
         personajeExistente={personajeSeleccionado?.nombre ?? null}
+        idea={tandaIdea}
+        onIdea={setTandaIdea}
+        onPlanear={() => void planearTanda()}
+        planeando={planeando}
+        puedeIa={puedeGenerar}
       />
 
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">

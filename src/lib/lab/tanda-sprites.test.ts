@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  encargosDeTanda, conCadena, promptDelPaso, nombreDeAccion, pasoNuevo, RECETAS, MAX_PASOS_TANDA,
+  encargosDeTanda, conCadena, promptDelPaso, nombreDeAccion, pasoNuevo,
+  normalizarPlan, reglasDelPlan, nombreDePersonaje, RECETAS, MAX_PASOS_TANDA,
   type PasoTanda,
 } from "./tanda-sprites";
 
@@ -168,6 +169,16 @@ describe("nombreDeAccion", () => {
 });
 
 describe("recetas", () => {
+  it("el texto va en INGLÉS: se pega dentro de un prompt que va entero en inglés", () => {
+    // Los NOMBRES sí van en español —se leen en pantalla y no salen del
+    // navegador—, pero el «que» acaba dentro de la instrucción del generador de
+    // imagen, y mezclar idiomas ahí empeora el resultado.
+    const acentos = /[áéíóúñ¿¡]/i;
+    for (const r of RECETAS) {
+      for (const p of r.pasos) expect(p.que).not.toMatch(acentos);
+    }
+  });
+
   it("todas tienen pasos utilizables", () => {
     for (const r of RECETAS) {
       expect(r.pasos.length).toBeGreaterThan(1);
@@ -191,6 +202,138 @@ describe("recetas", () => {
       pasos: r.pasos.map((p, i) => ({ ...p, id: `p${i}` })),
     });
     expect(e).toHaveLength(5);
-    expect(e[0].que).toMatch(/^pescador viejo con sombrero de paja, sentado en la orilla/);
+    expect(e[0].que).toMatch(/^pescador viejo con sombrero de paja, sitting on the riverbank/);
+  });
+});
+
+describe("normalizarPlan", () => {
+  // La primera versión de la tanda te hacía escribir las cinco acciones a mano.
+  // Ahora se pide UNA frase y el reparto lo hace el modelo; esto es lo que deja
+  // su respuesta en algo que el taller pueda ejecutar sin sorpresas.
+
+  const bueno = {
+    personaje: "old fisherman with a straw hat, anime style",
+    descripcion: "Pescador viejo",
+    pasos: [
+      { que: "sitting on the riverbank, fishing", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "quieto" },
+      { que: "walking in profile", fotogramas: 8, vista: "lateral", direccion: "izquierda", accion: "caminar" },
+    ],
+  };
+
+  it("deja pasar un plan correcto tal cual", () => {
+    const p = normalizarPlan(bueno);
+    expect(p.personaje).toBe("old fisherman with a straw hat, anime style");
+    expect(p.descripcion).toBe("Pescador viejo");
+    expect(p.pasos).toHaveLength(2);
+    expect(p.pasos[1]).toMatchObject({ vista: "lateral", direccion: "izquierda", accion: "caminar", fotogramas: 8 });
+  });
+
+  it("cada paso sale con id propio, que es lo que la lista necesita", () => {
+    const p = normalizarPlan(bueno);
+    expect(new Set(p.pasos.map((x) => x.id)).size).toBe(2);
+  });
+
+  it("un valor que no está en la lista cae a uno válido, no revienta la imagen", () => {
+    // Un «vista: de lado» no rompe nada aquí: rompe la imagen que se paga
+    // treinta segundos después, y para entonces no se sabe de dónde salió.
+    const p = normalizarPlan({
+      personaje: "x",
+      pasos: [{ que: "camina", vista: "de lado", direccion: "hacia allá", accion: "pescar" }],
+    });
+    expect(p.pasos[0]).toMatchObject({ vista: "lateral", direccion: "derecha", accion: "otro" });
+  });
+
+  it("acota los fotogramas: por encima de 10 el bicho sale del tamaño de un sello", () => {
+    const p = normalizarPlan({ personaje: "x", pasos: [
+      { que: "uno", fotogramas: 40 }, { que: "dos", fotogramas: 0 }, { que: "tres", fotogramas: "siete" },
+    ] });
+    expect(p.pasos.map((x) => x.fotogramas)).toEqual([10, 1, 6]);
+  });
+
+  it("descarta los pasos sin texto y corta en el tope", () => {
+    const p = normalizarPlan({
+      personaje: "x",
+      pasos: [{ que: "camina" }, { que: "" }, { que: "ab" }, ...Array.from({ length: 20 }, () => ({ que: "otra cosa" }))],
+    });
+    expect(p.pasos.length).toBeLessThanOrEqual(MAX_PASOS_TANDA);
+    expect(p.pasos.every((x) => x.que.length >= 3)).toBe(true);
+  });
+
+  it("sin descripción, se usa el personaje: la biblioteca no puede quedarse sin nombre", () => {
+    expect(normalizarPlan({ personaje: "un pescador", pasos: [{ que: "pesca" }] }).descripcion)
+      .toBe("un pescador");
+  });
+
+  it("aguanta basura entera sin lanzar", () => {
+    for (const malo of [null, undefined, 42, "hola", {}, { pasos: "no es lista" }]) {
+      const p = normalizarPlan(malo);
+      expect(p.pasos).toEqual([]);
+      expect(typeof p.personaje).toBe("string");
+    }
+  });
+
+  it("el plan normalizado se puede ejecutar sin tocar nada", () => {
+    const p = normalizarPlan(bueno);
+    const e = encargosDeTanda({ personaje: p.personaje, descripcion: p.descripcion, pasos: p.pasos });
+    expect(e).toHaveLength(2);
+    expect(e[0].que).toMatch(/^old fisherman with a straw hat, anime style, sitting on the riverbank/);
+    expect(e.every((x) => x.refCuadro === "ultimo")).toBe(true);
+  });
+});
+
+describe("reglasDelPlan", () => {
+  it("las listas que se le piden al modelo son las MISMAS que se validan", () => {
+    // Separarlas es garantizar que un día se pida un valor que luego se
+    // descarta en silencio y nadie entiende por qué salió otra cosa.
+    const r = reglasDelPlan();
+    const p = normalizarPlan({
+      personaje: "x",
+      pasos: r.vista.map((v) => ({ que: "algo", vista: v })),
+    });
+    expect(p.pasos.map((x) => x.vista)).toEqual(r.vista.slice(0, p.pasos.length));
+
+    const q = normalizarPlan({
+      personaje: "x",
+      pasos: r.accion.map((a) => ({ que: "algo", accion: a })),
+    });
+    expect(q.pasos.map((x) => x.accion)).toEqual(r.accion.slice(0, q.pasos.length));
+  });
+
+  it("avisa del giro, que es donde se rompen estas secuencias", () => {
+    expect(reglasDelPlan().reglas.join(" ")).toMatch(/girar/i);
+  });
+});
+
+describe("nombreDePersonaje", () => {
+  it("NO es el prompt cortado", () => {
+    // Salía «old fisherman with a straw hat and worn blue jacket, anime s» en
+    // la lista de la biblioteca. Ilegible, y todos los personajes empezando
+    // igual.
+    expect(nombreDePersonaje("old fisherman with a straw hat and worn blue jacket, anime style, clean cel shading"))
+      .toBe("Old fisherman with a straw hat and worn blue jacket");
+  });
+
+  it("gana la descripción corta si la hay", () => {
+    expect(nombreDePersonaje(
+      "old fisherman with a straw hat, anime style",
+      "Pescador viejo con sombrero de paja",
+    )).toBe("Pescador viejo con sombrero de paja");
+  });
+
+  it("nunca pasa de 60 letras ni se queda vacío", () => {
+    expect(nombreDePersonaje("x".repeat(200)).length).toBe(60);
+    expect(nombreDePersonaje("")).toBe("Personaje");
+    expect(nombreDePersonaje("  ,  ")).toBe("Personaje");
+  });
+
+  it("la tanda lo usa: el nombre de la biblioteca es legible", () => {
+    const e = encargosDeTanda({
+      personaje: "old fisherman with a straw hat, anime style, clean cel shading",
+      descripcion: "Pescador viejo",
+      pasos: [paso("pescando")],
+    });
+    expect(e[0].nombrePersonaje).toBe("Pescador viejo");
+    // …pero el PROMPT sigue llevando la descripción completa en inglés.
+    expect(e[0].que).toMatch(/anime style, clean cel shading/);
   });
 });

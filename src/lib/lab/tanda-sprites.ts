@@ -91,6 +91,22 @@ export function nombreDeAccion(que: string): string {
 }
 
 /**
+ * Cómo se llama el personaje EN LA BIBLIOTECA.
+ *
+ * No es el prompt. El prompt es una frase larga en inglés con la ropa y el
+ * estilo de dibujo —«old fisherman with a straw hat and worn blue jacket,
+ * anime style, clean cel shading»— y cortarla a sesenta letras deja en la
+ * lista un «…blue jacket, anime s» que no se puede ni leer. Se prefiere la
+ * descripción corta si la hay, y si no, lo que va antes de la primera coma.
+ */
+export function nombreDePersonaje(personaje: string, descripcion?: string): string {
+  const fuente = (descripcion?.trim() || personaje).trim();
+  const corto = fuente.split(/[,;]/)[0].trim().slice(0, 60);
+  if (!corto) return "Personaje";
+  return corto[0].toLocaleUpperCase("es") + corto.slice(1);
+}
+
+/**
  * Los encargos en orden, ya encadenados.
  *
  * El primero crea el personaje (sin `personajeId`) y los demás se cuelgan de
@@ -124,7 +140,7 @@ export function encargosDeTanda(opts: {
     refAnimacionId: i === 0 ? opts.refInicialId : undefined,
     refCuadro: "ultimo" as const,
     nombre: nombreDeAccion(p.que),
-    nombrePersonaje: opts.personaje.trim().slice(0, 60) || undefined,
+    nombrePersonaje: nombreDePersonaje(opts.personaje, opts.descripcion),
     descripcionPersonaje: (opts.descripcion?.trim() || opts.personaje.trim()).slice(0, 600),
   }));
 }
@@ -149,42 +165,145 @@ export function conCadena(
   };
 }
 
+// ── El plan que escribe la IA ───────────────────────────────────────────────
+//
+// POR QUÉ HACE FALTA. La primera versión de esto te hacía escribir las cinco
+// acciones a mano, una fila cada una, con sus desplegables. O sea, el mismo
+// trabajo manual que la tanda venía a quitar, solo que en vertical. Lo natural
+// es decir «un pescador que pesca, se levanta, se da la vuelta y se va
+// caminando» y que el reparto en animaciones lo haga quien sabe hacerlo.
+//
+// Y HAY UN PASO INTERMEDIO A PROPÓSITO: el plan se enseña ANTES de generar
+// nada. Planear es una llamada de texto —céntimos, un segundo—; generar son N
+// imágenes que se pagan. Encadenarlo directo convertiría una frase mal escrita
+// en ocho imágenes tiradas. Así la IA propone, tú corriges lo que no encaja, y
+// entonces se paga.
+
+const VISTAS: VistaSprite[] = ["lateral", "frontal", "trasera", "superior", "libre"];
+const DIRECCIONES: DireccionSprite[] = [
+  "derecha", "izquierda", "frente", "espaldas", "arriba", "abajo", "ninguna",
+];
+const ACCIONES: AccionSprite[] = [
+  "quieto", "caminar", "correr", "volar", "flotar", "nadar", "caer", "girar", "otro",
+];
+
+const acotar = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const num = (v: unknown, def: number) => {
+  const x = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(x) ? x : def;
+};
+const enUno = <T extends string>(v: unknown, ops: T[], def: T): T =>
+  (typeof v === "string" && (ops as string[]).includes(v) ? v as T : def);
+
+export interface PlanTanda {
+  personaje: string;
+  descripcion: string;
+  pasos: PasoTanda[];
+}
+
 /**
- * Ejemplos que se pueden meter de un toque.
+ * Deja el plan del modelo en algo que el taller pueda ejecutar.
+ *
+ * No es paranoia de esquema: un modelo que devuelve `"vista": "de lado"` o
+ * doce fotogramas para un parpadeo no rompe nada visible aquí —rompe la imagen
+ * que se paga treinta segundos después—, y para entonces ya no se sabe de
+ * dónde salió el valor raro.
+ */
+export function normalizarPlan(crudo: any, idFn: (i: number) => string = (i) => `ia${i}`): PlanTanda {
+  const personaje = String(crudo?.personaje ?? "").trim().slice(0, 200);
+  const pasosCrudos = Array.isArray(crudo?.pasos) ? crudo.pasos : [];
+  const pasos: PasoTanda[] = [];
+  for (const p of pasosCrudos.slice(0, MAX_PASOS_TANDA)) {
+    const que = String(p?.que ?? "").trim().slice(0, 200);
+    if (que.length < 3) continue;
+    pasos.push({
+      id: idFn(pasos.length),
+      que,
+      // El tope real es 12, pero por encima de 10 los cuadros salen del tamaño
+      // de un sello y el bicho se pierde. Se acota aquí y no en el prompt: lo
+      // que el modelo promete y lo que devuelve no siempre coincide.
+      fotogramas: Math.round(acotar(num(p?.fotogramas, 6), 1, 10)),
+      vista: enUno(p?.vista, VISTAS, "lateral"),
+      direccion: enUno(p?.direccion, DIRECCIONES, "derecha"),
+      accion: enUno(p?.accion, ACCIONES, "otro"),
+    });
+  }
+  return {
+    personaje,
+    descripcion: String(crudo?.descripcion ?? "").trim().slice(0, 600) || personaje,
+    pasos,
+  };
+}
+
+/**
+ * Lo que se le cuenta al modelo de texto. Vive aquí y no en la ruta porque son
+ * las mismas listas que valida `normalizarPlan`: separarlas es garantizar que
+ * un día se pida un valor que luego se descarta.
+ */
+export function reglasDelPlan() {
+  return {
+    formato: {
+      personaje: "descripción del personaje en INGLÉS, frase nominal, sin verbo conjugado: quién es, qué lleva puesto y el estilo de dibujo",
+      descripcion: "la misma idea en español, corta, para la biblioteca",
+      pasos: [{ que: "qué hace, en INGLÉS, frase nominal", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "caminar" }],
+    },
+    vista: VISTAS,
+    direccion: DIRECCIONES,
+    accion: ACCIONES,
+    reglas: [
+      `Entre 2 y ${MAX_PASOS_TANDA} pasos. Menos es mejor que de más: cada paso es una imagen que se paga.`,
+      "«personaje» NO lleva la acción: es solo quién es. La acción va en cada paso, porque el personaje se antepone a todos.",
+      "Los pasos van en ORDEN CRONOLÓGICO: la pose final de uno enlaza con la inicial del siguiente.",
+      "Si el personaje cambia de sentido a mitad, mete un paso «girar» ANTES y cambia «direccion» en los pasos posteriores. Sin ese paso, el giro se ve como un salto.",
+      "fotogramas: 4 para un giro o un gesto corto, 6 para algo quieto o un movimiento suave, 8 para caminar o correr.",
+      "vista «lateral» para lo que se desplaza; «frontal» solo si mira al espectador (saludar, hablar).",
+      "accion debe ser la de la lista que más se parezca; «otro» si ninguna encaja.",
+      "Nada de fondo, suelo, sombra ni escenario en los textos: eso ya lo prohíbe el generador de imagen y repetirlo estorba.",
+    ],
+  };
+}
+
+/**
+ * Ejemplos que se pueden meter de un toque, para cuando no se quiere gastar ni
+ * la llamada de texto del planificador.
  *
  * No son «plantillas de escena» de las que borran tu trabajo: son listas de
- * ACCIONES que se copian en el formulario y se editan. Lo que cuesta escribir
- * no es el personaje —eso lo tiene claro quien lo pide— sino acordarse de que
- * una secuencia necesita un paso de transición entre dos poses lejanas.
+ * ACCIONES que se copian en el formulario y se editan.
+ *
+ * EL TEXTO VA EN INGLÉS aunque la interfaz esté en español, y no es un
+ * descuido: estas frases se pegan dentro del prompt del generador de imagen,
+ * que va entero en inglés. Mezclar los dos idiomas en la misma instrucción
+ * empeora el resultado. Los NOMBRES de las recetas sí van en español: esos se
+ * leen en pantalla y no salen del navegador.
  */
 export const RECETAS: { id: string; nombre: string; pasos: Omit<PasoTanda, "id">[] }[] = [
   {
     id: "pescador",
     nombre: "Pesca, se va y se queda pensando",
     pasos: [
-      { que: "sentado en la orilla, pescando con la caña quieta", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "quieto" },
-      { que: "se levanta y recoge la caña", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "otro" },
-      { que: "se da la vuelta hacia la izquierda", fotogramas: 4, vista: "lateral", direccion: "derecha", accion: "girar" },
-      { que: "camina de perfil hacia la izquierda", fotogramas: 8, vista: "lateral", direccion: "izquierda", accion: "caminar" },
-      { que: "parado de perfil, pensando, con la mano en la barbilla", fotogramas: 6, vista: "lateral", direccion: "izquierda", accion: "quieto" },
+      { que: "sitting on the riverbank, fishing, rod held still", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "quieto" },
+      { que: "standing up and reeling in the rod", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "otro" },
+      { que: "turning around to face the opposite way", fotogramas: 4, vista: "lateral", direccion: "derecha", accion: "girar" },
+      { que: "walking in profile, rod over the shoulder", fotogramas: 8, vista: "lateral", direccion: "izquierda", accion: "caminar" },
+      { que: "standing still, thinking, one hand on the chin", fotogramas: 6, vista: "lateral", direccion: "izquierda", accion: "quieto" },
     ],
   },
   {
     id: "andar",
     nombre: "Quieto, camina, corre",
     pasos: [
-      { que: "de pie, respirando, quieto", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "quieto" },
-      { que: "caminando de perfil", fotogramas: 8, vista: "lateral", direccion: "derecha", accion: "caminar" },
-      { que: "corriendo de perfil", fotogramas: 8, vista: "lateral", direccion: "derecha", accion: "correr" },
+      { que: "standing still, breathing", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "quieto" },
+      { que: "walking in profile", fotogramas: 8, vista: "lateral", direccion: "derecha", accion: "caminar" },
+      { que: "running in profile", fotogramas: 8, vista: "lateral", direccion: "derecha", accion: "correr" },
     ],
   },
   {
     id: "saludo",
     nombre: "Llega, se para y saluda",
     pasos: [
-      { que: "caminando de perfil hacia la derecha", fotogramas: 8, vista: "lateral", direccion: "derecha", accion: "caminar" },
-      { que: "se detiene y se gira hacia el frente", fotogramas: 4, vista: "lateral", direccion: "derecha", accion: "girar" },
-      { que: "de frente, saludando con la mano", fotogramas: 6, vista: "frontal", direccion: "frente", accion: "quieto" },
+      { que: "walking in profile to the right", fotogramas: 8, vista: "lateral", direccion: "derecha", accion: "caminar" },
+      { que: "stopping and turning to face the viewer", fotogramas: 4, vista: "lateral", direccion: "derecha", accion: "girar" },
+      { que: "facing the viewer, waving a hand", fotogramas: 6, vista: "frontal", direccion: "frente", accion: "quieto" },
     ],
   },
 ];
