@@ -1,6 +1,6 @@
 "use client";
 
-import { Layers, Loader2, Plus, Trash2, ChevronUp, ChevronDown, Square } from "lucide-react";
+import { Layers, Loader2, Plus, Trash2, ChevronUp, ChevronDown, Square, Sparkles } from "lucide-react";
 import {
   MAX_PASOS_TANDA, RECETAS, pasoNuevo, type PasoTanda,
 } from "@/lib/lab/tanda-sprites";
@@ -41,6 +41,7 @@ export function PanelTanda({
   estado, ocupado, puedeGenerar,
   onArrancar, onParar,
   personajeExistente,
+  idea, onIdea, onPlanear, planeando, puedeIa,
 }: {
   abierto: boolean;
   onAbierto: (v: boolean) => void;
@@ -57,6 +58,12 @@ export function PanelTanda({
   onParar: () => void;
   /** Si hay un personaje elegido arriba, la tanda se le cuelga en vez de crear otro. */
   personajeExistente?: string | null;
+  /** La idea entera en una frase, para que la reparta la IA. */
+  idea: string;
+  onIdea: (v: string) => void;
+  onPlanear: () => void;
+  planeando: boolean;
+  puedeIa: boolean;
 }) {
   const utiles = pasos.filter((p) => p.que.trim().length >= 3).length;
   const cambiar = (id: string, patch: Partial<PasoTanda>) =>
@@ -88,6 +95,46 @@ export function PanelTanda({
 
       {abierto && (
         <div className="mt-2 space-y-2">
+          {/* UNA frase, y que la IA reparta. Es lo primero porque es el camino
+              normal: escribir las cinco acciones a mano era el mismo trabajo
+              manual que esto venía a quitar, solo que en vertical.
+
+              Y el plan se ENSEÑA antes de generar, a propósito: planear es una
+              llamada de texto —céntimos— y generar son N imágenes que se pagan.
+              Encadenarlo directo convertiría una frase mal escrita en ocho
+              imágenes tiradas. */}
+          {puedeIa && (
+            <div className="rounded-lg border border-accent/50 bg-accent/5 p-2">
+              <label className="block text-[10px] text-muted">
+                Dilo en una frase y que la IA reparta las animaciones
+                <div className="mt-0.5 flex gap-1">
+                  <input
+                    className="input min-w-0 flex-1 py-1 text-[11px]"
+                    placeholder="un pescador viejo que pesca, se levanta, se da la vuelta y se va caminando pensando"
+                    value={idea}
+                    onChange={(e) => onIdea(e.target.value.slice(0, 600))}
+                    onKeyDown={(e) => { if (e.key === "Enter" && idea.trim().length >= 6) onPlanear(); }}
+                    disabled={ocupado || planeando}
+                    aria-label="La idea en una frase"
+                  />
+                  <button
+                    type="button"
+                    onClick={onPlanear}
+                    disabled={ocupado || planeando || idea.trim().length < 6}
+                    className="btn-brand shrink-0 px-3 py-1 text-[11px] disabled:opacity-40"
+                  >
+                    {planeando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    Planear
+                  </button>
+                </div>
+              </label>
+              <p className="mt-1 text-[10px] text-muted">
+                Rellena el personaje y la lista de abajo. No dibuja nada todavía: lo revisas, corriges
+                lo que no encaje, y entonces generas.
+              </p>
+            </div>
+          )}
+
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="text-[10px] text-muted">
               Quién es · va delante de cada acción
