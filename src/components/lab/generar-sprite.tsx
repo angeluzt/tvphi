@@ -24,6 +24,11 @@ import {
   type SpriteMeta, type VistaSprite as TipoVistaSprite,
 } from "@/lib/lab/biblioteca";
 import {
+  encargosDeTanda, conCadena, pasoNuevo,
+  type EncargoSprite, type PasoTanda,
+} from "@/lib/lab/tanda-sprites";
+import { PanelTanda, type EstadoTanda } from "./panel-tanda";
+import {
   ARCHIVO_HOJA_SPRITE, ARCHIVO_META_SPRITE, ARCHIVO_TIRA_SPRITE,
   archivosProyectoSprite, crearProyectoSprite, normalizarProyectoSprite,
 } from "@/lib/lab/sprite-proyecto";
@@ -167,6 +172,15 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   const [animacionId, setAnimacionId] = useState<string | null>(null);
   /** "" = cuadro maestro del personaje; si no, id de animación de la que se parte. */
   const [refAnimacionId, setRefAnimacionId] = useState("");
+  // ── La tanda: varias acciones del mismo personaje, encadenadas ────────────
+  const [tandaAbierta, setTandaAbierta] = useState(false);
+  const [tandaPersonaje, setTandaPersonaje] = useState("");
+  const [tandaDescripcion, setTandaDescripcion] = useState("");
+  const [tandaPasos, setTandaPasos] = useState<PasoTanda[]>(() => [pasoNuevo("p1")]);
+  const [tanda, setTanda] = useState<EstadoTanda | null>(null);
+  /** Para poder pararla entre animaciones. Va en ref: el bucle no re-renderiza. */
+  const pararTanda = useRef(false);
+  const tandaOcupada = !!tanda && !tanda.fallo && tanda.actual <= tanda.total;
   const [refCuadro, setRefCuadro] = useState<"primero" | "ultimo" | "medio">("ultimo");
   const [nombrePersonaje, setNombrePersonaje] = useState("");
   const [descripcionPersonaje, setDescripcionPersonaje] = useState("");
@@ -380,21 +394,101 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     return () => { if (url?.startsWith("blob:")) URL.revokeObjectURL(url); };
   }, [hecho?.hoja.url]);
 
-  async function generar() {
-    if (!puedeGenerar || que.trim().length < 3) return;
+  /**
+   * Generar UNA animación. Con `enc` se le puede pasar todo por parámetro en
+   * vez de leerlo del formulario, que es lo que permite encadenar una tanda
+   * sin pelearse con el estado de React: `setQue()` no se ve hasta el render
+   * siguiente, así que un bucle que fuera cambiando los campos generaría cinco
+   * veces lo mismo.
+   */
+  /**
+   * Generar la tanda entera, una detrás de otra.
+   *
+   * EN SERIE, no en paralelo, y no por prudencia: la segunda necesita el id de
+   * la primera para heredarle la cara. Lanzarlas a la vez daría cinco criaturas
+   * distintas, que es justo el problema que esto viene a quitar.
+   *
+   * Si una falla se PARA ahí y se dice por cuál iba. Las anteriores ya están
+   * guardadas en la biblioteca —cada una se guarda al terminar— así que no se
+   * pierde lo pagado, y se puede retomar quitando de la lista las que ya están.
+   */
+  async function generarTanda() {
+    if (!puedeGenerar || tandaOcupada) return;
+    const encargos = encargosDeTanda({
+      personaje: tandaPersonaje,
+      descripcion: tandaDescripcion,
+      pasos: tandaPasos,
+      personajeId: personajeId || undefined,
+      refInicialId: refAnimacionId || undefined,
+    });
+    if (!encargos.length) return;
+
+    pararTanda.current = false;
+    setError(null);
+    setTanda({ actual: 1, total: encargos.length, hechas: [] });
+    let anterior: { personajeId: string; animacionId: string } | null = null;
+    const hechas: string[] = [];
+
+    for (let i = 0; i < encargos.length; i++) {
+      if (pararTanda.current) {
+        setTanda({ actual: i + 1, total: encargos.length, hechas, fallo: "la paraste tú" });
+        return;
+      }
+      setTanda({ actual: i + 1, total: encargos.length, hechas });
+      try {
+        const ids = await generar(conCadena(encargos[i], anterior));
+        if (!ids) {
+          setTanda({ actual: i + 1, total: encargos.length, hechas, fallo: "no se pudo guardar" });
+          return;
+        }
+        anterior = ids;
+        hechas.push(nombreCorto(encargos[i].que));
+      } catch (e) {
+        // El mensaje bueno ya lo puso `generar` en el error de arriba; aquí solo
+        // hace falta decir POR CUÁL iba, que es lo que no se sabría.
+        setTanda({
+          actual: i + 1, total: encargos.length, hechas,
+          fallo: mensajeLegible(e, "falló esa animación"),
+        });
+        return;
+      }
+    }
+    setTanda({ actual: encargos.length + 1, total: encargos.length, hechas });
+    setAviso(
+      `Tanda lista: ${encargos.length} animaciones de «${tandaPersonaje.trim()}», `
+      + "todas colgadas del mismo personaje. Ya se pueden encadenar en el montaje.",
+    );
+  }
+
+  async function generar(enc?: EncargoSprite): Promise<{ personajeId: string; animacionId: string } | null> {
+    const o = {
+      que: (enc?.que ?? que).trim(),
+      n: enc?.fotogramas ?? n,
+      distribucion: enc?.distribucion ?? distribucion,
+      vista: enc?.vista ?? vista,
+      direccion: enc?.direccion ?? direccion,
+      accion: enc?.accion ?? accion,
+      personajeId: enc?.personajeId ?? personajeId,
+      refAnimacionId: enc?.refAnimacionId ?? refAnimacionId,
+      refCuadro: enc?.refCuadro ?? refCuadro,
+      nombrePersonaje: enc?.nombrePersonaje ?? nombrePersonaje,
+      descripcionPersonaje: enc?.descripcionPersonaje ?? descripcionPersonaje,
+      nombre: enc?.nombre,
+    };
+    if (!puedeGenerar || o.que.length < 3) return null;
     setError(null); setAviso(null); setHecho(null); setGuardado(false);setFirmaGuardada(null);setAnimacionId(null);
     setPaso("Dibujando la hoja…");
     try {
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/sprite", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          que: que.trim(),
-          fotogramas: n,
-          forma: distribucion === "columna" || (distribucion === "equilibrada" && accion === "caer") ? "columna" : "tira",
-          distribucion, vista, direccion, accion, calidad,
-          personajeId: personajeId || undefined,
-          referenciaAnimacionId: refAnimacionId || undefined,
-          referenciaCuadro: refAnimacionId ? refCuadro : undefined,
+          que: o.que,
+          fotogramas: o.n,
+          forma: o.distribucion === "columna" || (o.distribucion === "equilibrada" && o.accion === "caer") ? "columna" : "tira",
+          distribucion: o.distribucion, vista: o.vista, direccion: o.direccion, accion: o.accion, calidad,
+          personajeId: o.personajeId || undefined,
+          referenciaAnimacionId: o.refAnimacionId || undefined,
+          referenciaCuadro: o.refAnimacionId ? o.refCuadro : undefined,
         }),
       });
       if (!r.ok) throw new Error(j.error || "No se pudo");
@@ -417,7 +511,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         URL.revokeObjectURL(urlHojaSrc);
       }
       const formaHoja = (j.forma ?? forma) as "tira" | "columna";
-      const cuantos = j.fotogramas ?? n;
+      const cuantos = j.fotogramas ?? o.n;
       const columnas=Number(j.columnas)||(formaHoja==="columna"?1:cuantos),filas=Number(j.filas)||(formaHoja==="columna"?cuantos:1);
       const celdas=celdasSpriteEnRejilla(imagenHoja.naturalWidth,imagenHoja.naturalHeight,cuantos,{columnas,filas});
 
@@ -475,18 +569,26 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       setEditorActivo("hoja");
       // Nombre VISIBLE, no de archivo: `nombreSprite` da un slug con
       // guiones, que se lee fatal en una lista. Para archivos sigue valiendo.
-      const nom = nombreCorto(que);
+      // En una tanda el nombre viene dado y sale de la ACCIÓN. Sacarlo del
+      // prompt no vale: empieza por el personaje, así que las cinco animaciones
+      // del pescador se llamarían igual y en la lista no se distinguirían.
+      const nom = o.nombre || nombreCorto(o.que);
       setNombre(nom);
-      const nomPers = personajeId || pidGuardado ? nombrePersonaje.trim() || nom : nom;
-      if (!personajeId && !pidGuardado) {
-        setNombrePersonaje(nom);
-        setDescripcionPersonaje(que.trim());
+      const nomPers = o.personajeId || pidGuardado ? o.nombrePersonaje.trim() || nom : nom;
+      if (!o.personajeId && !pidGuardado) {
+        setNombrePersonaje(nomPers);
+        setDescripcionPersonaje(o.descripcionPersonaje.trim() || o.que);
       }
 
       // Refinar el borrador del servidor (o guardar si falló el autoguardado)
       // con la tira ya limpia/recortada — lo que se ve = lo que queda en DB.
       setPaso("Guardando en tu taller…");
       let refinadoOk = !!j.guardadoEnDb;
+      // Lo que hace falta para encadenar la siguiente de la tanda: sin el id de
+      // ESTA, la próxima no puede pedir su último cuadro como referencia y el
+      // personaje cambia de cara a mitad de la serie.
+      let idsGuardados: { personajeId: string; animacionId: string } | null =
+        pidGuardado && aidGuardado ? { personajeId: pidGuardado, animacionId: aidGuardado } : null;
       try {
         // Sin `fetch` sobre el data: URL del fotograma: con hojas grandes
         // Chromium lo rechaza con «Failed to fetch» ANTES de mandar nada, y
@@ -507,17 +609,17 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            personajeId: pidGuardado || personajeId || undefined,
+            personajeId: pidGuardado || o.personajeId || undefined,
             animacionId: aidGuardado || undefined,
             nombrePersonaje: nomPers,
-            descripcionPersonaje: (descripcionPersonaje.trim() || que.trim()).slice(0, 600),
+            descripcionPersonaje: (o.descripcionPersonaje.trim() || o.que).slice(0, 600),
             nombre: nom,
-            que: que.trim(),
+            que: o.que,
             fotogramas: hechoLocal.fotos.length,
             fps,
-            vista,
-            direccion,
-            accion,
+            vista: o.vista,
+            direccion: o.direccion,
+            accion: o.accion,
             anclaje,
             croma: hechoLocal.hoja.croma,
             columnas: hechoLocal.hoja.columnas,
@@ -530,13 +632,14 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
             hojaOriginal,
             hojaTrabajo,
             tira: tiraB64,
-            referencia: (pidGuardado || personajeId) ? undefined : referencia,
+            referencia: (pidGuardado || o.personajeId) ? undefined : referencia,
           }),
         });
         setPersonajeId(guard.personajeId);
         setAnimacionId(guard.animacionId);
         marcarGuardado();
         refinadoOk = true;
+        idsGuardados = { personajeId: guard.personajeId, animacionId: guard.animacionId };
         await releerPersonajes();
       } catch (ge) {
         // El POST de refinado es enorme; a veces el proxy lo corta ("Failed to fetch").
@@ -564,9 +667,11 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         + (j.errorGuardado && !aidGuardado ? ` · aviso: ${j.errorGuardado}` : "")
       ));
       setError(null);
+      return idsGuardados;
     } catch (e) {
       setError(mensajeLegible(e));
       setPaso(null);
+      throw e;
     }
   }
 
@@ -1129,8 +1234,28 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         </label>
       </div>
 
+      {/* Una tanda: el personaje una vez y la lista de acciones. Va aquí, justo
+          antes del botón de una sola, porque es la alternativa a repetir esto
+          cinco veces a mano. */}
+      <PanelTanda
+        abierto={tandaAbierta}
+        onAbierto={setTandaAbierta}
+        personaje={tandaPersonaje}
+        onPersonaje={setTandaPersonaje}
+        descripcion={tandaDescripcion}
+        onDescripcion={setTandaDescripcion}
+        pasos={tandaPasos}
+        onPasos={setTandaPasos}
+        estado={tanda}
+        ocupado={tandaOcupada}
+        puedeGenerar={puedeGenerar}
+        onArrancar={() => void generarTanda()}
+        onParar={() => { pararTanda.current = true; }}
+        personajeExistente={personajeSeleccionado?.nombre ?? null}
+      />
+
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-        <button onClick={() => void generar()} disabled={!puedeGenerar || !!paso || que.trim().length < 3}
+        <button onClick={() => void generar()} disabled={!puedeGenerar || !!paso || que.trim().length < 3 || tandaOcupada}
           className="btn-brand w-full text-sm disabled:opacity-40">
           {paso ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
           {paso ?? (puedeGenerar ? "Fabricar el sprite" : "Fabricar · falta clave de IA")}
