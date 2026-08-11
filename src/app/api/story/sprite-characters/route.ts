@@ -5,6 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { esPng } from "@/lib/lab/biblioteca";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
 import { urlImagenAnimacion, type PersonajeSprite } from "@/lib/lab/personajes-sprite";
+import {
+  MAX_PERSONAJES, MAX_ANIMACIONES, SIN_SITIO_PERSONAJES, SIN_SITIO_ANIMACIONES,
+} from "@/lib/lab/topes-taller";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +30,8 @@ const MAX_TIRA = 4 * 1024 * 1024;
 /** La miniatura del personaje. Es un solo fotograma, no necesita más. */
 const MAX_REF = 2 * 1024 * 1024;
 /** Cuántos personajes, y cuántas animaciones cuelgan de cada uno. */
-const MAX_P = 20;
-const MAX_A = 30;
+const MAX_P = MAX_PERSONAJES;
+const MAX_A = MAX_ANIMACIONES;
 /** El total por usuario, contando hojas, tiras, referencias y páginas de atlas. */
 const MAX_TOTAL = 120 * 1024 * 1024;
 
@@ -203,7 +206,19 @@ export async function POST(req: Request) {
   if (!u) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const userId = u.id;
   const p = cuerpo.safeParse(await req.json().catch(() => null));
-  if (!p.success) return NextResponse.json({ error: "Proyecto incompleto o inválido." }, { status: 400 });
+  if (!p.success) {
+    // QUÉ campo, no solo que algo falla. «Proyecto incompleto o inválido.» a
+    // secas deja al usuario —y a quien lo arregla— adivinando, con la imagen ya
+    // pagada delante y sin forma de saber por qué no se guarda.
+    const detalle = p.error.issues
+      .slice(0, 6)
+      .map((i) => `${i.path.join(".") || "(raíz)"}: ${i.message}`)
+      .join(" · ");
+    return NextResponse.json(
+      { error: `Proyecto incompleto o inválido — ${detalle}`, detalle },
+      { status: 400 },
+    );
+  }
   const d = p.data;
   if (d.columnas * d.filas < d.fotogramas || d.celdas.length !== d.fotogramas) {
     return NextResponse.json({ error: "La rejilla no coincide." }, { status: 400 });
@@ -275,7 +290,7 @@ export async function POST(req: Request) {
     });
     if (!c) return NextResponse.json({ error: "Personaje no encontrado." }, { status: 404 });
     if (c._count.animaciones >= MAX_A) {
-      return NextResponse.json({ error: `Ese personaje ya tiene ${MAX_A} animaciones.` }, { status: 409 });
+      return NextResponse.json({ error: SIN_SITIO_ANIMACIONES, sinSitio: true }, { status: 409 });
     }
     const a = await prisma.spriteAnimation.create({ data: { ...data, characterId: c.id } });
     await prisma.spriteCharacter.update({
@@ -286,7 +301,7 @@ export async function POST(req: Request) {
   }
 
   if (propios.length >= MAX_P) {
-    return NextResponse.json({ error: `Ya tienes ${MAX_P} personajes.` }, { status: 409 });
+    return NextResponse.json({ error: SIN_SITIO_PERSONAJES, sinSitio: true }, { status: 409 });
   }
   if (!ref) return NextResponse.json({ error: "Falta el cuadro de referencia." }, { status: 400 });
 
