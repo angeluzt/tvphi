@@ -1,6 +1,9 @@
 "use client";
 
-import { Layers, Loader2, Plus, Trash2, ChevronUp, ChevronDown, Square, Sparkles } from "lucide-react";
+import { useState } from "react";
+import {
+  Layers, Loader2, Plus, Trash2, ChevronUp, ChevronDown, Square, Sparkles, Pencil, RotateCcw,
+} from "lucide-react";
 import {
   MAX_PASOS_TANDA, MAX_CUADROS, RECETAS, pasoNuevo, type PasoTanda,
 } from "@/lib/lab/tanda-sprites";
@@ -67,6 +70,19 @@ export function PanelTanda({
   puedeIa: boolean;
 }) {
   const utiles = pasos.filter((p) => p.que.trim().length >= 3).length;
+  /**
+   * ¿Hay algo que revisar ya?
+   *
+   * Mientras no lo haya, esto pide UNA frase y nada más. Los campos de
+   * personaje y acciones aparecían vacíos desde el principio, y eso contradecía
+   * todo lo demás: si la IA los va a rellenar, enseñarlos en blanco antes de
+   * planear solo dice «rellénalos tú».
+   */
+  const hayPlan = personaje.trim().length > 0 || utiles > 0;
+  const [manual, setManual] = useState(false);
+  // Sin clave de IA no hay planificador, así que el camino de escribirlo a mano
+  // es el único: se abre solo.
+  const revisando = hayPlan || manual || !puedeIa;
   const cambiar = (id: string, patch: Partial<PasoTanda>) =>
     onPasos(pasos.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   const mover = (i: number, d: -1 | 1) => {
@@ -130,181 +146,219 @@ export function PanelTanda({
                 </div>
               </label>
               <p className="mt-1 text-[10px] text-muted">
-                Rellena el personaje y la lista de abajo. No dibuja nada todavía: lo revisas, corriges
-                lo que no encaje, y entonces generas.
+                {hayPlan
+                  ? "Vuelve a planear si quieres otra propuesta. Lo de abajo se reemplaza."
+                  : "Describe quién es y qué hace, en orden. La IA decide las animaciones, sus nombres y sus ajustes. No dibuja nada todavía."}
               </p>
+              {/* Sin plan y sin ganas de gastar la llamada: el camino a mano
+                  sigue ahí, pero no ocupa la pantalla por defecto. */}
+              {!hayPlan && !manual && (
+                <button
+                  type="button"
+                  onClick={() => setManual(true)}
+                  className="mt-1 flex items-center gap-1 text-[10px] text-muted underline hover:text-fg"
+                >
+                  <Pencil className="h-3 w-3" /> …o escribirlo a mano
+                </button>
+              )}
             </div>
           )}
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="text-[10px] text-muted">
-              Quién es · va delante de cada acción
-              <input
-                className="input mt-0.5 w-full py-1 text-[11px]"
-                placeholder="pescador viejo con sombrero de paja, estilo anime"
-                value={personaje}
-                onChange={(e) => onPersonaje(e.target.value.slice(0, 200))}
-                disabled={ocupado}
-              />
-            </label>
-            <label className="text-[10px] text-muted">
-              Descripción para la biblioteca (opcional)
-              <input
-                className="input mt-0.5 w-full py-1 text-[11px]"
-                placeholder="si lo dejas vacío se usa lo de al lado"
-                value={descripcion}
-                onChange={(e) => onDescripcion(e.target.value.slice(0, 600))}
-                disabled={ocupado}
-              />
-            </label>
-          </div>
-
-          {personajeExistente && (
-            <p className="rounded border border-accent/40 bg-accent/5 px-2 py-1 text-[10px] text-accent">
-              La tanda se colgará de «{personajeExistente}», el personaje que tienes elegido arriba.
-              Para crear uno nuevo, quítalo de ahí primero.
-            </p>
-          )}
-
-          {/* Las recetas son listas de ACCIONES, no escenas hechas: se copian al
-              formulario y se editan. Lo que cuesta escribir no es el personaje
-              —eso lo tienes claro— sino acordarse de que entre dos poses lejanas
-              hace falta un paso de transición. */}
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="text-[10px] text-muted">Empezar desde:</span>
-            {RECETAS.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                disabled={ocupado}
-                onClick={() => onPasos(r.pasos.map((p, i) => ({ ...p, id: `r${Date.now()}${i}` })))}
-                className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40"
-              >
-                {r.nombre}
-              </button>
-            ))}
-          </div>
-
-          <div className="space-y-1.5">
-            {pasos.map((p, i) => {
-              const enCurso = estado?.actual === i + 1;
-              const hecha = !!estado && estado.actual > i + 1;
-              return (
-                <div
-                  key={p.id}
-                  className={`rounded-lg border p-1.5 ${
-                    enCurso ? "border-brand bg-brand/10"
-                      : hecha ? "border-accent/40 bg-accent/5" : "border-border bg-surface-2/40"
-                  }`}
-                >
-                  <div className="flex items-center gap-1">
-                    <span className="chip shrink-0 bg-surface text-[9px] text-muted">{i + 1}</span>
-                    <input
-                      className="input min-w-0 flex-1 py-0.5 text-[11px]"
-                      placeholder="qué hace: «se levanta y recoge la caña»"
-                      value={p.que}
-                      onChange={(e) => cambiar(p.id, { que: e.target.value.slice(0, 200) })}
-                      disabled={ocupado}
-                    />
-                    {enCurso && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand" />}
-                    {hecha && <span className="shrink-0 text-[9px] text-accent">✓</span>}
-                    <button type="button" onClick={() => mover(i, -1)} disabled={ocupado || i === 0}
-                      className="shrink-0 text-muted hover:text-fg disabled:opacity-25" aria-label="Subir">
-                      <ChevronUp className="h-3 w-3" />
-                    </button>
-                    <button type="button" onClick={() => mover(i, 1)} disabled={ocupado || i === pasos.length - 1}
-                      className="shrink-0 text-muted hover:text-fg disabled:opacity-25" aria-label="Bajar">
-                      <ChevronDown className="h-3 w-3" />
-                    </button>
-                    <button type="button" onClick={() => onPasos(pasos.filter((x) => x.id !== p.id))}
-                      disabled={ocupado || pasos.length === 1}
-                      className="shrink-0 text-muted hover:text-danger disabled:opacity-25" aria-label="Quitar">
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                  {/* Dos columnas en móvil. El campo de cuadros lleva − y +, y
-                      en cuatro columnas se salía de la ventana: 435 px dentro
-                      de una de 390, con scroll horizontal en toda la página. */}
-                  <div className="mt-1 grid grid-cols-2 gap-1 sm:grid-cols-4">
-                    <Elegir etiqueta="Vista" valor={p.vista} ops={VISTAS} disabled={ocupado}
-                      onCambio={(v) => cambiar(p.id, { vista: v as VistaSprite })} />
-                    <Elegir etiqueta="Mira a" valor={p.direccion} ops={DIRECCIONES} disabled={ocupado}
-                      onCambio={(v) => cambiar(p.id, { direccion: v as DireccionSprite })} />
-                    <Elegir etiqueta="Acción" valor={p.accion} ops={ACCIONES} disabled={ocupado}
-                      onCambio={(v) => cambiar(p.id, { accion: v as AccionSprite })} />
-                    {/* Con `Num`, no con un input recortado a cada tecla: eso
-                        último es lo que hacía que al borrar el campo saltara
-                        solo a 6 y pareciera que no se podía escribir. El
-                        problema ya estaba resuelto aquí al lado y lo repetí. */}
-                    <Num
-                      etiqueta="Cuadros"
-                      valor={p.fotogramas}
-                      min={1} max={MAX_CUADROS} paso={1}
-                      disabled={ocupado}
-                      ancho="w-full"
-                      onCambio={(v) => cambiar(p.id, { fotogramas: Math.round(v) })}
-                    />
-                  </div>
+          {/* Todo lo demás solo cuando hay algo que revisar. Antes se veía
+              desde el principio, en blanco, y contradecía la idea entera: si
+              la IA lo va a rellenar, un formulario vacío delante solo dice
+              «rellénalo tú». */}
+          {revisando && (
+            <div className="space-y-2">
+              {hayPlan && (
+                <div className="flex items-center gap-1.5">
+                  <span className="label text-accent">Revisa antes de generar</span>
+                  <span className="min-w-0 flex-1 text-[10px] text-muted">
+                    Cambia lo que no encaje. Nada se ha dibujado.
+                  </span>
+                  <button
+                    type="button"
+                    disabled={ocupado}
+                    onClick={() => { onPersonaje(""); onDescripcion(""); onPasos([pasoNuevo(`p${Date.now()}`)]); setManual(false); }}
+                    className="flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40"
+                    title="Vaciar y volver a empezar desde la frase"
+                  >
+                    <RotateCcw className="h-3 w-3" /> Empezar de cero
+                  </button>
                 </div>
-              );
-            })}
-          </div>
+              )}
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-[10px] text-muted">
+                Quién es · este texto va delante de cada acción
+                <input
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  placeholder="pescador viejo con sombrero de paja, estilo anime"
+                  value={personaje}
+                  onChange={(e) => onPersonaje(e.target.value.slice(0, 200))}
+                  disabled={ocupado}
+                />
+              </label>
+              <label className="text-[10px] text-muted">
+                Nombre en tu biblioteca
+                <input
+                  className="input mt-0.5 w-full py-1 text-[11px]"
+                  placeholder="si lo dejas vacío sale del texto de al lado"
+                  value={descripcion}
+                  onChange={(e) => onDescripcion(e.target.value.slice(0, 600))}
+                  disabled={ocupado}
+                />
+              </label>
+            </div>
 
-          {/* Qué es «cuadros», ahí donde se pregunta. El número no significa
-              nada sin saber que la hoja es UNA imagen partida en rejilla: por
-              eso más cuadros es más suave pero más pequeño, y no más caro. */}
-          <p className="text-[10px] leading-snug text-muted">
-            <b className="text-fg">Cuadros</b> son los dibujos del ciclo: con 8 el paso es más suave
-            que con 4. Los {MAX_CUADROS} caben en una sola imagen repartida en rejilla, así que más
-            cuadros no cuesta más — pero cada uno sale más pequeño y el personaje pierde detalle.
-            Para caminar o correr, 8; para algo quieto, 6; para un giro o un gesto corto, 4.
-          </p>
+            {personajeExistente && (
+              <p className="rounded border border-accent/40 bg-accent/5 px-2 py-1 text-[10px] text-accent">
+                La tanda se colgará de «{personajeExistente}», el personaje que tienes elegido arriba.
+                Para crear uno nuevo, quítalo de ahí primero.
+              </p>
+            )}
 
-          <button
-            type="button"
-            disabled={ocupado || pasos.length >= MAX_PASOS_TANDA}
-            onClick={() => onPasos([...pasos, pasoNuevo(`p${Date.now()}`)])}
-            className="btn-ghost w-full py-1 text-[10px] disabled:opacity-40"
-          >
-            <Plus className="h-3 w-3 text-accent" /> Otra acción
-            {pasos.length >= MAX_PASOS_TANDA && ` · tope de ${MAX_PASOS_TANDA}`}
-          </button>
+            {/* Los atajos SOLO cuando no hay plan. Encima de una propuesta de la
+                IA, un botón que la reemplaza por una lista fija solo confunde:
+                parece que va a añadir algo y lo que hace es borrarlo todo. */}
+            {!hayPlan && (
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-[10px] text-muted">Empezar desde:</span>
+              {RECETAS.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  disabled={ocupado}
+                  onClick={() => onPasos(r.pasos.map((p, i) => ({ ...p, id: `r${Date.now()}${i}` })))}
+                  className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40"
+                >
+                  {r.nombre}
+                </button>
+              ))}
+            </div>
+            )}
 
-          {estado && (
-            <p className="rounded border border-brand/40 bg-brand/10 px-2 py-1 text-[10px] text-brand">
-              {estado.fallo
-                ? `Se paró en la ${estado.actual} de ${estado.total}: ${estado.fallo}`
-                : estado.actual > estado.total
-                  ? `Listas las ${estado.total}. Están en la biblioteca, colgadas del mismo personaje.`
-                  : `Generando la ${estado.actual} de ${estado.total}… no cierres esta pestaña.`}
-              {!!estado.hechas.length && ` · ya guardadas: ${estado.hechas.join(", ")}`}
+            <div className="space-y-1.5">
+              {pasos.map((p, i) => {
+                const enCurso = estado?.actual === i + 1;
+                const hecha = !!estado && estado.actual > i + 1;
+                return (
+                  <div
+                    key={p.id}
+                    className={`rounded-lg border p-1.5 ${
+                      enCurso ? "border-brand bg-brand/10"
+                        : hecha ? "border-accent/40 bg-accent/5" : "border-border bg-surface-2/40"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1">
+                      <span className="chip shrink-0 bg-surface text-[9px] text-muted">{i + 1}</span>
+                      <input
+                        className="input min-w-0 flex-1 py-0.5 text-[11px]"
+                        placeholder="qué hace: «se levanta y recoge la caña»"
+                        value={p.que}
+                        onChange={(e) => cambiar(p.id, { que: e.target.value.slice(0, 200) })}
+                        disabled={ocupado}
+                      />
+                      {enCurso && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand" />}
+                      {hecha && <span className="shrink-0 text-[9px] text-accent">✓</span>}
+                      <button type="button" onClick={() => mover(i, -1)} disabled={ocupado || i === 0}
+                        className="shrink-0 text-muted hover:text-fg disabled:opacity-25" aria-label="Subir">
+                        <ChevronUp className="h-3 w-3" />
+                      </button>
+                      <button type="button" onClick={() => mover(i, 1)} disabled={ocupado || i === pasos.length - 1}
+                        className="shrink-0 text-muted hover:text-fg disabled:opacity-25" aria-label="Bajar">
+                        <ChevronDown className="h-3 w-3" />
+                      </button>
+                      <button type="button" onClick={() => onPasos(pasos.filter((x) => x.id !== p.id))}
+                        disabled={ocupado || pasos.length === 1}
+                        className="shrink-0 text-muted hover:text-danger disabled:opacity-25" aria-label="Quitar">
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {/* Dos columnas en móvil. El campo de cuadros lleva − y +, y
+                        en cuatro columnas se salía de la ventana: 435 px dentro
+                        de una de 390, con scroll horizontal en toda la página. */}
+                    <div className="mt-1 grid grid-cols-2 gap-1 sm:grid-cols-4">
+                      <Elegir etiqueta="Vista" valor={p.vista} ops={VISTAS} disabled={ocupado}
+                        onCambio={(v) => cambiar(p.id, { vista: v as VistaSprite })} />
+                      <Elegir etiqueta="Mira a" valor={p.direccion} ops={DIRECCIONES} disabled={ocupado}
+                        onCambio={(v) => cambiar(p.id, { direccion: v as DireccionSprite })} />
+                      <Elegir etiqueta="Acción" valor={p.accion} ops={ACCIONES} disabled={ocupado}
+                        onCambio={(v) => cambiar(p.id, { accion: v as AccionSprite })} />
+                      {/* Con `Num`, no con un input recortado a cada tecla: eso
+                          último es lo que hacía que al borrar el campo saltara
+                          solo a 6 y pareciera que no se podía escribir. El
+                          problema ya estaba resuelto aquí al lado y lo repetí. */}
+                      <Num
+                        etiqueta="Cuadros"
+                        valor={p.fotogramas}
+                        min={1} max={MAX_CUADROS} paso={1}
+                        disabled={ocupado}
+                        ancho="w-full"
+                        onCambio={(v) => cambiar(p.id, { fotogramas: Math.round(v) })}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Qué es «cuadros», ahí donde se pregunta. El número no significa
+                nada sin saber que la hoja es UNA imagen partida en rejilla: por
+                eso más cuadros es más suave pero más pequeño, y no más caro. */}
+            <p className="text-[10px] leading-snug text-muted">
+              <b className="text-fg">Cuadros</b> son los dibujos del ciclo: con 8 el paso es más suave
+              que con 4. Los {MAX_CUADROS} caben en una sola imagen repartida en rejilla, así que más
+              cuadros no cuesta más — pero cada uno sale más pequeño y el personaje pierde detalle.
+              Para caminar o correr, 8; para algo quieto, 6; para un giro o un gesto corto, 4.
             </p>
-          )}
 
-          <div className="flex gap-1.5">
             <button
               type="button"
-              onClick={onArrancar}
-              disabled={ocupado || !puedeGenerar || utiles < 1 || personaje.trim().length < 3}
-              className="btn-brand flex-1 py-1.5 text-[11px] disabled:opacity-40"
+              disabled={ocupado || pasos.length >= MAX_PASOS_TANDA}
+              onClick={() => onPasos([...pasos, pasoNuevo(`p${Date.now()}`)])}
+              className="btn-ghost w-full py-1 text-[10px] disabled:opacity-40"
             >
-              {ocupado ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Layers className="h-3.5 w-3.5" />}
-              {/* Cuántas imágenes van a salir, ANTES de arrancar: cada una se
-                  paga, y una tanda de ocho no es lo mismo que un sprite. */}
-              {ocupado ? "Generando la tanda…" : `Generar ${utiles} ${utiles === 1 ? "animación" : "animaciones"}`}
+              <Plus className="h-3 w-3 text-accent" /> Otra acción
+              {pasos.length >= MAX_PASOS_TANDA && ` · tope de ${MAX_PASOS_TANDA}`}
             </button>
-            {ocupado && (
-              <button type="button" onClick={onParar}
-                className="btn-ghost shrink-0 px-3 py-1.5 text-[11px]">
-                <Square className="h-3.5 w-3.5" /> Parar
-              </button>
+
+            {estado && (
+              <p className="rounded border border-brand/40 bg-brand/10 px-2 py-1 text-[10px] text-brand">
+                {estado.fallo
+                  ? `Se paró en la ${estado.actual} de ${estado.total}: ${estado.fallo}`
+                  : estado.actual > estado.total
+                    ? `Listas las ${estado.total}. Están en la biblioteca, colgadas del mismo personaje.`
+                    : `Generando la ${estado.actual} de ${estado.total}… no cierres esta pestaña.`}
+                {!!estado.hechas.length && ` · ya guardadas: ${estado.hechas.join(", ")}`}
+              </p>
             )}
-          </div>
-          <p className="text-[10px] leading-snug text-muted">
-            Cada acción es una imagen que se paga. Van una detrás de otra y cada una hereda el último
-            cuadro de la anterior, que es lo que mantiene la misma cara de principio a fin. Si una
-            falla, las anteriores ya están guardadas y se puede seguir desde ahí.
-          </p>
+
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={onArrancar}
+                disabled={ocupado || !puedeGenerar || utiles < 1 || personaje.trim().length < 3}
+                className="btn-brand flex-1 py-1.5 text-[11px] disabled:opacity-40"
+              >
+                {ocupado ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Layers className="h-3.5 w-3.5" />}
+                {/* Cuántas imágenes van a salir, ANTES de arrancar: cada una se
+                    paga, y una tanda de ocho no es lo mismo que un sprite. */}
+                {ocupado ? "Generando la tanda…" : `Generar ${utiles} ${utiles === 1 ? "animación" : "animaciones"}`}
+              </button>
+              {ocupado && (
+                <button type="button" onClick={onParar}
+                  className="btn-ghost shrink-0 px-3 py-1.5 text-[11px]">
+                  <Square className="h-3.5 w-3.5" /> Parar
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] leading-snug text-muted">
+              Cada acción es una imagen que se paga. Van una detrás de otra y cada una hereda el último
+              cuadro de la anterior, que es lo que mantiene la misma cara de principio a fin. Si una
+              falla, las anteriores ya están guardadas y se puede seguir desde ahí.
+            </p>
+            </div>
+          )}
         </div>
       )}
     </div>
