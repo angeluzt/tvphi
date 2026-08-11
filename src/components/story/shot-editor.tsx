@@ -66,6 +66,7 @@ export function ShotEditor({
   vocesIa,
   pestana,
   onPestana,
+  soloCuerpo,
 }: {
   shot: Shot;
   index: number;
@@ -111,6 +112,17 @@ export function ShotEditor({
    *  buscarlos toma por toma. */
   pestana: PestanaToma;
   onPestana: (p: PestanaToma) => void;
+  /**
+   * Solo las secciones, sin la cabecera de la toma.
+   *
+   * Es lo que deja meter ESTOS MISMOS controles dentro del mando del
+   * reproductor. Antes el mando solo tenía botones que hacían scroll hasta
+   * aquí abajo: para tocar el volumen de un sonido había que salir de la
+   * ventana que estabas mirando, bajar, tocarlo y volver a subir. La
+   * alternativa —reescribir los controles otra vez, en pequeño— es lo que
+   * garantiza que las dos copias se separen a la semana.
+   */
+  soloCuerpo?: boolean;
 }) {
   const [verSonidos, setVerSonidos] = useState(false);
   // Con duración fija la toma no crece para que quepa la voz: si se queda
@@ -166,62 +178,10 @@ export function ShotEditor({
     onSelectOverlay(copia.id);
   }
 
-  return (
-    // El id deja que el puesto de mando traiga esta toma a la vista al saltar
-    // de una a otra, en vez de tener que buscarla rodando la rueda.
-    <div id={`toma-${shot.id}`} className={`scroll-mt-24 rounded-xl border bg-surface-2/40 p-3 ${expanded ? "border-brand/60" : "border-border"}`}>
-      <div className="flex items-center gap-2">
-        <button onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-          <span className="chip shrink-0 bg-brand/15 text-brand">Toma {index + 1}</span>
-          <span className="flex shrink-0 items-center gap-1 text-xs text-muted">
-            <Clock className="h-3 w-3" /> {dur.toFixed(1)}s
-          </span>
-          {!expanded && locked && (
-            <span className="chip shrink-0 bg-gold/15 text-gold">Bloqueada</span>
-          )}
-          {!expanded && (
-            <span className="truncate text-xs text-muted">
-              · {shot.motionMode === "preset"
-                ? MOTION_LABEL[shot.preset.kind]
-                : shot.motionMode === "continue" ? "Sigue a la anterior" : "Libre 1→2"}
-              {hold > 0 ? ` · pausa ${Math.round(hold)}s` : ""}
-              {shot.dialogues.length ? ` · ${shot.dialogues.length} diálogo${shot.dialogues.length > 1 ? "s" : ""}` : ""}
-              {shot.sfx.length ? ` · ${shot.sfx.length} sonido${shot.sfx.length > 1 ? "s" : ""}` : ""}
-              {shot.overlays.length ? ` · ${shot.overlays.length} sticker${shot.overlays.length > 1 ? "s" : ""}` : ""}
-            </span>
-          )}
-        </button>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            onClick={onPlay}
-            className="grid h-7 w-7 place-items-center rounded-lg border border-brand/60 text-brand hover:bg-brand/10"
-            title="Ver solo esta toma"
-          >
-            {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-          </button>
-          {canMove && (
-            <>
-              <button onClick={() => onMove(-1)} disabled={locked} className="text-muted hover:text-fg disabled:opacity-40" title="Subir toma"><ChevronUp className="h-4 w-4" /></button>
-              <button onClick={() => onMove(1)} disabled={locked} className="text-muted hover:text-fg disabled:opacity-40" title="Bajar toma"><ChevronDown className="h-4 w-4" /></button>
-            </>
-          )}
-          {!lockedByScene && (
-            <LockToggle checked={locked} onChange={onToggleLock} label="" title={locked ? "Toma bloqueada: desactiva para editar" : "Bloquear esta toma"} />
-          )}
-          <button
-            onClick={onDuplicate}
-            className="text-muted hover:text-fg"
-            title="Duplicar esta toma con todo lo que lleva"
-          ><Copy className="h-4 w-4" /></button>
-          <button onClick={onDelete} disabled={locked} className="text-muted hover:text-danger disabled:opacity-40" title="Borrar toma"><Trash2 className="h-4 w-4" /></button>
-          <button onClick={onToggle} className="text-muted hover:text-fg" title={expanded ? "Contraer" : "Editar toma"}>
-            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </button>
-        </div>
-      </div>
-
-      {!expanded ? null : (
-      <>
+  // El cuerpo va aparte para poder pintarlo también DENTRO del mando del
+  // reproductor, sin duplicar mil líneas de controles que se separarían.
+  const cuerpo = (
+    <>
       {locked && (
         <p className="mt-2 rounded-lg border border-gold/50 bg-gold/10 px-2 py-1.5 text-[11px] text-gold">
           Toma bloqueada: no se puede cambiar nada.
@@ -1020,8 +980,68 @@ export function ShotEditor({
       </>)}
       </fieldset>
       </div>
-      </>
-      )}
+    </>
+  );
+
+  // Dentro del mando no hay cabecera: el número de toma, el play, el candado
+  // y el borrar ya están en la ventana o no pintan nada ahí.
+  if (soloCuerpo) return cuerpo;
+
+  return (
+    // El id deja que el puesto de mando traiga esta toma a la vista al saltar
+    // de una a otra, en vez de tener que buscarla rodando la rueda.
+    <div id={`toma-${shot.id}`} className={`scroll-mt-24 rounded-xl border bg-surface-2/40 p-3 ${expanded ? "border-brand/60" : "border-border"}`}>
+      <div className="flex items-center gap-2">
+        <button onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <span className="chip shrink-0 bg-brand/15 text-brand">Toma {index + 1}</span>
+          <span className="flex shrink-0 items-center gap-1 text-xs text-muted">
+            <Clock className="h-3 w-3" /> {dur.toFixed(1)}s
+          </span>
+          {!expanded && locked && (
+            <span className="chip shrink-0 bg-gold/15 text-gold">Bloqueada</span>
+          )}
+          {!expanded && (
+            <span className="truncate text-xs text-muted">
+              · {shot.motionMode === "preset"
+                ? MOTION_LABEL[shot.preset.kind]
+                : shot.motionMode === "continue" ? "Sigue a la anterior" : "Libre 1→2"}
+              {hold > 0 ? ` · pausa ${Math.round(hold)}s` : ""}
+              {shot.dialogues.length ? ` · ${shot.dialogues.length} diálogo${shot.dialogues.length > 1 ? "s" : ""}` : ""}
+              {shot.sfx.length ? ` · ${shot.sfx.length} sonido${shot.sfx.length > 1 ? "s" : ""}` : ""}
+              {shot.overlays.length ? ` · ${shot.overlays.length} sticker${shot.overlays.length > 1 ? "s" : ""}` : ""}
+            </span>
+          )}
+        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={onPlay}
+            className="grid h-7 w-7 place-items-center rounded-lg border border-brand/60 text-brand hover:bg-brand/10"
+            title="Ver solo esta toma"
+          >
+            {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          </button>
+          {canMove && (
+            <>
+              <button onClick={() => onMove(-1)} disabled={locked} className="text-muted hover:text-fg disabled:opacity-40" title="Subir toma"><ChevronUp className="h-4 w-4" /></button>
+              <button onClick={() => onMove(1)} disabled={locked} className="text-muted hover:text-fg disabled:opacity-40" title="Bajar toma"><ChevronDown className="h-4 w-4" /></button>
+            </>
+          )}
+          {!lockedByScene && (
+            <LockToggle checked={locked} onChange={onToggleLock} label="" title={locked ? "Toma bloqueada: desactiva para editar" : "Bloquear esta toma"} />
+          )}
+          <button
+            onClick={onDuplicate}
+            className="text-muted hover:text-fg"
+            title="Duplicar esta toma con todo lo que lleva"
+          ><Copy className="h-4 w-4" /></button>
+          <button onClick={onDelete} disabled={locked} className="text-muted hover:text-danger disabled:opacity-40" title="Borrar toma"><Trash2 className="h-4 w-4" /></button>
+          <button onClick={onToggle} className="text-muted hover:text-fg" title={expanded ? "Contraer" : "Editar toma"}>
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+        </div>
+      </div>
+
+      {!expanded ? null : cuerpo}
     </div>
   );
 }

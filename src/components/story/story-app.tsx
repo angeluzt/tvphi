@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
 import { BibliotecaMusica } from "./biblioteca-musica";
+import { CapasAudio } from "./capas-audio";
 import { EscucharAudio } from "./escuchar-audio";
 import { PantallaRender } from "./pantalla-render";
 import { refPista, esDeBiblioteca, esDeBibliotecaSonido, type Pista } from "@/lib/story/musica";
@@ -28,7 +29,7 @@ import { MarcaEfecto } from "./marca-efecto";
 import { MoverEfectos, desplazar } from "./mover-efectos";
 import type { PestanaToma } from "./pestanas-toma";
 import { CapasEscena } from "@/components/lab/capas-escena";
-import { MandoTramo } from "./mando-tramo";
+import { MandoEdicion } from "./mando-edicion";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
 import { NumberInput } from "./number-input";
@@ -664,6 +665,128 @@ export function StoryApp({
         ?.scrollIntoView({ block: "center", behavior: "smooth" }));
   }
 
+  /**
+   * Todo lo que necesita una toma para editarse, en un solo sitio.
+   *
+   * Estos treinta callbacks se montaban en línea dentro de la lista, así que
+   * los mismos controles no se podían pintar en ningún otro sitio sin
+   * copiarlos. Y hacían falta en DOS: en la lista de abajo y dentro del mando
+   * del reproductor, que es donde estás mirando justo cuando hay que tocarlos.
+   * Dos copias de mil líneas de controles se separan a la semana.
+   */
+  function propsDeToma(
+    sc: StoryScene, sh: Shot, si: number, hi: number,
+  ): Omit<ComponentProps<typeof ShotEditor>, "key"> {
+    return {
+      shot: sh,
+      index: hi,
+      imageId: sc.imageId,
+      imgW: sc.imgW,
+      imgH: sc.imgH,
+      canMove: sc.shots.length > 1,
+      expanded: selShot === sh.id,
+      voiceJobs: voiceJobs,
+      selectedOverlay: selShot === sh.id ? selOverlay : null,
+      inherited: inheritedLoops(flat, flat.findIndex((f) => f.shot.id === sh.id)),
+      playing: section?.shotId === sh.id && playing,
+      locked: !!locks[sh.id] || !!locks[sc.id],
+      lockedByScene: !!locks[sc.id],
+      onToggleLock: (v) => setLock(sh.id, v),
+      onChange: (next) => updShot(sc.id, sh.id, next),
+      onDelete: () => delShot(sc, sh.id, hi),
+      onDuplicate: () => {
+        mut((p) => duplicateShot(p, sc.id, sh.id));
+        setStatus("Toma duplicada ✓ · la copia va justo detrás");
+      },
+      onMove: (d) => mut((p) => moveShot(p, sc.id, sh.id, d)),
+      onToggle: () => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id)),
+      prevTo: frameAnterior(sh.id),
+      onPlay: () => playShot(sc, sh.id, si, hi),
+      onPreview: () => previewShot(sh.id),
+      onGenVoice: (d) => genVoice(sc.id, sh.id, d),
+      onRehacerTexto: iaTexto ? (d) => void rehacerTexto(sc.id, sh.id, d) : undefined,
+      rehaciendo: rehaciendo,
+      onAddSfx: (e) => addSfx(sc.id, sh, e),
+      onAddSticker: (e) => addSticker(sc.id, sh, e),
+      onAddOverlaySound: (id, e) => addOverlaySound(sc.id, sh, id, e),
+      selectedVfx: selVfx,
+      sceneVfx: sc.vfx ?? [],
+      onOmitirEfectoEscena: (vfxId, modo) => {
+        mut((p) => ({
+          ...p,
+          scenes: p.scenes.map((s) => {
+            if (s.id !== sc.id) return s;
+            const i = s.shots.findIndex((x) => x.id === sh.id);
+            if (i < 0) return s;
+            return {
+              ...s,
+              shots: s.shots.map((toma, ti) => {
+                if (modo === "esta" && ti !== i) return toma;
+                if (modo === "adelante" && ti < i) return toma;
+                const omit = new Set(toma.omitirVfxEscena ?? []);
+                if (modo === "esta") {
+                  if (omit.has(vfxId)) omit.delete(vfxId);
+                  else omit.add(vfxId);
+                } else {
+                  omit.add(vfxId);
+                }
+                return { ...toma, omitirVfxEscena: [...omit] };
+              }),
+            };
+          }),
+        }));
+      },
+      onSoloEnEstaToma: (vfxId) => {
+        mut((p) => ({
+          ...p,
+          scenes: p.scenes.map((s) => {
+            if (s.id !== sc.id) return s;
+            const capa = (s.vfx ?? []).find((v) => v.id === vfxId);
+            if (!capa) return s;
+            const copia = {
+              ...capa,
+              id: nanoid(6),
+              params: { ...capa.params },
+              nodes: capa.nodes.map((n) => ({ ...n })),
+            };
+            return {
+              ...s,
+              vfx: (s.vfx ?? []).filter((v) => v.id !== vfxId),
+              shots: s.shots.map((toma) =>
+                toma.id !== sh.id
+                  ? {
+                      ...toma,
+                      omitirVfxEscena: (toma.omitirVfxEscena ?? []).filter((id) => id !== vfxId),
+                    }
+                  : {
+                      ...toma,
+                      vfx: [...(toma.vfx ?? []), copia],
+                      omitirVfxEscena: (toma.omitirVfxEscena ?? []).filter((id) => id !== vfxId),
+                    },
+              ),
+            };
+          }),
+        }));
+        setStatus("Efecto pasado solo a esta toma ✓");
+      },
+      onSelectVfx: (id) => {
+        setSelShot(sh.id);
+        setSelVfx(id);
+        setBorrandoVfx(false);
+        // Sin seek: pausaba y volvía al inicio de la toma.
+      },
+      onSelectOverlay: (id) => {
+        setSelShot(sh.id);
+        setSelOverlay(id);
+        if (id) irAlSticker(sh, id);
+      },
+      vocesIa: vozOpenAi,
+      pestana: pestanaToma,
+      onPestana: setPestanaToma,
+    };
+  }
+
+
   function closeSection() {
     const eng = engineRef.current!;
     eng.pause();
@@ -971,6 +1094,29 @@ export function StoryApp({
       ...tomas.flatMap((s) => (s.vfx ?? []).map((capa) => ({ capa, deEscena: false }))),
     ];
   })();
+  /**
+   * Qué se está reproduciendo, con todo lo que hace falta para editarlo.
+   *
+   * El tramo puede ser una toma o una escena entera, y el mando enseña cosas
+   * distintas en cada caso: los controles del plano, o los efectos que
+   * comparten todas sus tomas. Se resuelve UNA vez aquí en vez de repetir la
+   * búsqueda en cada rama del render.
+   */
+  const tomaDelTramo = (() => {
+    if (!section?.shotId) return null;
+    const sc = project.scenes.find((x) => x.shots.some((s) => s.id === section.shotId));
+    if (!sc) return null;
+    const hi = sc.shots.findIndex((s) => s.id === section.shotId);
+    if (hi < 0) return null;
+    return { sc, sh: sc.shots[hi], si: project.scenes.indexOf(sc), hi };
+  })();
+
+  const escenaDelTramo = (() => {
+    if (!section || section.shotId) return null;
+    const sc = project.scenes.find((x) => x.id === section.sceneId);
+    return sc ? { sc, si: project.scenes.indexOf(sc) } : null;
+  })();
+
   function updVfxNodes(id: string, nodes: VfxNode[]) {
     if (!curFlat) return;
     if ((curFlat.scene.vfx ?? []).some((v) => v.id === id)) {
@@ -2131,6 +2277,36 @@ export function StoryApp({
             />
           )}
 
+          {/* Y lo de TODO el video, que es lo que edita este reproductor: la
+              música de fondo y el volumen de la narración. Estaba solo en el
+              panel de la derecha, así que para bajar la música porque tapaba la
+              voz había que dejar de mirar lo que sonaba. */}
+          <MandoEdicion ambito="global">
+            <Slider
+              label="Volumen de la narración" value={project.narrationVolume}
+              min={0} max={1} step={0.01}
+              onChange={(v) => mut((p) => ({ ...p, narrationVolume: v }))}
+              format={(v) => `${Math.round(v * 100)}%`}
+            />
+            <div className="mt-2 flex gap-1.5">
+              <button onClick={() => setVerBiblioteca(true)} className="btn-ghost flex-1 py-1 text-[11px]">
+                <Music className="h-3.5 w-3.5 text-accent" /> Biblioteca
+              </button>
+              <label className="btn-ghost flex-1 cursor-pointer justify-center py-1 text-[11px]">
+                <Music className="h-3.5 w-3.5 text-accent" /> Subir música
+                <input type="file" accept="audio/*" className="hidden" onChange={(e) => addAudioLayer("music", e)} />
+              </label>
+            </div>
+            <div className="mt-2">
+              <CapasAudio
+                compacto
+                capas={project.audioLayers}
+                onCambiar={updLayer}
+                onQuitar={(id) => mut((p) => ({ ...p, audioLayers: p.audioLayers.filter((x) => x.id !== id) }))}
+              />
+            </div>
+          </MandoEdicion>
+
         </div>
         )}
 
@@ -2661,111 +2837,7 @@ export function StoryApp({
                     {sc.shots.map((sh, hi) => (
                       <ShotEditor
                         key={sh.id}
-                        shot={sh}
-                        index={hi}
-                        imageId={sc.imageId}
-                        imgW={sc.imgW}
-                        imgH={sc.imgH}
-                        canMove={sc.shots.length > 1}
-                        expanded={selShot === sh.id}
-                        voiceJobs={voiceJobs}
-                        selectedOverlay={selShot === sh.id ? selOverlay : null}
-                        inherited={inheritedLoops(flat, flat.findIndex((f) => f.shot.id === sh.id))}
-                        playing={section?.shotId === sh.id && playing}
-                        locked={!!locks[sh.id] || !!locks[sc.id]}
-                        lockedByScene={!!locks[sc.id]}
-                        onToggleLock={(v) => setLock(sh.id, v)}
-                        onChange={(next) => updShot(sc.id, sh.id, next)}
-                        onDelete={() => delShot(sc, sh.id, hi)}
-                        onDuplicate={() => {
-                          mut((p) => duplicateShot(p, sc.id, sh.id));
-                          setStatus("Toma duplicada ✓ · la copia va justo detrás");
-                        }}
-                        onMove={(d) => mut((p) => moveShot(p, sc.id, sh.id, d))}
-                        onToggle={() => (selShot === sh.id ? setSelShot(null) : focusShot(sh.id))}
-                        prevTo={frameAnterior(sh.id)}
-                        onPlay={() => playShot(sc, sh.id, si, hi)}
-                        onPreview={() => previewShot(sh.id)}
-                        onGenVoice={(d) => genVoice(sc.id, sh.id, d)}
-                        onRehacerTexto={iaTexto ? (d) => void rehacerTexto(sc.id, sh.id, d) : undefined}
-                        rehaciendo={rehaciendo}
-                        onAddSfx={(e) => addSfx(sc.id, sh, e)}
-                        onAddSticker={(e) => addSticker(sc.id, sh, e)}
-                        onAddOverlaySound={(id, e) => addOverlaySound(sc.id, sh, id, e)}
-                        selectedVfx={selVfx}
-                        sceneVfx={sc.vfx ?? []}
-                        onOmitirEfectoEscena={(vfxId, modo) => {
-                          mut((p) => ({
-                            ...p,
-                            scenes: p.scenes.map((s) => {
-                              if (s.id !== sc.id) return s;
-                              const i = s.shots.findIndex((x) => x.id === sh.id);
-                              if (i < 0) return s;
-                              return {
-                                ...s,
-                                shots: s.shots.map((toma, ti) => {
-                                  if (modo === "esta" && ti !== i) return toma;
-                                  if (modo === "adelante" && ti < i) return toma;
-                                  const omit = new Set(toma.omitirVfxEscena ?? []);
-                                  if (modo === "esta") {
-                                    if (omit.has(vfxId)) omit.delete(vfxId);
-                                    else omit.add(vfxId);
-                                  } else {
-                                    omit.add(vfxId);
-                                  }
-                                  return { ...toma, omitirVfxEscena: [...omit] };
-                                }),
-                              };
-                            }),
-                          }));
-                        }}
-                        onSoloEnEstaToma={(vfxId) => {
-                          mut((p) => ({
-                            ...p,
-                            scenes: p.scenes.map((s) => {
-                              if (s.id !== sc.id) return s;
-                              const capa = (s.vfx ?? []).find((v) => v.id === vfxId);
-                              if (!capa) return s;
-                              const copia = {
-                                ...capa,
-                                id: nanoid(6),
-                                params: { ...capa.params },
-                                nodes: capa.nodes.map((n) => ({ ...n })),
-                              };
-                              return {
-                                ...s,
-                                vfx: (s.vfx ?? []).filter((v) => v.id !== vfxId),
-                                shots: s.shots.map((toma) =>
-                                  toma.id !== sh.id
-                                    ? {
-                                        ...toma,
-                                        omitirVfxEscena: (toma.omitirVfxEscena ?? []).filter((id) => id !== vfxId),
-                                      }
-                                    : {
-                                        ...toma,
-                                        vfx: [...(toma.vfx ?? []), copia],
-                                        omitirVfxEscena: (toma.omitirVfxEscena ?? []).filter((id) => id !== vfxId),
-                                      },
-                                ),
-                              };
-                            }),
-                          }));
-                          setStatus("Efecto pasado solo a esta toma ✓");
-                        }}
-                        onSelectVfx={(id) => {
-                          setSelShot(sh.id);
-                          setSelVfx(id);
-                          setBorrandoVfx(false);
-                          // Sin seek: pausaba y volvía al inicio de la toma.
-                        }}
-                        onSelectOverlay={(id) => {
-                          setSelShot(sh.id);
-                          setSelOverlay(id);
-                          if (id) irAlSticker(sh, id);
-                        }}
-                        vocesIa={vozOpenAi}
-                        pestana={pestanaToma}
-                        onPestana={setPestanaToma}
+                        {...propsDeToma(sc, sh, si, hi)}
                       />
                     ))}
                     <button onClick={() => addShot(sc)} className="btn-ghost w-full text-sm">
@@ -3005,46 +3077,12 @@ export function StoryApp({
               </button>
             </div>
           )}
-          <div className="mt-2 space-y-2">
-            {project.audioLayers.map((l) => (
-              <div key={l.id} className="rounded-lg border border-border p-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <EscucharAudio audioId={l.audioId} volumen={l.volume} titulo={l.name} />
-                  {l.kind === "music" ? <Music className="h-3.5 w-3.5 text-accent" /> : <Volume2 className="h-3.5 w-3.5 text-accent" />}
-                  <span className="flex-1 truncate text-xs">{l.name}</span>
-                  <button
-                    onClick={() => mut((p) => ({ ...p, audioLayers: p.audioLayers.filter((x) => x.id !== l.id) }))}
-                    className="text-muted hover:text-danger"
-                  ><Trash2 className="h-3.5 w-3.5" /></button>
-                </div>
-                <div className="mt-1 grid grid-cols-2 gap-2">
-                  <Slider label="Volumen" value={l.volume} min={0} max={1} step={0.01}
-                    onChange={(v) => updLayer(l.id, { volume: v })}
-                    format={(v) => `${Math.round(v * 100)}%`} />
-                  <NumberInput
-                    label="Inicio (s)"
-                    value={l.startSec}
-                    onChange={(v) => updLayer(l.id, { startSec: v })}
-                    min={0} max={3600} step={0.5}
-                  />
-                </div>
-                {/* Sin esto el número engaña: no es el volumen con el que se
-                    oye bajo la voz, sino el de los huecos entre frases. */}
-                {l.kind === "music" && (
-                  <p className="mt-1 text-[10px] leading-tight text-muted">
-                    Es el volumen en los silencios. Mientras se narra baja sola a{" "}
-                    <span className="text-accent">{Math.round(l.volume * 30)}%</span> para no tapar la voz.
-                  </p>
-                )}
-                <label className="mt-1 flex items-center gap-2 text-[11px] text-muted">
-                  <input type="checkbox" checked={l.loop} onChange={(e) => updLayer(l.id, { loop: e.target.checked })} />
-                  Repetir en bucle todo el video
-                </label>
-              </div>
-            ))}
-            {!project.audioLayers.length && (
-              <p className="text-[11px] text-muted">Música de fondo para todo el video. Los sonidos puntuales van dentro de cada toma.</p>
-            )}
+          <div className="mt-2">
+            <CapasAudio
+              capas={project.audioLayers}
+              onCambiar={updLayer}
+              onQuitar={(id) => mut((p) => ({ ...p, audioLayers: p.audioLayers.filter((x) => x.id !== id) }))}
+            />
           </div>
         </div>
 
@@ -3299,31 +3337,76 @@ export function StoryApp({
             />
           </div>
 
-          {/* Saltar de toma y abrir sus secciones sin bajar a la lista. */}
-          <MandoTramo
-            puesto={section.shotId ? flat.findIndex((x) => x.shot.id === section.shotId) + 1 : 0}
-            total={flat.length}
-            pestana={pestanaToma}
-            onSaltar={saltarToma}
-            onPestana={(p) => {
-              setPestanaToma(p);
-              if (!section.shotId) return;
-              // Abrir la sección desde aquí tiene que abrir también la toma y su
-              // escena; si no, se marcaba el botón y abajo no cambiaba nada.
-              const suya = project.scenes.find((s) => s.shots.some((h) => h.id === section.shotId));
-              if (suya) setOpenScene(suya.id);
-              setSelShot(section.shotId);
-              requestAnimationFrame(() =>
-                document.getElementById(`toma-${section.shotId}`)
-                  ?.scrollIntoView({ block: "center", behavior: "smooth" }));
-            }}
-          />
+          {/* Los controles de VERDAD, aquí dentro. Antes esto eran botones que
+              hacían scroll hasta la lista de abajo: mirabas la ventana, bajabas
+              a tocar el volumen y volvías a subir para oír el resultado. Dos
+              viajes por cada ajuste. Son los MISMOS controles que abajo, no una
+              versión reducida: dos copias se separan a la semana. */}
+          {tomaDelTramo ? (
+            <MandoEdicion
+              ambito="toma"
+              nav={{
+                puesto: flat.findIndex((x) => x.shot.id === tomaDelTramo.sh.id) + 1,
+                total: flat.length,
+                onSaltar: saltarToma,
+              }}
+              onAbierto={setMandoAbierto}
+              pie={
+                <button
+                  onClick={() => {
+                    setOpenScene(tomaDelTramo.sc.id);
+                    setSelShot(tomaDelTramo.sh.id);
+                    requestAnimationFrame(() =>
+                      document.getElementById(`toma-${tomaDelTramo.sh.id}`)
+                        ?.scrollIntoView({ block: "center", behavior: "smooth" }));
+                  }}
+                  className="text-[10px] text-muted underline hover:text-fg"
+                >
+                  Verla también en la lista de abajo
+                </button>
+              }
+            >
+              <ShotEditor
+                soloCuerpo
+                {...propsDeToma(tomaDelTramo.sc, tomaDelTramo.sh, tomaDelTramo.si, tomaDelTramo.hi)}
+              />
+            </MandoEdicion>
+          ) : escenaDelTramo ? (
+            <MandoEdicion ambito="escena" onAbierto={setMandoAbierto}>
+              <VfxEditor
+                titulo="Efectos de la escena"
+                pista="Los comparten todas las tomas de esta foto. En cada toma se pueden apagar."
+                vfx={escenaDelTramo.sc.vfx ?? []}
+                dur={Math.max(2, ...escenaDelTramo.sc.shots.map((x) => shotDur(x)))}
+                seleccionado={selVfx}
+                onChange={(v) => updSceneVfx(escenaDelTramo.sc.id, v)}
+                onSelect={(id) => {
+                  setSelVfx(id);
+                  setBorrandoVfx(false);
+                  const toma = escenaDelTramo.sc.shots.find((x) => x.id === selShot) ?? escenaDelTramo.sc.shots[0];
+                  if (toma) setSelShot(toma.id);
+                }}
+              />
+              {/* Saltar a una de sus tomas sin cerrar la ventana: es lo que se
+                  quiere después de tocar un efecto de la escena —comprobar cómo
+                  queda en cada plano—. */}
+              <div className="mt-2">
+                <p className="mb-1 text-[10px] text-muted">Sus tomas</p>
+                <div className="flex flex-wrap gap-1">
+                  {escenaDelTramo.sc.shots.map((sh, i) => (
+                    <button
+                      key={sh.id}
+                      onClick={() => playShot(escenaDelTramo.sc, sh.id, escenaDelTramo.si, i)}
+                      className="rounded border border-border px-2 py-0.5 text-[10px] text-muted hover:bg-surface-2 hover:text-fg"
+                    >
+                      Toma {i + 1} · {shotDur(sh).toFixed(1)}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </MandoEdicion>
+          ) : null}
 
-          {/* El mando, aquí dentro. Es donde hace falta: esta ventana se queda
-              fija mientras editas, así que colocar un efecto ya no obliga a
-              subir al reproductor de arriba ni a bajar luego a donde estabas.
-              Lleva los efectos del tramo que se está viendo —los de la escena y
-              los de la toma—, no los de la toma marcada en la lista. */}
           {!!capasDelTramo.length && (
             <MoverEfectos
               capas={capasDelTramo}
