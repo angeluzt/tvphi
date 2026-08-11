@@ -126,6 +126,37 @@ export function MoverEfectos({
     return () => window.removeEventListener("keydown", tecla);
   }, [abierto, ids.join(","), c.x, c.y, usables.length, indice]);
 
+  /**
+   * Abrir y cerrar el mando.
+   *
+   * Al CERRAR hay que soltar lo cogido, y esto faltaba: el efecto se quedaba
+   * marcado encima del vídeo para siempre. Y no había forma de quitarlo, porque
+   * la cruz de «quitar la selección» vive dentro del panel que acabas de
+   * cerrar. Además, con `sel` vacío este componente trabaja sobre el primer
+   * efecto de la lista, así que al volver a abrirlo se resaltaba uno que nadie
+   * había elegido.
+   */
+  const alternar = () => {
+    setAbierto((v) => {
+      const siguiente = !v;
+      if (!siguiente) { setSel([]); onResaltar?.(null); }
+      onAbierto?.(siguiente);
+      return siguiente;
+    });
+  };
+
+  // Si el mando desaparece de golpe —se cierra el tramo, se cambia de vista— la
+  // marca se queda igualmente colgada, y ya no hay panel desde el que quitarla.
+  //
+  // Solo se suelta si estaba ABIERTO: con el mando cerrado, la marca la habrá
+  // puesto la lista de efectos de abajo, y borrar la selección de otro al
+  // desmontarse sería quitarle al usuario algo que él eligió.
+  const abiertoRef = useRef(abierto);
+  abiertoRef.current = abierto;
+  const soltar = useRef(onResaltar);
+  soltar.current = onResaltar;
+  useEffect(() => () => { if (abiertoRef.current) soltar.current?.(null); }, []);
+
   const nombre = (v: VfxLayer) => vfxSpec(v.kind)?.label ?? v.kind;
   // Cuándo se ve, que es la otra mitad de «cuál estoy moviendo»: un efecto que
   // solo dura de 2 a 4 segundos no está en pantalla el resto de la toma.
@@ -137,7 +168,7 @@ export function MoverEfectos({
   return (
     <div className={compacto ? "mt-1.5" : "mt-2"}>
       <button
-        onClick={() => setAbierto((v) => { onAbierto?.(!v); return !v; })}
+        onClick={alternar}
         className={`btn-ghost w-full justify-center py-1 text-[11px] ${abierto ? "border-accent/60 text-accent" : ""}`}
         aria-expanded={abierto}
       >
