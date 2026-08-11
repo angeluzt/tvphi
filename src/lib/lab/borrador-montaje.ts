@@ -1,7 +1,7 @@
 /** Borrador del montaje en IndexedDB para no perder trabajo al recargar. */
 
-const DB = "tvphi-lab";
-const STORE = "borradores";
+import { borrarBorrador, guardarBorrador, leerBorrador } from "./borradores";
+
 const CLAVE = "montaje-actual";
 
 export type BorradorMontaje = {
@@ -27,53 +27,21 @@ export type BorradorMontaje = {
   }[];
   escena?: unknown;
   cola?: unknown[];
+  /**
+   * Los efectos del motor colgados de la escena.
+   *
+   * Faltaban. El montaje se recuperaba con sus capas, su mapa y su cámara, y el
+   * fuego y la lluvia se quedaban por el camino sin que nada lo dijera: se leía
+   * «recuperado» y había que volver a colocarlos uno a uno. El ZIP sí los
+   * llevaba desde el principio, así que era además una incoherencia entre las
+   * dos formas de guardar lo mismo.
+   */
+  efectos?: unknown[];
 };
 
-function abrir(): Promise<IDBDatabase> {
-  return new Promise((res, rej) => {
-    const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
-    };
-    req.onsuccess = () => res(req.result);
-    req.onerror = () => rej(req.error ?? new Error("No se pudo abrir IndexedDB"));
-  });
-}
-
-export async function guardarBorradorMontaje(data: BorradorMontaje): Promise<void> {
-  const db = await abrir();
-  await new Promise<void>((res, rej) => {
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).put(data, CLAVE);
-    tx.oncomplete = () => res();
-    tx.onerror = () => rej(tx.error ?? new Error("No se pudo guardar el borrador"));
-  });
-  db.close();
-}
-
-export async function leerBorradorMontaje(): Promise<BorradorMontaje | null> {
-  const db = await abrir();
-  const out = await new Promise<BorradorMontaje | null>((res, rej) => {
-    const tx = db.transaction(STORE, "readonly");
-    const req = tx.objectStore(STORE).get(CLAVE);
-    req.onsuccess = () => res((req.result as BorradorMontaje) ?? null);
-    req.onerror = () => rej(req.error ?? new Error("No se pudo leer el borrador"));
-  });
-  db.close();
-  return out;
-}
-
-export async function borrarBorradorMontaje(): Promise<void> {
-  const db = await abrir();
-  await new Promise<void>((res, rej) => {
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).delete(CLAVE);
-    tx.oncomplete = () => res();
-    tx.onerror = () => rej(tx.error ?? new Error("No se pudo borrar el borrador"));
-  });
-  db.close();
-}
+export const guardarBorradorMontaje = (data: BorradorMontaje) => guardarBorrador(CLAVE, data);
+export const leerBorradorMontaje = () => leerBorrador<BorradorMontaje>(CLAVE);
+export const borrarBorradorMontaje = () => borrarBorrador(CLAVE);
 
 export function imgADataUrl(img: HTMLImageElement): Promise<string> {
   const cv = document.createElement("canvas");

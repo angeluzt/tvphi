@@ -401,6 +401,11 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
             capas: packed,
             escena,
             cola: colaRef.current,
+            // Faltaban. Se recuperaban las capas, el mapa y la cámara, y el
+            // fuego y la lluvia se quedaban por el camino sin que nada lo
+            // dijera. El ZIP sí los llevaba: eran dos formas de guardar lo
+            // mismo que guardaban cosas distintas.
+            efectos: efectosRef.current,
           });
           setBorradorInfo(
             `Autoguardado en este navegador · ${new Date().toLocaleTimeString()}. Descarga el ZIP para respaldarlo.`,
@@ -411,7 +416,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
       })();
     }, 1800);
     return () => window.clearTimeout(t);
-  }, [capas, cola, escena]);
+  }, [capas, cola, escena, efectos]);
 
   async function recuperarBorrador() {
     const b = borradorPendiente;
@@ -444,8 +449,14 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
       if (Array.isArray(b.cola) && b.cola.length) {
         setCola((b.cola as PasoSecuencia[]).map((p, i) => pasoPorDefecto({ ...p, id: `b${++pasoSeq}-${i}` })));
       }
+      const fx = Array.isArray(b.efectos) ? normalizarEfectos(b.efectos).efectos : [];
+      setEfectos(fx);
       if (b.escena) onEscena?.(b.escena);
-      setAviso(`Recuperado el montaje autoguardado (${nuevas.length} capas). Descarga el ZIP si quieres un respaldo portable.`);
+      setAviso(
+        `Recuperado el montaje autoguardado (${nuevas.length} capas`
+        + (fx.length ? `, ${fx.length} efecto${fx.length === 1 ? "" : "s"}` : "")
+        + "). Descarga el ZIP si quieres un respaldo portable.",
+      );
     } catch (e) {
       setAviso((e as Error).message || "No se pudo recuperar el borrador.");
     }

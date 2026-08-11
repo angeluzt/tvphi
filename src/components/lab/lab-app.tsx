@@ -229,7 +229,7 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
       )}
 
       {pestana === "mapa" && (
-        <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} />
+        <MapaEditor onEnviarAlCompositor={probar} onEscena={setEscena} escenaExterna={impuesta} puedeIa={hayIa} />
       )}
 
       <div className={pestana === "compositor" ? undefined : "hidden"}>
