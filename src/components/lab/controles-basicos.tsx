@@ -148,6 +148,10 @@ export function Num({ etiqueta, valor, min, max, paso, onCambio, disabled, sufij
         >−</button>
         <input
           type="text" inputMode="decimal" disabled={disabled}
+          // La etiqueta envuelve TAMBIÉN los botones − y +, así que el nombre
+          // que se lee acaba siendo «− Cuadros +». Con esto el campo se llama
+          // como toca.
+          aria-label={etiqueta}
           value={texto ?? limpio(valor)}
           onChange={(e) => {
             const t = e.target.value;

@@ -56,6 +56,20 @@ export interface PasoTanda {
 
 export const MAX_PASOS_TANDA = 8;
 
+/**
+ * El tope de cuadros de UNA animación.
+ *
+ * Sale del generador de imagen, no de un capricho: la hoja es UNA imagen
+ * partida en rejilla, así que cuantos más cuadros, más pequeño sale el bicho en
+ * cada celda. Doce es lo que acepta la ruta de sprites.
+ *
+ * Estaba escrito en tres sitios con tres números distintos —12 en el campo, 10
+ * al normalizar el plan de la IA, 12 en la ruta—, así que pedir 11 se quedaba
+ * en 10 sin decir nada y parecía que el campo no dejaba escribir. Ahora es esta
+ * constante y punto.
+ */
+export const MAX_CUADROS = 12;
+
 /** Un paso vacío con valores que ya funcionan. */
 export function pasoNuevo(id: string): PasoTanda {
   return { id, que: "", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "otro" };
@@ -219,10 +233,9 @@ export function normalizarPlan(crudo: any, idFn: (i: number) => string = (i) => 
     pasos.push({
       id: idFn(pasos.length),
       que,
-      // El tope real es 12, pero por encima de 10 los cuadros salen del tamaño
-      // de un sello y el bicho se pierde. Se acota aquí y no en el prompt: lo
-      // que el modelo promete y lo que devuelve no siempre coincide.
-      fotogramas: Math.round(acotar(num(p?.fotogramas, 6), 1, 10)),
+      // Se acota aquí y no solo en el prompt: lo que el modelo promete y lo que
+      // devuelve no siempre coincide.
+      fotogramas: Math.round(acotar(num(p?.fotogramas, 6), 1, MAX_CUADROS)),
       vista: enUno(p?.vista, VISTAS, "lateral"),
       direccion: enUno(p?.direccion, DIRECCIONES, "derecha"),
       accion: enUno(p?.accion, ACCIONES, "otro"),
@@ -252,6 +265,7 @@ export function reglasDelPlan() {
     accion: ACCIONES,
     reglas: [
       `Entre 2 y ${MAX_PASOS_TANDA} pasos. Menos es mejor que de más: cada paso es una imagen que se paga.`,
+      `fotogramas: entre 1 y ${MAX_CUADROS}. Cuantos más, más pequeño sale el personaje en cada celda.`,
       "«personaje» NO lleva la acción: es solo quién es. La acción va en cada paso, porque el personaje se antepone a todos.",
       "Los pasos van en ORDEN CRONOLÓGICO: la pose final de uno enlaza con la inicial del siguiente.",
       "Si el personaje cambia de sentido a mitad, mete un paso «girar» ANTES y cambia «direccion» en los pasos posteriores. Sin ese paso, el giro se ve como un salto.",

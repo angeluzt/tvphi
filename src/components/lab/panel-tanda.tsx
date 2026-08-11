@@ -2,8 +2,9 @@
 
 import { Layers, Loader2, Plus, Trash2, ChevronUp, ChevronDown, Square, Sparkles } from "lucide-react";
 import {
-  MAX_PASOS_TANDA, RECETAS, pasoNuevo, type PasoTanda,
+  MAX_PASOS_TANDA, MAX_CUADROS, RECETAS, pasoNuevo, type PasoTanda,
 } from "@/lib/lab/tanda-sprites";
+import { Num } from "./controles-basicos";
 import type { AccionSprite, DireccionSprite, VistaSprite } from "@/lib/lab/biblioteca";
 
 // Pedir de una vez TODAS las animaciones de un personaje.
@@ -221,28 +222,43 @@ export function PanelTanda({
                       <Trash2 className="h-3 w-3" />
                     </button>
                   </div>
-                  <div className="mt-1 grid grid-cols-4 gap-1">
+                  {/* Dos columnas en móvil. El campo de cuadros lleva − y +, y
+                      en cuatro columnas se salía de la ventana: 435 px dentro
+                      de una de 390, con scroll horizontal en toda la página. */}
+                  <div className="mt-1 grid grid-cols-2 gap-1 sm:grid-cols-4">
                     <Elegir etiqueta="Vista" valor={p.vista} ops={VISTAS} disabled={ocupado}
                       onCambio={(v) => cambiar(p.id, { vista: v as VistaSprite })} />
                     <Elegir etiqueta="Mira a" valor={p.direccion} ops={DIRECCIONES} disabled={ocupado}
                       onCambio={(v) => cambiar(p.id, { direccion: v as DireccionSprite })} />
                     <Elegir etiqueta="Acción" valor={p.accion} ops={ACCIONES} disabled={ocupado}
                       onCambio={(v) => cambiar(p.id, { accion: v as AccionSprite })} />
-                    <label className="text-[9px] text-muted">
-                      Cuadros
-                      <input
-                        type="number" min={1} max={12} value={p.fotogramas} disabled={ocupado}
-                        onChange={(e) => cambiar(p.id, {
-                          fotogramas: Math.max(1, Math.min(12, Number(e.target.value) || 6)),
-                        })}
-                        className="input mt-0.5 w-full py-0.5 text-[9px]"
-                      />
-                    </label>
+                    {/* Con `Num`, no con un input recortado a cada tecla: eso
+                        último es lo que hacía que al borrar el campo saltara
+                        solo a 6 y pareciera que no se podía escribir. El
+                        problema ya estaba resuelto aquí al lado y lo repetí. */}
+                    <Num
+                      etiqueta="Cuadros"
+                      valor={p.fotogramas}
+                      min={1} max={MAX_CUADROS} paso={1}
+                      disabled={ocupado}
+                      ancho="w-full"
+                      onCambio={(v) => cambiar(p.id, { fotogramas: Math.round(v) })}
+                    />
                   </div>
                 </div>
               );
             })}
           </div>
+
+          {/* Qué es «cuadros», ahí donde se pregunta. El número no significa
+              nada sin saber que la hoja es UNA imagen partida en rejilla: por
+              eso más cuadros es más suave pero más pequeño, y no más caro. */}
+          <p className="text-[10px] leading-snug text-muted">
+            <b className="text-fg">Cuadros</b> son los dibujos del ciclo: con 8 el paso es más suave
+            que con 4. Los {MAX_CUADROS} caben en una sola imagen repartida en rejilla, así que más
+            cuadros no cuesta más — pero cada uno sale más pequeño y el personaje pierde detalle.
+            Para caminar o correr, 8; para algo quieto, 6; para un giro o un gesto corto, 4.
+          </p>
 
           <button
             type="button"
