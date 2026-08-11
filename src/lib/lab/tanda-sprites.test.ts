@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   encargosDeTanda, conCadena, promptDelPaso, nombreDeAccion, pasoNuevo,
-  normalizarPlan, reglasDelPlan, nombreDePersonaje, RECETAS, MAX_PASOS_TANDA, MAX_CUADROS,
+  normalizarPlan, reglasDelPlan, nombreDePersonaje, RECETAS,
+  MAX_PASOS_TANDA, MAX_CUADROS, MAX_PROMPT,
   type PasoTanda,
 } from "./tanda-sprites";
 
@@ -343,5 +344,35 @@ describe("nombreDePersonaje", () => {
     expect(e[0].nombrePersonaje).toBe("Pescador viejo");
     // …pero el PROMPT sigue llevando la descripción completa en inglés.
     expect(e[0].que).toMatch(/anime style, clean cel shading/);
+  });
+});
+
+describe("el prompt no se pasa del tope de las rutas", () => {
+  // Las dos rutas que reciben esto rechazan por encima de 400. El fallo salía
+  // DESPUÉS de pagar la imagen y con un mensaje que no decía qué campo era.
+  it("personaje largo + acción larga no revientan el límite", () => {
+    const p = promptDelPaso("x".repeat(200), { ...pasoNuevo("a"), que: "y".repeat(200) });
+    expect(p.length).toBeLessThanOrEqual(MAX_PROMPT);
+  });
+
+  it("tampoco por separado", () => {
+    expect(promptDelPaso("", { ...pasoNuevo("a"), que: "y".repeat(900) }).length)
+      .toBeLessThanOrEqual(MAX_PROMPT);
+    expect(promptDelPaso("x".repeat(900), { ...pasoNuevo("a"), que: "" }).length)
+      .toBeLessThanOrEqual(MAX_PROMPT);
+  });
+
+  it("una tanda entera sale dentro del tope", () => {
+    const e = encargosDeTanda({
+      personaje: "x".repeat(200),
+      pasos: [1, 2, 3].map((i) => ({ ...pasoNuevo(`p${i}`), que: "y".repeat(200) })),
+    });
+    for (const x of e) expect(x.que.length).toBeLessThanOrEqual(MAX_PROMPT);
+  });
+
+  it("lo normal no se toca", () => {
+    const p = promptDelPaso("old fisherman with a straw hat",
+      { ...pasoNuevo("a"), que: "sitting on the riverbank, fishing" });
+    expect(p).toBe("old fisherman with a straw hat, sitting on the riverbank, fishing");
   });
 });

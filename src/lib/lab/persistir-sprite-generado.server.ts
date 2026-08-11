@@ -4,9 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
 import { nombreCorto } from "@/lib/lab/biblioteca";
 
-/** Tope de personajes del taller (misma cifra que la ruta sprite-characters). */
-const MAX_P = 20;
-const MAX_A = 30;
+import { MAX_PERSONAJES, MAX_ANIMACIONES, SIN_SITIO_PERSONAJES, SIN_SITIO_ANIMACIONES } from "./topes-taller";
+
+const MAX_P = MAX_PERSONAJES;
+const MAX_A = MAX_ANIMACIONES;
 
 export type MetaSpriteGenerado = {
   que: string;
@@ -115,7 +116,7 @@ export async function persistirSpriteGenerado(
     });
     if (!c) throw new Error("Personaje no encontrado.");
     if (c._count.animaciones >= MAX_A) {
-      throw new Error(`Ese personaje ya tiene ${MAX_A} animaciones.`);
+      throw new Error(SIN_SITIO_ANIMACIONES);
     }
     const a = await prisma.spriteAnimation.create({
       data: { ...data, characterId: c.id },
@@ -124,7 +125,7 @@ export async function persistirSpriteGenerado(
   }
 
   const cuantos = await prisma.spriteCharacter.count({ where: { userId } });
-  if (cuantos >= MAX_P) throw new Error(`Ya tienes ${MAX_P} personajes.`);
+  if (cuantos >= MAX_P) throw new Error(SIN_SITIO_PERSONAJES);
 
   const c = await prisma.spriteCharacter.create({
     data: {

@@ -70,6 +70,15 @@ export const MAX_PASOS_TANDA = 8;
  */
 export const MAX_CUADROS = 12;
 
+/**
+ * Lo más largo que puede ser el prompt de una animación.
+ *
+ * Lo fijan las dos rutas que lo reciben —la que dibuja y la que guarda—, las
+ * dos en 400. Sumar personaje (200) y acción (200) se pasaba por dos letras, y
+ * el resultado era pagar la imagen y que el guardado la rechazara.
+ */
+export const MAX_PROMPT = 400;
+
 /** Un paso vacío con valores que ya funcionan. */
 export function pasoNuevo(id: string): PasoTanda {
   return { id, que: "", fotogramas: 6, vista: "lateral", direccion: "derecha", accion: "otro" };
@@ -86,9 +95,13 @@ export function pasoNuevo(id: string): PasoTanda {
 export function promptDelPaso(personaje: string, paso: PasoTanda): string {
   const quien = personaje.trim().replace(/[.,\s]+$/, "");
   const que = paso.que.trim().replace(/^[.,\s]+/, "");
-  if (!quien) return que;
-  if (!que) return quien;
-  return `${quien}, ${que}`;
+  if (!quien) return que.slice(0, MAX_PROMPT);
+  if (!que) return quien.slice(0, MAX_PROMPT);
+  // El tope no es decorativo: las dos rutas que reciben esto —la que dibuja y
+  // la que guarda— rechazan por encima de 400, y el fallo salía DESPUÉS de
+  // pagar la imagen, con un «Proyecto incompleto o inválido» que no decía qué
+  // campo era. Con 200 de personaje y 200 de acción se llegaba a 402.
+  return `${quien}, ${que}`.slice(0, MAX_PROMPT);
 }
 
 /**

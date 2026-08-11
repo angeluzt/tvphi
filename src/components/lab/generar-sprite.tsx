@@ -28,6 +28,7 @@ import {
   type EncargoSprite, type PasoTanda,
 } from "@/lib/lab/tanda-sprites";
 import { PanelTanda, type EstadoTanda } from "./panel-tanda";
+import { MAX_PERSONAJES, SIN_SITIO_PERSONAJES } from "@/lib/lab/topes-taller";
 import {
   ARCHIVO_HOJA_SPRITE, ARCHIVO_META_SPRITE, ARCHIVO_TIRA_SPRITE,
   archivosProyectoSprite, crearProyectoSprite, normalizarProyectoSprite,
@@ -460,6 +461,14 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     });
     if (!encargos.length) return;
 
+    // ¿Cabe? Se mira ANTES de la primera imagen. La ruta ya no deja pagar sin
+    // sitio, pero enterarse aquí evita empezar una tanda de cinco para que
+    // muera en la primera.
+    if (!personajeId && personajes.length >= MAX_PERSONAJES) {
+      setError(SIN_SITIO_PERSONAJES);
+      return;
+    }
+
     pararTanda.current = false;
     setError(null);
     setTanda({ actual: 1, total: encargos.length, hechas: [] });
@@ -531,6 +540,12 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       if (!r.ok) throw new Error(j.error || "No se pudo");
 
       // Si el servidor ya persistió, enganchamos IDs ya (antes del recorte local).
+      // Y si NO pudo, lo dice: viene en `errorGuardado` y el cliente lo tiraba,
+      // así que la hoja aparecía hecha y el motivo real no salía por ningún
+      // lado hasta que fallaba también el refinado, tres pasos más tarde.
+      if (!j.guardadoEnDb && typeof j.errorGuardado === "string" && j.errorGuardado) {
+        throw new Error(j.errorGuardado);
+      }
       const pidGuardado = typeof j.personajeId === "string" ? j.personajeId : null;
       const aidGuardado = typeof j.animacionId === "string" ? j.animacionId : null;
       if (pidGuardado) setPersonajeId(pidGuardado);

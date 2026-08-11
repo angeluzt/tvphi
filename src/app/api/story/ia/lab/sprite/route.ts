@@ -12,6 +12,7 @@ import { rejillaSpriteEquilibrada } from "@/lib/lab/sprites";
 import { prisma } from "@/lib/prisma";
 import sharp from "sharp";
 import { reconstruirTiraAnimacion } from "@/lib/lab/atlas-sprite.server";
+import { MAX_PERSONAJES, SIN_SITIO_PERSONAJES } from "@/lib/lab/topes-taller";
 
 // Una hoja de sprites: N fotogramas del mismo bicho, en fila.
 //
@@ -122,6 +123,21 @@ export async function POST(req: Request) {
   const admin = esAdminHistorias(user.email);
   const ajustes = await leerAjustes();
   if (!ajustes.imagenesIa && !admin) return NextResponse.json({ error: "Ahora mismo no se pueden generar imágenes con IA." }, { status: 403 });
+
+  // El tope de personajes se mira ANTES de reservar y de llamar a OpenAI.
+  //
+  // Antes se miraba al guardar, o sea DESPUÉS de pagar la imagen: la ruta
+  // generaba, intentaba persistir, se tragaba el «Ya tienes 20 personajes» en
+  // `errorGuardado` y devolvía ok. El usuario veía la hoja hecha y un error de
+  // guardado, y esa imagen ya no se podía meter en ningún sitio. En una tanda
+  // de cinco eso son cinco imágenes pagadas y tiradas.
+  if (!parsed.data.personajeId) {
+    const cuantos = await prisma.spriteCharacter.count({ where: { userId: user.id } });
+    if (cuantos >= MAX_PERSONAJES) {
+      return NextResponse.json({ error: SIN_SITIO_PERSONAJES, sinSitio: true }, { status: 409 });
+    }
+  }
+
   const reserva = await reservarUsoIa(user.id, user.email, "imagen");
   if (!reserva.ok) return NextResponse.json({ error: reserva.mensaje || mensajeCupoImagenes(reserva.cupo), sinCupo: true }, { status: 429 });
   const guardados = await preferenciasModelos(user.id, user.email);
