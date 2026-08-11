@@ -12,7 +12,7 @@ import { rejillaSpriteEquilibrada } from "@/lib/lab/sprites";
 import { prisma } from "@/lib/prisma";
 import sharp from "sharp";
 import { reconstruirTiraAnimacion } from "@/lib/lab/atlas-sprite.server";
-import { MAX_PERSONAJES, SIN_SITIO_PERSONAJES } from "@/lib/lab/topes-taller";
+import { topesDe, sinSitioPersonajes } from "@/lib/lab/topes-taller";
 
 // Una hoja de sprites: N fotogramas del mismo bicho, en fila.
 //
@@ -131,10 +131,12 @@ export async function POST(req: Request) {
   // `errorGuardado` y devolvía ok. El usuario veía la hoja hecha y un error de
   // guardado, y esa imagen ya no se podía meter en ningún sitio. En una tanda
   // de cinco eso son cinco imágenes pagadas y tiradas.
-  if (!parsed.data.personajeId) {
+  const topes = topesDe(user.email);
+  if (!parsed.data.personajeId && Number.isFinite(topes.personajes)) {
     const cuantos = await prisma.spriteCharacter.count({ where: { userId: user.id } });
-    if (cuantos >= MAX_PERSONAJES) {
-      return NextResponse.json({ error: SIN_SITIO_PERSONAJES, sinSitio: true }, { status: 409 });
+    if (cuantos >= topes.personajes) {
+      return NextResponse.json(
+        { error: sinSitioPersonajes(topes.personajes), sinSitio: true }, { status: 409 });
     }
   }
 
@@ -269,7 +271,7 @@ export async function POST(req: Request) {
         accion,
         croma: CROMA,
         personajeId,
-      });
+      }, topes);
     } catch (e: any) {
       console.error("No se pudo autoguardar el sprite generado", e);
       errorGuardado = e?.message || "No se pudo guardar en la base de datos.";

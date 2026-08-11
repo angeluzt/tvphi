@@ -6,7 +6,7 @@ import { esPng } from "@/lib/lab/biblioteca";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
 import { urlImagenAnimacion, type PersonajeSprite } from "@/lib/lab/personajes-sprite";
 import {
-  MAX_PERSONAJES, MAX_ANIMACIONES, SIN_SITIO_PERSONAJES, SIN_SITIO_ANIMACIONES,
+  topesDe, sinSitioPersonajes, sinSitioAnimaciones, sinEspacio,
 } from "@/lib/lab/topes-taller";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +30,10 @@ const MAX_TIRA = 4 * 1024 * 1024;
 /** La miniatura del personaje. Es un solo fotograma, no necesita más. */
 const MAX_REF = 2 * 1024 * 1024;
 /** Cuántos personajes, y cuántas animaciones cuelgan de cada uno. */
-const MAX_P = MAX_PERSONAJES;
-const MAX_A = MAX_ANIMACIONES;
+/** Cuántos personajes se listan de una vez. No es un tope de la cuenta. */
+const POR_PAGINA = 200;
 /** El total por usuario, contando hojas, tiras, referencias y páginas de atlas. */
-const MAX_TOTAL = 120 * 1024 * 1024;
+
 
 const celda = z.object({
   x: z.number().int().min(0).max(8192),
@@ -106,7 +106,7 @@ export async function GET() {
   const rows = await prisma.spriteCharacter.findMany({
     where: { userId: u.id },
     orderBy: { updatedAt: "desc" },
-    take: MAX_P,
+    take: POR_PAGINA,
     select: {
       id: true,
       nombre: true,
@@ -164,7 +164,22 @@ export async function GET() {
     })),
   }));
 
-  return NextResponse.json({ personajes });
+  // Los topes y lo gastado, para que la pantalla los enseñe y no tenga que
+  // adivinarlos. `Infinity` no sobrevive a un JSON —sale `null`—, así que sin
+  // tope se manda null y el cliente lo lee como «sin límite».
+  const topes = topesDe(u.email);
+  const atlas = await prisma.spriteAtlas.aggregate({ where: { userId: u.id }, _sum: { bytes: true } });
+  const usados = personajes.reduce((a, p) => a + p.bytes, 0) + (atlas._sum.bytes ?? 0);
+  return NextResponse.json({
+    personajes,
+    uso: { personajes: personajes.length, bytes: usados },
+    topes: {
+      personajes: Number.isFinite(topes.personajes) ? topes.personajes : null,
+      animaciones: Number.isFinite(topes.animaciones) ? topes.animaciones : null,
+      bytes: Number.isFinite(topes.bytes) ? topes.bytes : null,
+      ilimitado: topes.ilimitado,
+    },
+  });
 }
 
 export async function PATCH(req: Request) {
@@ -205,6 +220,7 @@ export async function POST(req: Request) {
   const u = await getCurrentUser();
   if (!u) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   const userId = u.id;
+  const topes = topesDe(u.email);
   const p = cuerpo.safeParse(await req.json().catch(() => null));
   if (!p.success) {
     // QUÉ campo, no solo que algo falla. «Proyecto incompleto o inválido.» a
@@ -250,8 +266,8 @@ export async function POST(req: Request) {
   const prev = d.animacionId ? propios.flatMap((x) => x.animaciones).find((x) => x.id === d.animacionId) : null;
   const old = prev ? prev.bytesOriginal + prev.bytesTrabajo + prev.bytesTira : 0;
   const nuevo = original.length + (work?.length ?? 0) + tira.length + (!d.personajeId && !d.animacionId ? (ref?.length ?? 0) : 0);
-  if (total + (atl._sum.bytes ?? 0) - old + nuevo > MAX_TOTAL) {
-    return NextResponse.json({ error: "Tu biblioteca alcanzó 120 MB." }, { status: 409 });
+  if (total + (atl._sum.bytes ?? 0) - old + nuevo > topes.bytes) {
+    return NextResponse.json({ error: sinEspacio(topes.bytes), sinSitio: true }, { status: 409 });
   }
   const data = {
     nombre: d.nombre, que: d.que, fotogramas: d.fotogramas, fps: d.fps,
@@ -289,8 +305,8 @@ export async function POST(req: Request) {
       include: { _count: { select: { animaciones: true } } },
     });
     if (!c) return NextResponse.json({ error: "Personaje no encontrado." }, { status: 404 });
-    if (c._count.animaciones >= MAX_A) {
-      return NextResponse.json({ error: SIN_SITIO_ANIMACIONES, sinSitio: true }, { status: 409 });
+    if (c._count.animaciones >= topes.animaciones) {
+      return NextResponse.json({ error: sinSitioAnimaciones(topes.animaciones), sinSitio: true }, { status: 409 });
     }
     const a = await prisma.spriteAnimation.create({ data: { ...data, characterId: c.id } });
     await prisma.spriteCharacter.update({
@@ -300,8 +316,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, personajeId: c.id, animacionId: a.id, enAtlas: await pack(a.id) });
   }
 
-  if (propios.length >= MAX_P) {
-    return NextResponse.json({ error: SIN_SITIO_PERSONAJES, sinSitio: true }, { status: 409 });
+  if (propios.length >= topes.personajes) {
+    return NextResponse.json({ error: sinSitioPersonajes(topes.personajes), sinSitio: true }, { status: 409 });
   }
   if (!ref) return NextResponse.json({ error: "Falta el cuadro de referencia." }, { status: 400 });
 

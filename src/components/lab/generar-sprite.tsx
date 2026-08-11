@@ -28,7 +28,7 @@ import {
   type EncargoSprite, type PasoTanda,
 } from "@/lib/lab/tanda-sprites";
 import { PanelTanda, type EstadoTanda } from "./panel-tanda";
-import { MAX_PERSONAJES, SIN_SITIO_PERSONAJES } from "@/lib/lab/topes-taller";
+
 import {
   ARCHIVO_HOJA_SPRITE, ARCHIVO_META_SPRITE, ARCHIVO_TIRA_SPRITE,
   archivosProyectoSprite, crearProyectoSprite, normalizarProyectoSprite,
@@ -173,6 +173,9 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   const [animacionId, setAnimacionId] = useState<string | null>(null);
   /** "" = cuadro maestro del personaje; si no, id de animación de la que se parte. */
   const [refAnimacionId, setRefAnimacionId] = useState("");
+  /** Cuántos personajes admite esta cuenta. null = sin tope (quien administra). */
+  const [topeP, setTopeP] = useState<number | null>(null);
+  const [bytesUsados, setBytesUsados] = useState(0);
   // ── La tanda: varias acciones del mismo personaje, encadenadas ────────────
   const [tandaAbierta, setTandaAbierta] = useState(false);
   const [tandaPersonaje, setTandaPersonaje] = useState("");
@@ -373,6 +376,10 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       const j = await pedirJson("/api/story/sprite-characters");
       const lista = (j.personajes ?? []) as PersonajeSprite[];
       setPersonajes(lista);
+      // El tope lo manda el servidor: quien administra no tiene ninguno y el
+      // navegador no puede deducirlo. `null` es «sin límite».
+      setTopeP(typeof j.topes?.personajes === "number" ? j.topes.personajes : null);
+      setBytesUsados(typeof j.uso?.bytes === "number" ? j.uso.bytes : 0);
       return lista;
     } catch (e) {
       setErrorPersonajes((e as Error).message || "No se pudieron cargar tus sprites.");
@@ -463,9 +470,13 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
 
     // ¿Cabe? Se mira ANTES de la primera imagen. La ruta ya no deja pagar sin
     // sitio, pero enterarse aquí evita empezar una tanda de cinco para que
-    // muera en la primera.
-    if (!personajeId && personajes.length >= MAX_PERSONAJES) {
-      setError(SIN_SITIO_PERSONAJES);
+    // muera en la primera. El tope lo dice el servidor: quien administra no
+    // tiene ninguno, y el navegador no puede saberlo por su cuenta.
+    if (!personajeId && topeP !== null && personajes.length >= topeP) {
+      setError(
+        `Ya tienes ${topeP} personajes, que es el tope. Borra alguno en la biblioteca de abajo, `
+        + "o elige uno de los que ya tienes para colgarle la tanda en vez de crear otro.",
+      );
       return;
     }
 
@@ -1456,6 +1467,15 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         <div className="flex flex-wrap items-center gap-2">
           <Library className="h-3.5 w-3.5 shrink-0 text-accent" />
           <span className="text-xs font-semibold text-fg">Biblioteca de sprites</span>
+          {/* Cuánto llevas, a la vista. El «Ya tienes 20 personajes» salía de
+              golpe y sin contexto —después de pagar la imagen— porque en ningún
+              sitio se veía que hubiera una cuenta atrás. */}
+          {!!personajes.length && (
+            <span className="chip bg-surface-2 text-[10px] text-muted">
+              {personajes.length}{topeP === null ? "" : ` de ${topeP}`} · {(bytesUsados / (1024 * 1024)).toFixed(1)} MB
+              {topeP === null && <span className="ml-1 text-accent">sin tope</span>}
+            </span>
+          )}
           <button type="button" onClick={() => void releerPersonajes()} className="btn-ghost ml-auto px-2 py-1 text-[10px]" title="Releer">
             {cargandoPersonajes ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
           </button>
