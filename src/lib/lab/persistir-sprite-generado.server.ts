@@ -4,10 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
 import { nombreCorto } from "@/lib/lab/biblioteca";
 
-import { MAX_PERSONAJES, MAX_ANIMACIONES, SIN_SITIO_PERSONAJES, SIN_SITIO_ANIMACIONES } from "./topes-taller";
-
-const MAX_P = MAX_PERSONAJES;
-const MAX_A = MAX_ANIMACIONES;
+import { sinSitioPersonajes, sinSitioAnimaciones, type TopesTaller } from "./topes-taller";
 
 export type MetaSpriteGenerado = {
   que: string;
@@ -31,6 +28,15 @@ export async function persistirSpriteGenerado(
   userId: string,
   hoja: Buffer,
   meta: MetaSpriteGenerado,
+  /**
+   * Los topes YA resueltos, no el correo.
+   *
+   * Quien llama acaba de calcularlos para decidir si deja pagar la imagen; si
+   * aquí se recalcularan, habría dos fuentes para la misma respuesta y bastaría
+   * con que una se quedara vieja para que la ruta dejara generar y el guardado
+   * lo rechazara.
+   */
+  topes: TopesTaller,
 ): Promise<{ personajeId: string; animacionId: string; enAtlas: boolean }> {
   const m = await sharp(hoja).metadata();
   const anchoHoja = m.width ?? 0;
@@ -115,8 +121,8 @@ export async function persistirSpriteGenerado(
       include: { _count: { select: { animaciones: true } } },
     });
     if (!c) throw new Error("Personaje no encontrado.");
-    if (c._count.animaciones >= MAX_A) {
-      throw new Error(SIN_SITIO_ANIMACIONES);
+    if (c._count.animaciones >= topes.animaciones) {
+      throw new Error(sinSitioAnimaciones(topes.animaciones));
     }
     const a = await prisma.spriteAnimation.create({
       data: { ...data, characterId: c.id },
@@ -124,8 +130,10 @@ export async function persistirSpriteGenerado(
     return { personajeId: c.id, animacionId: a.id, enAtlas: await pack(a.id) };
   }
 
-  const cuantos = await prisma.spriteCharacter.count({ where: { userId } });
-  if (cuantos >= MAX_P) throw new Error(SIN_SITIO_PERSONAJES);
+  if (Number.isFinite(topes.personajes)) {
+    const cuantos = await prisma.spriteCharacter.count({ where: { userId } });
+    if (cuantos >= topes.personajes) throw new Error(sinSitioPersonajes(topes.personajes));
+  }
 
   const c = await prisma.spriteCharacter.create({
     data: {
