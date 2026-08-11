@@ -1582,11 +1582,18 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
                 ))}
               </div>
 
-              <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              {/* `minmax(0,…)`, `min-w-0` y `flex-wrap`, los tres.
+                  Esta fila desbordaba la ventana en móvil —393 px dentro de
+                  350, con scroll horizontal en toda la página— porque «Partir
+                  de aquí» mide 104 px y lleva `shrink-0`: no encoge nunca. Sin
+                  el 0 en la pista, el grid tampoco puede encoger por debajo de
+                  su contenido, así que empujaba. Con `flex-wrap` los botones
+                  bajan a una segunda línea en vez de salirse. */}
+              <div className="mt-2 grid gap-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 {p.animaciones.map((a) => (
                   <div
                     key={a.id}
-                    className="flex items-center gap-2 rounded-md border border-border p-1.5"
+                    className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-border p-1.5"
                   >
                     <button
                       type="button"

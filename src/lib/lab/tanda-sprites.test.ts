@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   encargosDeTanda, conCadena, promptDelPaso, nombreDeAccion, pasoNuevo,
-  normalizarPlan, reglasDelPlan, nombreDePersonaje, RECETAS, MAX_PASOS_TANDA,
+  normalizarPlan, reglasDelPlan, nombreDePersonaje, RECETAS, MAX_PASOS_TANDA, MAX_CUADROS,
   type PasoTanda,
 } from "./tanda-sprites";
 
@@ -243,11 +243,19 @@ describe("normalizarPlan", () => {
     expect(p.pasos[0]).toMatchObject({ vista: "lateral", direccion: "derecha", accion: "otro" });
   });
 
-  it("acota los fotogramas: por encima de 10 el bicho sale del tamaño de un sello", () => {
+  it("acota los fotogramas al tope del generador, ni uno menos", () => {
+    // El tope vivía en tres sitios con tres números: pedir 11 se quedaba en 10
+    // sin decir nada y parecía que el campo no dejaba escribir.
     const p = normalizarPlan({ personaje: "x", pasos: [
-      { que: "uno", fotogramas: 40 }, { que: "dos", fotogramas: 0 }, { que: "tres", fotogramas: "siete" },
+      { que: "uno", fotogramas: 40 }, { que: "dos", fotogramas: 0 },
+      { que: "tres", fotogramas: "siete" }, { que: "cuatro", fotogramas: 11 },
     ] });
-    expect(p.pasos.map((x) => x.fotogramas)).toEqual([10, 1, 6]);
+    expect(p.pasos.map((x) => x.fotogramas)).toEqual([MAX_CUADROS, 1, 6, 11]);
+  });
+
+  it("el tope que se le pide al modelo es el MISMO que se valida", () => {
+    const r = reglasDelPlan();
+    expect(r.reglas.join(" ")).toContain(`entre 1 y ${MAX_CUADROS}`);
   });
 
   it("descarta los pasos sin texto y corta en el tope", () => {
