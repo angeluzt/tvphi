@@ -28,7 +28,7 @@
 
 export type Ambiente =
   | "cotidiano" | "intriga" | "tension" | "oscuro" | "emotivo"
-  | "epico" | "fantasia" | "ciencia-ficcion" | "naturaleza";
+  | "epico" | "fantasia" | "ciencia-ficcion" | "naturaleza" | "neutra";
 
 export const AMBIENTE_LABEL: Record<Ambiente, string> = {
   cotidiano: "Cotidiano",
@@ -40,6 +40,7 @@ export const AMBIENTE_LABEL: Record<Ambiente, string> = {
   fantasia: "Fantasía",
   "ciencia-ficcion": "Ciencia ficción",
   naturaleza: "Naturaleza y viaje",
+  neutra: "Neutra, para narrar encima",
 };
 
 export interface Pista {
@@ -56,6 +57,8 @@ export interface Pista {
    *  "media"  baja pero no llega a silencio → ni cierra ni enlaza del todo.
    */
   final: "fade" | "enlaza" | "media";
+  /** Pega medida que conviene saber antes de usarla. */
+  ojo?: string;
 }
 
 export const PISTAS: Pista[] = [
@@ -159,6 +162,93 @@ export const PISTAS: Pista[] = [
     cuando: "Una taberna de noche, gente, jarras, descanso del camino.", final: "enlaza" },
   { id: "kingdom-above-the-clouds", titulo: "Kingdom Above the Clouds", segundos: 30.8, ambiente: "epico",
     cuando: "Vuelo, ciudad flotante, un paisaje grandioso visto desde arriba.", final: "enlaza" },
+  // ══ Bucles de un minuto ══════════════════════════════════════════════
+  // Generadas aparte y ARREGLADAS antes de entrar: se les recortó la entrada
+  // floja y se les cosió la cola sobre la cabeza cuadrando al compás. Las 39
+  // de arriba duran 30 s y 25 no enlazan; estas duran el doble y se repiten
+  // sin que se note. La duración no es redonda porque el corte cae en compás
+  // entero y donde mejor empalma, no a los 60 s clavados.
+
+  // ── Neutra para narrar ──
+  { id: "cama-neutra", titulo: "Cama neutra de narración", segundos: 59.84, ambiente: "neutra",
+    cuando: "Debajo de la voz, sin pelearse con ella. Para tramos largos de narración donde cualquier otra cosa distrae.", final: "enlaza", },
+
+  // ── tensión ──
+  { id: "tension-sostenida", titulo: "Tensión sostenida", segundos: 52.92, ambiente: "tension",
+    cuando: "La cama de suspense de todos los días: algo va a pasar y todavía no pasa.", final: "enlaza", },
+  { id: "cuenta-atras", titulo: "Cuenta atrás", segundos: 60, ambiente: "tension",
+    cuando: "Se acaba el tiempo. Urgencia que empuja sin parar.", final: "enlaza", },
+  { id: "persecucion", titulo: "Persecución", segundos: 53.32, ambiente: "tension",
+    cuando: "Correr, huir, ir detrás de alguien. Acción sostenida.", final: "enlaza", },
+
+  // ── oscuro ──
+  { id: "acecho", titulo: "Acecho", segundos: 59.2, ambiente: "oscuro",
+    cuando: "Hay algo ahí fuera y todavía no se ve. Terror contenido.", final: "enlaza", },
+  { id: "ritual-oscuro", titulo: "Ritual oscuro", segundos: 59.4, ambiente: "oscuro",
+    cuando: "Un rito, una cripta, algo que se invoca. Repetitivo e hipnótico.", final: "enlaza", },
+  { id: "terror-puro", titulo: "Terror puro", segundos: 60.2, ambiente: "oscuro",
+    cuando: "El momento en que ya no se esconde. Fuerte de principio a fin.", final: "enlaza", },
+  { id: "algo-va-mal", titulo: "Algo va mal", segundos: 53.2, ambiente: "oscuro",
+    cuando: "Lo que parece normal y no lo es. Caja de música desafinada sobre un fondo turbio.", final: "enlaza", },
+
+  // ── intriga ──
+  { id: "investigacion", titulo: "Investigación", segundos: 56.16, ambiente: "intriga",
+    cuando: "Atar cabos, repasar pruebas. Muy de detective.", final: "enlaza",
+    ojo: "Arranca 5.0 dB por debajo de su propio cuerpo: entra bien, "
+      + "pero no de golpe. Si la toma es corta, empieza la pista un poco antes.", },
+  { id: "pista-tras-pista", titulo: "Pista tras pista", segundos: 60.48, ambiente: "intriga",
+    cuando: "El caso avanza. Montaje de descubrimientos encadenados.", final: "enlaza", },
+  { id: "secreto-antiguo", titulo: "Secreto antiguo", segundos: 59.04, ambiente: "intriga",
+    cuando: "Archivos, mapas, algo enterrado hace mucho.", final: "enlaza", },
+
+  // ── emotivo ──
+  { id: "perdida", titulo: "Pérdida", segundos: 60.72, ambiente: "emotivo",
+    cuando: "Duelo, ausencia, alguien que ya no está. Piano y cuerdas, sin subir nunca.", final: "enlaza", },
+  { id: "nostalgia", titulo: "Nostalgia", segundos: 58.8, ambiente: "emotivo",
+    cuando: "Recuerdo, paso del tiempo, un flashback largo. Piano de fieltro con cinta gastada.", final: "enlaza", },
+
+  // ── épico ──
+  { id: "marcha-de-guerra", titulo: "Marcha de guerra", segundos: 57.6, ambiente: "epico",
+    cuando: "Un ejército que avanza. Caja militar y metales oscuros.", final: "enlaza", },
+  { id: "victoria", titulo: "Victoria", segundos: 58.52, ambiente: "epico",
+    cuando: "El final que se gana. Fanfarria que se repite sin resolver.", final: "enlaza", },
+
+  // ── cotidiano ──
+  { id: "cotidiano-calido", titulo: "Cotidiano cálido", segundos: 56.84, ambiente: "cotidiano",
+    cuando: "Casa, familia, una charla sin prisa. Guitarra y escobillas.", final: "enlaza", },
+  { id: "cafe-de-ciudad", titulo: "Café de ciudad", segundos: 48.72, ambiente: "cotidiano",
+    cuando: "Cafetería, calle, romance casual. Jazz tranquilo.", final: "enlaza", },
+  { id: "trabajo-y-rutina", titulo: "Trabajo y rutina", segundos: 59.4, ambiente: "cotidiano",
+    cuando: "Montaje de días que pasan, alguien trabajando. Neutra y productiva.", final: "enlaza", },
+
+  // ── fantasía ──
+  { id: "maravilla", titulo: "Maravilla", segundos: 59.84, ambiente: "fantasia",
+    cuando: "Descubrir algo hermoso. Celesta y arpa, brillo constante.", final: "enlaza", },
+  { id: "bosque-encantado", titulo: "Bosque encantado", segundos: 60.84, ambiente: "fantasia",
+    cuando: "Magia tranquila, hadas, un claro. Va con «polvo» y «estrellas».", final: "enlaza", },
+  { id: "taberna-de-aventura", titulo: "Taberna de aventura", segundos: 59.52, ambiente: "fantasia",
+    cuando: "Posada, jarra, un grupo que se junta. Violín y laúd bailables.", final: "enlaza", },
+
+  // ── ciencia ficción ──
+  { id: "nave-en-marcha", titulo: "Nave en marcha", segundos: 35.28, ambiente: "ciencia-ficcion",
+    cuando: "Viaje espacial, interior de nave. Arpegio de sintetizador que no para.", final: "enlaza", },
+  { id: "amenaza-tecnologica", titulo: "Amenaza tecnológica", segundos: 60.16, ambiente: "ciencia-ficcion",
+    cuando: "Una IA que se sale, un sistema que falla. Va con «glitch».", final: "enlaza", },
+
+  // ── naturaleza ──
+  { id: "camino-largo", titulo: "Camino largo", segundos: 60.32, ambiente: "naturaleza",
+    cuando: "Viaje a pie, montaje de kilómetros. Guitarra y bodhrán.", final: "enlaza",
+    ojo: "Arranca 4.0 dB por debajo de su propio cuerpo: entra bien, "
+      + "pero no de golpe. Si la toma es corta, empieza la pista un poco antes.", },
+  { id: "desierto", titulo: "Desierto", segundos: 54, ambiente: "naturaleza",
+    cuando: "Travesía dura, calor, inmensidad seca. Duduk sobre un bordón.", final: "enlaza",
+    ojo: "Arranca 6.1 dB por debajo de su propio cuerpo: entra bien, "
+      + "pero no de golpe. Si la toma es corta, empieza la pista un poco antes.", },
+  { id: "mar-abierto", titulo: "Mar abierto", segundos: 60, ambiente: "naturaleza",
+    cuando: "Barco, acantilado, horizonte. Piano rodante y cuerdas anchas.", final: "enlaza",
+    ojo: "Arranca 7.2 dB por debajo de su propio cuerpo: entra bien, "
+      + "pero no de golpe. Si la toma es corta, empieza la pista un poco antes.", },
+
 ];
 
 // Prefijo que distingue una pista de la biblioteca de un archivo del usuario.
@@ -205,8 +295,15 @@ export function catalogoMusicaIA() {
 //          debajo de una escena entera: la lluvia, la taberna, el latido.
 //
 // Los bucles se pidieron con la bandera «loop» de la API que los generó, que
-// garantiza el enlace en vez de confiarlo al texto del prompt. Los 15 empiezan
+// garantiza el enlace en vez de confiarlo al texto del prompt. Los 21 empiezan
 // y acaban al mismo nivel.
+//
+// El empalme está MEDIDO uno a uno: se compara el nivel de los últimos 200 ms
+// con el de los primeros 200 ms. Por debajo de 3 dB no se nota al repetir. Los
+// seis ambientes de lugar que se añadieron después dieron entre 0,04 y 1,0 dB
+// —mejor que los que ya estaban, que rondan los 2,5— salvo «old-library», que
+// da 4,6 porque es material disperso y su propio nivel ya salta 17 dB entre un
+// segundo y otro; ahí la vara no mide lo que parece.
 //
 // Cuidado al medir uno rítmico —el latido, el reloj—: lo que importa no es que
 // el archivo acabe sonando, sino que el silencio del final más el del principio
@@ -361,6 +458,22 @@ export const SONIDOS: Sonido[] = [
     cuando: "Una cueva, un sótano, unas catacumbas. Suena a estar bajo tierra." },
   { id: "distant-siren", titulo: "Sirena lejana", segundos: 20, familia: "ambiente", bucle: true,
     cuando: "Una escena de crimen, una detención, una huida.", conEfecto: "baliza" },
+  { id: "hospital-corridor", titulo: "Pasillo de hospital", segundos: 30, familia: "ambiente", bucle: true,
+    cuando: "Un hospital de noche, una sala de espera, alguien ingresado. Zumbido de fluorescente y un pitido lejano." },
+  { id: "train-interior", titulo: "Interior de tren", segundos: 30, familia: "ambiente", bucle: true,
+    cuando: "Un viaje en marcha, una conversación en el vagón, mirar por la ventana." },
+  { id: "rain-on-window", titulo: "Lluvia en la ventana", segundos: 30, familia: "ambiente", bucle: true,
+    cuando: "Estar dentro y a salvo mientras llueve fuera. No es la lluvia abierta: esta suena amortiguada, desde el interior.",
+    conEfecto: "lluvia" },
+  { id: "crowded-market", titulo: "Mercado con gente", segundos: 30, familia: "ambiente", bucle: true,
+    cuando: "Una plaza, un bazar, un pueblo de día. Para exteriores con gente, donde la taberna no encaja." },
+  { id: "old-library", titulo: "Biblioteca antigua", segundos: 30, familia: "ambiente", bucle: true,
+    cuando: "Un archivo, un estudio, una investigación. Silencio que no es silencio: una página, un crujido.",
+    pega: "Es MUY dispersa: son sucesos sueltos sobre casi nada, y el nivel salta hasta 17 dB de un segundo a otro. "
+      + "Salió a -66 dBFS —inaudible— y se le subieron 28 dB para dejarla donde el resto; sin recorte, pero escúchala "
+      + "antes de ponerla sola bajo una escena larga." },
+  { id: "machine-room", titulo: "Sala de máquinas", segundos: 30, familia: "ambiente", bucle: true,
+    cuando: "Una nave, una fábrica, un sótano industrial. Zumbido mecánico constante que llena la escena entera." },
 
   // ── tensión y transiciones ─────────────────────────────────────────────
   { id: "tension-riser", titulo: "La tensión que sube", segundos: 5, familia: "tension", bucle: false,
