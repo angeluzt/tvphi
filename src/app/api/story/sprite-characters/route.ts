@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { esPng } from "@/lib/lab/biblioteca";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
+import { refrescarPublicado } from "@/lib/lab/publicado.server";
 import { urlImagenAnimacion, type PersonajeSprite } from "@/lib/lab/personajes-sprite";
 import {
   topesDe, sinSitioPersonajes, sinSitioAnimaciones, sinEspacio,
@@ -236,8 +237,20 @@ export async function POST(req: Request) {
     );
   }
   const d = p.data;
-  if (d.columnas * d.filas < d.fotogramas || d.celdas.length !== d.fotogramas) {
-    return NextResponse.json({ error: "La rejilla no coincide." }, { status: 400 });
+  // Lo que de verdad tiene que cuadrar es que haya UNA CELDA POR FOTOGRAMA:
+  // son las celdas las que dicen de qué trozo de hoja salió cada cuadro.
+  //
+  // Antes se exigía además que la rejilla (columnas × filas) tuviera sitio para
+  // todos, y eso dejó de ser cierto en cuanto se pudo DUPLICAR un cuadro para
+  // alargar una pose: la hoja sigue teniendo seis celdas y la tira pasa a tener
+  // siete, sin que nada esté mal. `columnas` y `filas` describen cómo se dividió
+  // LA HOJA, no cuántos cuadros tiene la animación. Los topes que importan
+  // —24 fotogramas, 24 celdas, y el ancho de la tira— siguen puestos.
+  if (d.celdas.length !== d.fotogramas) {
+    return NextResponse.json(
+      { error: `La rejilla no coincide: ${d.fotogramas} fotogramas y ${d.celdas.length} celdas.` },
+      { status: 400 },
+    );
   }
   if (d.ancho * d.fotogramas > 16384) {
     return NextResponse.json({ error: "La tira sería demasiado ancha." }, { status: 400 });
@@ -296,7 +309,20 @@ export async function POST(req: Request) {
       where: { id: e.characterId },
       data: { nombre: d.nombrePersonaje, descripcion: d.descripcionPersonaje },
     });
-    return NextResponse.json({ ok: true, personajeId: e.characterId, animacionId: a.id, actualizada: true, enAtlas: await pack(a.id) });
+    // Si este sprite además está PUBLICADO, la copia común se refresca sola.
+    // Antes se quedaba con la versión vieja: el usuario corregía el orden de
+    // los cuadros, lo daba por arreglado, y en los montajes seguía andando mal
+    // porque tirar de la copia pública es justo lo que hacen. Nadie va a
+    // acordarse de volver a publicar cada vez que corrige algo.
+    const publicoAlDia = await refrescarPublicado(a.id, {
+      nombre: d.nombre, que: d.que, fotogramas: d.fotogramas, fps: d.fps,
+      vista: d.vista, direccion: d.direccion, accion: d.accion, anclaje: d.anclaje,
+      ancho: d.ancho, alto: d.alto, tira,
+    });
+    return NextResponse.json({
+      ok: true, personajeId: e.characterId, animacionId: a.id, actualizada: true,
+      publicoAlDia, enAtlas: await pack(a.id),
+    });
   }
 
   if (d.personajeId) {

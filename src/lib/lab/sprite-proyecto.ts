@@ -107,16 +107,18 @@ export function normalizarProyectoSprite(v: unknown): ProyectoSpriteV2 {
     throw new Error("sprite.json no contiene las celdas de la hoja.");
   }
   const celdas = normalizarCeldasSprite(p.celdas, anchoHoja, altoHoja);
+  // Ni «tantos fotogramas como celdas» ni «la rejilla los contiene todos» son
+  // ciertos desde que se puede DUPLICAR un cuadro para alargar una pose: la
+  // hoja sigue teniendo seis celdas y la tira pasa a tener siete, con una celda
+  // repetida, y nada está mal. `columnas` y `filas` describen cómo se dividió
+  // la hoja, no cuántos cuadros tiene la animación. Lo que sí se comprueba
+  // —aquí arriba y en quien llama— son los topes y que la tira mida lo que dice.
   const fotogramas = entero(p.tira?.fotogramas, 1, 24, "número de fotogramas");
-  if (fotogramas > celdas.length) {
-    throw new Error("La tira declara más fotogramas que celdas en la hoja.");
-  }
   const croma = /^#[0-9a-f]{6}$/i.test(String(p.croma ?? ""))
     ? String(p.croma).toUpperCase()
     : "#FF00FF";
   const columnas = p.columnas == null ? (p.forma === "columna" ? 1 : celdas.length) : entero(p.columnas, 1, 24, "columnas");
   const filas = p.filas == null ? (p.forma === "columna" ? celdas.length : 1) : entero(p.filas, 1, 24, "filas");
-  if (columnas * filas < celdas.length) throw new Error("La rejilla no contiene todas las celdas.");
 
   return {
     version: 2,

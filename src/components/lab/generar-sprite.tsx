@@ -3,7 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   Loader2, Sparkles, Download, AlertTriangle, Play, Pause, Library, Check, FolderOpen, UserRound, Pencil, Plus,
-  Search, RefreshCw, ChevronLeft, ChevronRight, Trash2,
+  Search, RefreshCw, ChevronLeft, ChevronRight, Trash2, Wand2,
 } from "lucide-react";
 import { mensajeLegible, pedirJson, pedirJsonCrudo } from "@/lib/pedir-json";
 import {
@@ -11,6 +11,7 @@ import {
   type CeldaSprite, type Fotograma,
 } from "@/lib/lab/sprites";
 import { cargarImagen } from "@/lib/lab/quitar-fondo";
+import { Num } from "./controles-basicos";
 import { blobDeUrlDeImagen, pngBase64ABlob } from "@/lib/lab/png-base64";
 import { zip, bajar } from "@/lib/lab/exportar";
 import { leerZip } from "@/lib/story/zip";
@@ -24,7 +25,7 @@ import {
   type SpriteMeta, type VistaSprite as TipoVistaSprite,
 } from "@/lib/lab/biblioteca";
 import {
-  encargosDeTanda, conCadena, pasoNuevo, normalizarPlan,
+  encargosDeTanda, conCadena, pasoNuevo, normalizarPlan, MAX_CUADROS,
   type EncargoSprite, type PasoTanda,
 } from "@/lib/lab/tanda-sprites";
 import { PanelTanda, type EstadoTanda } from "./panel-tanda";
@@ -197,6 +198,14 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
   // Un id solo: no tiene sentido confirmar dos borrados a la vez.
   const [borrandoId, setBorrandoId] = useState<string | null>(null);
   const [confirmarBorrado, setConfirmarBorrado] = useState<string | null>(null);
+  // Qué animación se está rehaciendo con IA, y con qué prompt y cuántos cuadros.
+  // El prompt y los cuadros viven aparte de los del taller de arriba: rehacer
+  // un sprite de la biblioteca no puede pisar lo que se estuviera escribiendo.
+  const [rehacer, setRehacer] = useState<
+    { personajeId: string; animacionId: string; nombre: string } | null
+  >(null);
+  const [rehacerQue, setRehacerQue] = useState("");
+  const [rehacerN, setRehacerN] = useState(6);
   const [actualizando, setActualizando] = useState(false);
   const [cortesPendientes, setCortesPendientes] = useState(false);
   const [hojaPendiente, setHojaPendiente] = useState(false);
@@ -264,6 +273,54 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     setFirmaGuardada(null);
     setNombrePersonaje(p?.nombre ?? "");
     setDescripcionPersonaje(p?.descripcion ?? "");
+  }
+
+  /**
+   * Rehacer con IA una animación ya guardada, encima de ella misma.
+   *
+   * Deja los ajustes del taller como los tenía esa animación —fps, anclaje,
+   * ángulo— antes de pedir nada. Si no, el refinado posterior los pisaría con
+   * lo que hubiera en pantalla, y el sprite volvería con otra velocidad o
+   * apoyado en otro sitio sin que nadie lo hubiera tocado.
+   */
+  function abrirRehacer(p: PersonajeSprite, a: AnimacionPersonajeSprite) {
+    if (!p.spriteId) return;
+    setRehacer({ personajeId: p.spriteId, animacionId: a.id, nombre: a.nombre });
+    setRehacerQue(a.que);
+    setRehacerN(a.fotogramas);
+    setConfirmarBorrado(null);
+  }
+
+  async function rehacerConIa() {
+    if (!rehacer || paso) return;
+    const p = personajes.find((x) => x.spriteId === rehacer.personajeId);
+    const a = p?.animaciones.find((x) => x.id === rehacer.animacionId);
+    if (!p || !a) { setError("Esa animación ya no está en tu taller."); setRehacer(null); return; }
+    // Los ajustes finos que NO se están cambiando salen de la animación, no de
+    // lo que hubiera puesto en pantalla de una generación anterior.
+    setFps(a.fps); setAnclaje(a.anclaje); setVista(a.vista); setDireccion(a.direccion); setAccion(a.accion);
+    setNombrePersonaje(p.nombre); setDescripcionPersonaje(p.descripcion);
+    setRehacer(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    const hechos = await generar({
+      que: rehacerQue.trim(),
+      fotogramas: rehacerN,
+      vista: a.vista, direccion: a.direccion, accion: a.accion,
+      personajeId: p.spriteId ?? undefined,
+      // El nombre se conserva: lo puso la persona, lo busca por él, y es por el
+      // que la llaman las animaciones encadenadas del montaje.
+      nombre: a.nombre,
+      nombrePersonaje: p.nombre,
+      descripcionPersonaje: p.descripcion,
+      rehacerAnimacionId: a.id,
+    });
+    if (hechos) {
+      await releerPersonajes();
+      setAviso(
+        `«${a.nombre}» rehecha con ${rehacerN} cuadros. Sustituye a la versión anterior, `
+        + "así que los montajes que ya la usaban cogen esta.",
+      );
+    }
   }
 
   function nuevaAnimacion(
@@ -531,6 +588,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       nombrePersonaje: enc?.nombrePersonaje ?? nombrePersonaje,
       descripcionPersonaje: enc?.descripcionPersonaje ?? descripcionPersonaje,
       nombre: enc?.nombre,
+      rehacerAnimacionId: enc?.rehacerAnimacionId,
     };
     if (!puedeGenerar || o.que.length < 3) return null;
     setError(null); setAviso(null); setHecho(null); setGuardado(false);setFirmaGuardada(null);setAnimacionId(null);
@@ -546,6 +604,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
           personajeId: o.personajeId || undefined,
           referenciaAnimacionId: o.refAnimacionId || undefined,
           referenciaCuadro: o.refAnimacionId ? o.refCuadro : undefined,
+          rehacerAnimacionId: o.rehacerAnimacionId || undefined,
         }),
       });
       if (!r.ok) throw new Error(j.error || "No se pudo");
@@ -638,8 +697,13 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       const nom = o.nombre || nombreCorto(o.que);
       setNombre(nom);
       const nomPers = o.personajeId || pidGuardado ? o.nombrePersonaje.trim() || nom : nom;
+      // SIEMPRE, no solo cuando lo crea el cliente. Cuando el servidor ya había
+      // guardado el borrador —que es el caso normal— este campo se quedaba
+      // vacío, y «Guardar correcciones» exige un nombre de personaje para
+      // activarse: el botón quedaba apagado para siempre. Se podían reordenar y
+      // borrar cuadros y no había ninguna forma de guardar el arreglo.
+      setNombrePersonaje(nomPers);
       if (!o.personajeId && !pidGuardado) {
-        setNombrePersonaje(nomPers);
         setDescripcionPersonaje(o.descripcionPersonaje.trim() || o.que);
       }
 
@@ -842,8 +906,18 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
     }
   }
 
-  /** Rehace la tira despues de mover, borrar o reordenar un fotograma. */
-  async function actualizarFotogramas(fotos: Fotograma[]) {
+  /**
+   * Rehace la tira despues de mover, borrar o reordenar un fotograma.
+   *
+   * LAS CELDAS VIENEN CON LOS FOTOGRAMAS y se guardan juntas. Antes aqui solo
+   * se cambiaba `fotos`: mientras solo se podia intercambiar dos cuadros el
+   * numero cuadraba y no se notaba, pero las celdas se quedaban en el orden
+   * viejo —y son ellas las que dicen de que trozo de hoja salio cada cuadro al
+   * reabrir la animacion—. Ahora que ademas se puede BORRAR y DUPLICAR, dejarlas
+   * atras haria que la ruta rechazara el sprite entero con «La rejilla no
+   * coincide.» despues de haberlo corregido todo.
+   */
+  async function actualizarFotogramas(fotos: Fotograma[], celdas: CeldaSprite[]) {
     const revision = ++revisionTira.current;
     setActualizando(true);
     try {
@@ -857,6 +931,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         blob: tira.blob,
         ancho: tira.ancho,
         alto: tira.alto,
+        hoja: { ...prev.hoja, celdas },
       } : prev);
       setGuardado(false);
       setFirmaGuardada(null);
@@ -901,7 +976,11 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
         }),
       });
       setGuardado(true);
-      setAviso("Guardado en la biblioteca. Ya se puede usar en cualquier montaje.");
+      // «Publicado» y «actualizado» no significan lo mismo para quien acaba de
+      // corregir un sprite que ya estaba metido en montajes.
+      setAviso(j?.actualizado
+        ? "Actualizado en la biblioteca. Los montajes que lo usan ya cogen la versión corregida."
+        : "Guardado en la biblioteca. Ya se puede usar en cualquier montaje.");
       if (j?.sprite) onGuardado?.(j.sprite as SpriteMeta);
     } catch (e) {
       setError((e as Error).message);
@@ -919,7 +998,9 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
       columnas:hecho.hoja.columnas,filas:hecho.hoja.filas,anchoHoja:hecho.hoja.ancho,altoHoja:hecho.hoja.alto,ancho:hecho.ancho,alto:hecho.alto,
       celdas:hecho.hoja.celdas,hojaOriginal,hojaTrabajo,tira,referencia:personajeId?undefined:referencia})});
     setPersonajeId(j.personajeId);setAnimacionId(j.animacionId);marcarGuardado();await releerPersonajes();
-    setAviso(j.actualizada?`Cambios guardados${j.enAtlas?" y actualizados en el atlas.":"."}`:`Animación guardada${j.enAtlas?" y compactada en el atlas.":"."}`);
+    setAviso(j.actualizada
+      ?`Cambios guardados${j.enAtlas?" y actualizados en el atlas":""}${j.publicoAlDia?" · la copia pública de la biblioteca también":""}.`
+      :`Animación guardada${j.enAtlas?" y compactada en el atlas.":"."}`);
   }catch(e){setError(mensajeLegible(e));}finally{setGuardando(false);}}
 
   /**
@@ -1414,6 +1495,7 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
             <EditorSprite
               key={hecho.edicionId}
               fotosIniciales={hecho.fotos}
+              celdasIniciales={hecho.hoja.celdas}
               onChange={actualizarFotogramas}
             />
           </div>
@@ -1668,6 +1750,16 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
                       </>
                     ) : (
                       <>
+                        {puedeGenerar && !!p.spriteId && (
+                          <button
+                            type="button"
+                            className="btn-ghost shrink-0 px-1.5 py-1 text-[9px]"
+                            title="Cambiar el prompt o los cuadros y volver a dibujarla, encima de esta misma"
+                            onClick={() => abrirRehacer(p, a)}
+                          >
+                            <Wand2 className="h-3 w-3 text-brand" /> Rehacer con IA
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="btn-ghost shrink-0 px-1.5 py-1 text-[9px]"
@@ -1685,6 +1777,46 @@ export const GenerarSprite = forwardRef<GenerarSpriteHandle, {
                           <Trash2 className="h-3 w-3" />
                         </button>
                       </>
+                    )}
+
+                    {/* Rehacerla con IA: mismo sprite, otra versión.
+                        Se parte de su propio cuadro maestro, así que sale el
+                        mismo personaje —misma cara, misma ropa— haciendo lo que
+                        se le pida ahora, y SUSTITUYE a la anterior en vez de
+                        dejar un «Pescador 2» al lado. */}
+                    {rehacer?.animacionId === a.id && (
+                      <div className="w-full space-y-1.5 rounded-md border border-brand/40 bg-brand/5 p-2">
+                        <span className="block text-[10px] text-muted">
+                          Se vuelve a dibujar «{a.nombre}» desde el cuadro maestro de {p.nombre},
+                          y la versión nueva sustituye a esta. Cuesta una imagen.
+                        </span>
+                        <textarea
+                          className="input w-full resize-y py-1 text-[11px]"
+                          rows={3}
+                          maxLength={400}
+                          value={rehacerQue}
+                          onChange={(e) => setRehacerQue(e.target.value)}
+                          aria-label="Qué hace en esta animación"
+                          placeholder="old fisherman standing up and walking to the left"
+                        />
+                        <div className="flex flex-wrap items-end gap-2">
+                          <Num etiqueta="Cuadros" valor={rehacerN} min={1} max={MAX_CUADROS} paso={1}
+                            onCambio={setRehacerN} disabled={!!paso} />
+                          <button
+                            type="button"
+                            className="btn-brand px-2 py-1 text-[10px] disabled:opacity-40"
+                            disabled={!!paso || rehacerQue.trim().length < 3}
+                            onClick={() => void rehacerConIa()}
+                          >
+                            {paso ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+                            Rehacer
+                          </button>
+                          <button type="button" className="btn-ghost px-2 py-1 text-[10px]"
+                            onClick={() => setRehacer(null)}>
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 ))}

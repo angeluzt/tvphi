@@ -52,6 +52,13 @@ const cuerpo = z.object({
   referenciaAnimacionId: z.string().cuid().optional(),
   /** Qué cuadro de esa animación usar. Por defecto el último (encadenar pose final → siguiente). */
   referenciaCuadro: z.enum(["primero", "ultimo", "medio"]).default("ultimo"),
+  /**
+   * Rehacer ESTA animación: la hoja nueva sustituye a la suya.
+   *
+   * Es «editar con IA» sobre un sprite ya guardado: se cambia el prompt o el
+   * número de cuadros y sale otra versión del mismo sprite, no un sprite más.
+   */
+  rehacerAnimacionId: z.string().cuid().optional(),
 });
 
 const TAMANOS = { tira: "1536x1024", columna: "1024x1536" } as const;
@@ -132,7 +139,33 @@ export async function POST(req: Request) {
   // guardado, y esa imagen ya no se podía meter en ningún sitio. En una tanda
   // de cinco eso son cinco imágenes pagadas y tiradas.
   const topes = topesDe(user.email);
-  if (!parsed.data.personajeId && Number.isFinite(topes.personajes)) {
+
+  // REHACER un sprite guardado: la hoja nueva ocupa el sitio de la vieja, así
+  // que no cuenta como personaje ni como animación nuevos —el tope no aplica—.
+  // Se resuelve ANTES de reservar, porque si esa animación no es suya no hay
+  // que llegar a pagar nada. Y se toma su personaje: el «sticker base» del que
+  // parte la versión nueva es el cuadro maestro de ese mismo personaje, que es
+  // lo que mantiene la cara y la ropa entre una versión y otra.
+  let rehacerPersonajeId: string | undefined;
+  if (parsed.data.rehacerAnimacionId) {
+    const suya = await prisma.spriteAnimation.findFirst({
+      where: { id: parsed.data.rehacerAnimacionId, character: { userId: user.id } },
+      select: { characterId: true },
+    });
+    if (!suya) {
+      return NextResponse.json(
+        { error: "No encontré esa animación en tu taller. Quizá la borraste o es de otra cuenta." },
+        { status: 404 },
+      );
+    }
+    rehacerPersonajeId = suya.characterId;
+    if (parsed.data.personajeId && parsed.data.personajeId !== suya.characterId) {
+      return NextResponse.json(
+        { error: "Esa animación no pertenece al personaje indicado." }, { status: 400 });
+    }
+  }
+
+  if (!parsed.data.personajeId && !rehacerPersonajeId && Number.isFinite(topes.personajes)) {
     const cuantos = await prisma.spriteCharacter.count({ where: { userId: user.id } });
     if (cuantos >= topes.personajes) {
       return NextResponse.json(
@@ -151,8 +184,10 @@ export async function POST(req: Request) {
   const calidad = calidadEfectiva(ajustes, admin, parsed.data.calidad);
   const {
     que, fotogramas, forma, distribucion, vista, direccion, accion,
-    personajeId, referenciaAnimacionId, referenciaCuadro,
+    referenciaAnimacionId, referenciaCuadro, rehacerAnimacionId,
   } = parsed.data;
+  // Al rehacer, el personaje sale de la propia animación aunque no lo manden.
+  const personajeId = parsed.data.personajeId ?? rehacerPersonajeId;
   const rejilla = distribucion === "fila" ? { columnas: fotogramas, filas: 1 }
     : distribucion === "columna" ? { columnas: 1, filas: fotogramas }
       : rejillaSpriteEquilibrada(fotogramas, forma);
@@ -271,6 +306,7 @@ export async function POST(req: Request) {
         accion,
         croma: CROMA,
         personajeId,
+        rehacerId: rehacerAnimacionId,
       }, topes);
     } catch (e: any) {
       console.error("No se pudo autoguardar el sprite generado", e);
