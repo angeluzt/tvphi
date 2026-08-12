@@ -180,6 +180,8 @@ export const PISTAS: Pista[] = [
     cuando: "Se acaba el tiempo. Urgencia que empuja sin parar.", final: "enlaza", },
   { id: "persecucion", titulo: "Persecución", segundos: 53.32, ambiente: "tension",
     cuando: "Correr, huir, ir detrás de alguien. Acción sostenida.", final: "enlaza", },
+  { id: "interrogatorio", titulo: "Interrogatorio", segundos: 60.2, ambiente: "tension",
+    cuando: "Tensión quieta, de dos personas y una mesa. Piano desafinado sobre un bordón, incómoda a propósito.", final: "enlaza", },
 
   // ── oscuro ──
   { id: "acecho", titulo: "Acecho", segundos: 59.2, ambiente: "oscuro",
@@ -206,8 +208,15 @@ export const PISTAS: Pista[] = [
     cuando: "Duelo, ausencia, alguien que ya no está. Piano y cuerdas, sin subir nunca.", final: "enlaza", },
   { id: "nostalgia", titulo: "Nostalgia", segundos: 58.8, ambiente: "emotivo",
     cuando: "Recuerdo, paso del tiempo, un flashback largo. Piano de fieltro con cinta gastada.", final: "enlaza", },
+  { id: "esperanza", titulo: "Esperanza", segundos: 57.6, ambiente: "emotivo",
+    cuando: "Vuelve la luz tras lo peor. Un final que se abre, sin llegar a triunfo.", final: "enlaza", },
+  { id: "despedida", titulo: "Despedida", segundos: 59.84, ambiente: "emotivo",
+    cuando: "Separación agridulce, un adiós que dura una escena entera. Chelo sobre piano.", final: "enlaza",
+    ojo: "Arranca 3,9 dB por debajo de su propio cuerpo: entra bien, pero no de golpe. Si la toma es corta, empieza la pista un poco antes.", },
 
   // ── épico ──
+  { id: "epico-sostenido", titulo: "Épico sostenido", segundos: 60.68, ambiente: "epico",
+    cuando: "Batalla, gesta, un logro que dura. Taiko, metales heroicos y cuerdas, sin subir ni bajar.", final: "enlaza", },
   { id: "marcha-de-guerra", titulo: "Marcha de guerra", segundos: 57.6, ambiente: "epico",
     cuando: "Un ejército que avanza. Caja militar y metales oscuros.", final: "enlaza", },
   { id: "victoria", titulo: "Victoria", segundos: 58.52, ambiente: "epico",
