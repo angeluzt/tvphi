@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { esAdminHistorias } from "@/lib/story/cupo";
 import { TOPE_BYTES, TOPE_SPRITES, esPng, type SpriteMeta } from "@/lib/lab/biblioteca";
+import { publicadoDe, publicar } from "@/lib/lab/publicado.server";
 
 // La biblioteca de sprites: lo que se fabricó una vez y ya no hay que pagar.
 //
@@ -133,13 +134,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "La tira es demasiado ancha." }, { status: 400 });
   }
 
-  const cuantos = await prisma.sprite.count();
-  if (cuantos >= TOPE_SPRITES) {
-    return NextResponse.json({
-      error: `La biblioteca está llena (${TOPE_SPRITES}). Borra alguno para hacer sitio.`,
-    }, { status: 409 });
-  }
-
   if (d.animationId) {
     const propia = await prisma.spriteAnimation.findFirst({
       where: { id: d.animationId, character: { userId: user.id } },
@@ -150,28 +144,29 @@ export async function POST(req: Request) {
     }
   }
 
-  const fila = await prisma.sprite.create({
-    data: {
-      nombre: d.nombre,
-      que: d.que,
-      fotogramas: d.fotogramas,
-      fps: d.fps,
-      vista: d.vista,
-      direccion: d.direccion,
-      accion: d.accion,
-      anclaje: d.anclaje,
-      ancho: d.ancho,
-      alto: d.alto,
-      tira,
-      bytes: tira.byteLength,
-      creadoPor: user.id,
-      animationId: d.animationId,
-    },
-    select: { id: true, createdAt: true, animationId: true },
-  });
+  // UNA SOLA COPIA PÚBLICA POR ANIMACIÓN. Antes esto era siempre un `create`:
+  // quien corregía un sprite y volvía a publicarlo acababa con dos entradas en
+  // la biblioteca —la vieja mal y la nueva bien—, y la que ya estaba metida en
+  // los montajes era la vieja. Ahora se actualiza la que hay.
+  const ya = d.animationId ? await publicadoDe(d.animationId) : null;
+
+  // El tope solo frena lo que AÑADE una fila. Volver a publicar una corrección
+  // con la biblioteca llena no ocupa un sitio más, y bloquearlo dejaría el
+  // sprite malo puesto sin ninguna forma de arreglarlo.
+  if (!ya) {
+    const cuantos = await prisma.sprite.count();
+    if (cuantos >= TOPE_SPRITES) {
+      return NextResponse.json({
+        error: `La biblioteca está llena (${TOPE_SPRITES}). Borra alguno para hacer sitio.`,
+      }, { status: 409 });
+    }
+  }
+
+  const { fila, actualizado } = await publicar(d.animationId, { ...d, tira }, user.id);
 
   return NextResponse.json({
     ok: true,
+    actualizado,
     sprite: {
       id: fila.id,
       nombre: d.nombre,

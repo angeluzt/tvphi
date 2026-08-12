@@ -33,6 +33,16 @@ export interface EncargoSprite {
   nombrePersonaje?: string;
   descripcionPersonaje?: string;
   /**
+   * Rehacer ESTA animación en vez de crear otra.
+   *
+   * Es «editar con IA» sobre un sprite ya guardado: se cambia el prompt o el
+   * número de cuadros y la versión nueva SUSTITUYE a la vieja. Sin esto cada
+   * intento dejaba una animación más colgando, la biblioteca se llenaba de
+   * «Pescador 1, 2, 3» y los montajes seguían usando la primera, que era la
+   * que se quería tirar.
+   */
+  rehacerAnimacionId?: string;
+  /**
    * Cómo se llama ESTA animación en la biblioteca.
    *
    * Sin esto el nombre salía del prompt entero, que empieza por el personaje:

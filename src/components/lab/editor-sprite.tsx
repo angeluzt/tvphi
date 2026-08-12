@@ -2,25 +2,40 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crosshair, Eraser,
-  Eye, EyeOff, Loader2, Move, RotateCcw, SlidersHorizontal, Undo2,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Copy, Crosshair, Eraser,
+  Eye, EyeOff, Loader2, Move, RotateCcw, Shuffle, SlidersHorizontal, Trash2, Undo2,
 } from "lucide-react";
 import { cargarImagen } from "@/lib/lab/quitar-fondo";
 import {
-  cajaDe, desplazamientoParaCentrar, fotogramaDeLienzo, type Fotograma,
+  cajaDe, desplazamientoParaCentrar, fotogramaDeLienzo,
+  type CeldaSprite, type Fotograma,
 } from "@/lib/lab/sprites";
+import {
+  aQueSeParece, duplicar, invertir, mover as moverEnLista, quitar,
+} from "@/lib/lab/orden-fotogramas";
 import { RangoPreciso } from "./rango-preciso";
 
 // Editor de los cuadros que salen de una hoja de sprites.
 //
-// El recorte automatico puede separar bien las celdas y aun asi dejar dos
+// El recorte automatico puede separar bien las celdas y aun asi dejar tres
 // problemas que solo una persona puede decidir: que el cuerpo este descentrado
-// en UN cuadro, o que el modelo haya inventado una mancha. Aqui se corrigen
-// antes de componer la tira que se guarda en la biblioteca.
+// en UN cuadro, que el modelo haya inventado una mancha, y —el mas comun— que
+// los cuadros esten BIEN DIBUJADOS PERO EN MAL ORDEN: el paso 3 antes que el 2,
+// o la misma pose repetida dos veces. Antes eso obligaba a tirar la imagen y
+// volver a generarla, a pagarla otra vez, para arreglar algo que ya estaba
+// dibujado. Aqui se corrige antes de componer la tira que se guarda.
+//
+// CADA CUADRO ARRASTRA SU CELDA. El fotograma recortado y la celda de la hoja
+// de la que salio se guardan los dos, y la ruta rechaza el sprite si no hay
+// tantas celdas como fotogramas. Moviendo uno sin el otro el sprite se veria
+// bien en la tira y se recortaria mal al reabrirlo, un dia despues y sin forma
+// de relacionarlo con esto. Por eso la celda viaja DENTRO del cuadro.
 
 interface CuadroEditable {
   id: string;
   original: Fotograma;
+  /** La celda de la hoja de la que se recorto. Viaja pegada al cuadro. */
+  celda: CeldaSprite;
   /** PNG editable, todavia sin aplicar x/y. */
   fuente: string;
   ancho: number;
@@ -28,6 +43,23 @@ interface CuadroEditable {
   x: number;
   y: number;
 }
+
+/** Contador para que duplicar un cuadro no repita la clave de React. */
+let siguienteId = 0;
+
+/** Lado de la miniatura con la que se comparan dos cuadros. */
+const LADO_FIRMA = 16;
+
+/**
+ * Cuántos de esos 256 puntos pueden diferir y aún llamarse la misma pose.
+ *
+ * Es DELIBERADAMENTE tacaño —un 2%—. Equivocarse por marcar de menos es que
+ * falte un aviso que era una comodidad; equivocarse por marcar de más pinta un
+ * «= 1» en los seis cuadros de un ciclo perfectamente correcto, y entonces el
+ * aviso no dice nada y encima da miedo. Con 8×8 pasaba justo eso: una pierna
+ * que se mueve nueve píxeles no llegaba a cambiar de casilla.
+ */
+const UMBRAL_FIRMA = 6;
 
 type Gesto =
   | {
@@ -106,6 +138,31 @@ async function materializar(cuadros: CuadroEditable[]): Promise<Fotograma[]> {
   }));
 }
 
+/**
+ * La firma visual de un cuadro: su silueta reducida a 16×16 claro/oscuro.
+ *
+ * Sirve para avisar de poses repetidas. Comparar los PNG byte a byte no vale:
+ * cuando el modelo repite una pose casi nunca la dibuja idéntica —mueve un
+ * píxel del pelo y ya son dos imágenes distintas—, así que el aviso no saltaría
+ * nunca. Se mira el alfa porque lo que distingue una pose de otra es la
+ * silueta, no el color.
+ */
+async function firmaVisual(src: string): Promise<string> {
+  const im = await cargarImagen(src);
+  const n = LADO_FIRMA * LADO_FIRMA;
+  const cv = crearLienzo(LADO_FIRMA, LADO_FIRMA);
+  const c = cv.getContext("2d")!;
+  c.drawImage(im, 0, 0, LADO_FIRMA, LADO_FIRMA);
+  const d = c.getImageData(0, 0, LADO_FIRMA, LADO_FIRMA).data;
+  const v: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const alfa = d[i * 4 + 3] / 255;
+    v.push((d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114) * alfa);
+  }
+  const media = v.reduce((s, x) => s + x, 0) / n;
+  return v.map((x) => (x > media ? "1" : "0")).join("");
+}
+
 async function centroDe(q: CuadroEditable) {
   const im = await cargarImagen(q.fuente);
   const cv = crearLienzo(q.ancho, q.alto);
@@ -118,20 +175,28 @@ async function centroDe(q: CuadroEditable) {
 
 export function EditorSprite({
   fotosIniciales,
+  celdasIniciales,
   onChange,
 }: {
   fotosIniciales: Fotograma[];
-  onChange: (fotos: Fotograma[]) => Promise<void> | void;
+  /** Una por fotograma, en el mismo orden. Se devuelven reordenadas igual. */
+  celdasIniciales: CeldaSprite[];
+  onChange: (fotos: Fotograma[], celdas: CeldaSprite[]) => Promise<void> | void;
 }) {
   const [cuadros, setCuadros] = useState<CuadroEditable[]>(() => fotosIniciales.map((f, i) => ({
-    id: `${i}-${f.ancho}x${f.alto}`,
+    id: `c${siguienteId++}`,
     original: f,
+    // Si faltara alguna celda —un ZIP viejo, una tira sin rejilla— se inventa
+    // una del tamaño del fotograma en vez de dejar el hueco: un par a medias
+    // hace que la ruta rechace el sprite entero al guardarlo.
+    celda: celdasIniciales[i] ?? { x: 0, y: 0, ancho: f.ancho, alto: f.alto },
     fuente: f.url,
     ancho: f.ancho,
     alto: f.alto,
     x: 0,
     y: 0,
   })));
+  const [firmas, setFirmas] = useState<Record<string, string>>({});
   const [elegido, setElegido] = useState(0);
   const [modo, setModo] = useState<"mover" | "borrar">("mover");
   const [pincel, setPincel] = useState(24);
@@ -148,6 +213,12 @@ export function EditorSprite({
   const revisionRef = useRef(0);
 
   const actual = cuadros[elegido];
+  // Cuántos cuadros admite la tira. Son DOS topes, y manda el más bajo: la
+  // ruta guarda hasta 24, y además la tira no puede pasar de 16384 px de
+  // ancho. Se comprueba aquí para no dejar duplicar algo que el servidor
+  // rechazaría después, con el trabajo ya hecho.
+  const anchoCuadro = Math.max(1, ...cuadros.map((q) => q.ancho));
+  const topeCuadros = Math.max(1, Math.min(24, Math.floor(16384 / anchoCuadro)));
   const anterior = cuadros.length > 1
     ? cuadros[(elegido - 1 + cuadros.length) % cuadros.length]
     : null;
@@ -205,6 +276,28 @@ export function EditorSprite({
     return () => { vivo = false; };
   }, [actual, anterior, fantasma, pintar]);
 
+  // Las firmas se calculan aparte y sin prisa: sirven solo para AVISAR de una
+  // pose repetida, así que si tardan no debe pararse nada. Se guardan por
+  // fuente para no rehacerlas al reordenar, que es justo cuando más se usan.
+  useEffect(() => {
+    let vivo = true;
+    const faltan = cuadros.map((q) => q.fuente).filter((f) => !(f in firmas));
+    if (!faltan.length) return;
+    void Promise.all([...new Set(faltan)].map(async (f) => [f, await firmaVisual(f)] as const))
+      .then((pares) => {
+        if (vivo) setFirmas((prev) => ({ ...prev, ...Object.fromEntries(pares) }));
+      })
+      .catch(() => { /* sin firmas simplemente no se avisa de repetidos */ });
+    return () => { vivo = false; };
+  }, [cuadros, firmas]);
+
+  // Mientras falte una sola firma no se señala nada: media comparación diría
+  // «el 4 es nuevo» cuando lo que pasa es que aún no se ha mirado.
+  const todasLasFirmas = cuadros.map((q) => firmas[q.fuente]);
+  const parecidoA: (number | null)[] = todasLasFirmas.every(Boolean)
+    ? aQueSeParece(todasLasFirmas, UMBRAL_FIRMA)
+    : cuadros.map(() => null);
+
   async function publicar(nuevos: CuadroEditable[]) {
     const revision = ++revisionRef.current;
     setProcesando(true);
@@ -212,7 +305,7 @@ export function EditorSprite({
     try {
       const fotos = await materializar(nuevos);
       if (revision !== revisionRef.current) return;
-      await onChange(fotos);
+      await onChange(fotos, nuevos.map((q) => q.celda));
     } catch (e) {
       if (revision === revisionRef.current) {
         setError((e as Error).message || "No se pudo aplicar la corrección.");
@@ -272,11 +365,39 @@ export function EditorSprite({
   }
 
   function cambiarOrden(paso: -1 | 1) {
-    const destino = elegido + paso;
-    if (destino < 0 || destino >= cuadros.length) return;
-    const nuevos = [...cuadros];
-    [nuevos[elegido], nuevos[destino]] = [nuevos[destino], nuevos[elegido]];
-    setElegido(destino);
+    const nuevos = moverEnLista(cuadros, elegido, paso);
+    // La misma lista significa que no se movió: recomponer la tira cuesta, y
+    // hacerlo para nada deja el aviso «corregidos» sin que se haya corregido.
+    if (nuevos === cuadros) return;
+    setElegido(elegido + paso);
+    aplicar(nuevos);
+  }
+
+  /** Borra el cuadro elegido. Nunca deja el sprite sin ninguno. */
+  function borrarCuadro() {
+    const nuevos = quitar(cuadros, elegido);
+    if (nuevos === cuadros) return;
+    setElegido(Math.min(elegido, nuevos.length - 1));
+    aplicar(nuevos);
+  }
+
+  /** Repite el cuadro elegido justo detrás: alarga una pose sin dibujar nada. */
+  function duplicarCuadro() {
+    const nuevos = duplicar(cuadros, elegido, topeCuadros)
+      .map((q, i) => (i === elegido + 1 && q === cuadros[elegido] ? { ...q, id: `c${siguienteId++}` } : q));
+    if (nuevos.length === cuadros.length) {
+      setError(`No caben más de ${topeCuadros} cuadros en una tira.`);
+      return;
+    }
+    setElegido(elegido + 1);
+    aplicar(nuevos);
+  }
+
+  /** Da la vuelta al ciclo entero: el «vuelve por donde vino» en un clic. */
+  function invertirOrden() {
+    const nuevos = invertir(cuadros);
+    if (nuevos === cuadros) return;
+    setElegido(cuadros.length - 1 - elegido);
     aplicar(nuevos);
   }
 
@@ -353,7 +474,8 @@ export function EditorSprite({
         <span>
           <span className="block text-xs font-semibold text-fg">3 · Corregir y alinear fotogramas</span>
           <span className="block text-[10px] text-muted">
-            Arrastra para centrar. En «Borrar», pinta sobre lo que sobra. Si falta una pata, vuelve al paso 1.
+            Cambia el orden o borra cuadros abajo. Arrastra para centrar y, en «Borrar»,
+            pinta sobre lo que sobra. Si falta una pata, vuelve al paso 1.
           </span>
         </span>
         <span className="flex items-center gap-1 text-[10px] text-muted">
@@ -368,9 +490,9 @@ export function EditorSprite({
             type="button"
             key={q.id}
             onClick={() => setElegido(i)}
-            className={`relative h-14 shrink-0 overflow-hidden rounded-md border bg-surface-2 ${i === elegido ? "border-accent ring-1 ring-accent" : "border-border"}`}
+            className={`relative h-14 shrink-0 overflow-hidden rounded-md border bg-surface-2 ${i === elegido ? "border-accent ring-1 ring-accent" : parecidoA[i] !== null ? "border-gold" : "border-border"}`}
             style={{ aspectRatio: `${q.ancho}/${q.alto}` }}
-            aria-label={`Elegir fotograma ${i + 1}`}
+            aria-label={`Elegir fotograma ${i + 1}${parecidoA[i] !== null ? `, igual que el ${parecidoA[i]! + 1}` : ""}`}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -380,8 +502,50 @@ export function EditorSprite({
               style={{ transform: `translate(${q.x / q.ancho * 100}%, ${q.y / q.alto * 100}%)` }}
             />
             <span className="absolute left-0 top-0 rounded-br bg-black/70 px-1 text-[9px] text-white">{i + 1}</span>
+            {/* Una pose que el modelo dibujó dos veces. Se avisa, no se borra
+                sola: repetir un cuadro a propósito es una pausa válida. */}
+            {parecidoA[i] !== null && (
+              <span className="absolute bottom-0 right-0 rounded-tl bg-gold px-1 text-[9px] font-semibold text-black">
+                = {parecidoA[i]! + 1}
+              </span>
+            )}
           </button>
         ))}
+      </div>
+
+      {/* Reordenar y borrar, a la vista y no escondido en «Más ajustes»: que un
+          cuadro salga fuera de sitio o repetido es lo que más pasa, y el arreglo
+          tiene que estar donde se ven las miniaturas. */}
+      <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface/50 p-1.5">
+        <span className="w-full text-[10px] text-muted">
+          Orden del cuadro {elegido + 1} de {cuadros.length}
+          {parecidoA[elegido] !== null && (
+            <span className="text-gold"> · repite la pose del {parecidoA[elegido]! + 1}</span>
+          )}
+        </span>
+        <button type="button" onClick={() => cambiarOrden(-1)} disabled={elegido === 0 || procesando}
+          className="btn-ghost px-2 py-1 text-[10px] disabled:opacity-40" aria-label="Mover el cuadro antes">
+          <ArrowLeft className="h-3 w-3" /> Antes
+        </button>
+        <button type="button" onClick={() => cambiarOrden(1)} disabled={elegido === cuadros.length - 1 || procesando}
+          className="btn-ghost px-2 py-1 text-[10px] disabled:opacity-40" aria-label="Mover el cuadro después">
+          Después <ArrowRight className="h-3 w-3" />
+        </button>
+        <button type="button" onClick={duplicarCuadro} disabled={cuadros.length >= topeCuadros || procesando}
+          className="btn-ghost px-2 py-1 text-[10px] disabled:opacity-40" aria-label="Duplicar el cuadro"
+          title="Repite este cuadro detrás, para alargar la pose">
+          <Copy className="h-3 w-3 text-accent" /> Duplicar
+        </button>
+        <button type="button" onClick={invertirOrden} disabled={cuadros.length < 2 || procesando}
+          className="btn-ghost px-2 py-1 text-[10px] disabled:opacity-40" aria-label="Invertir el orden de los cuadros">
+          <Shuffle className="h-3 w-3 text-brand" /> Invertir
+        </button>
+        <button type="button" onClick={borrarCuadro} disabled={cuadros.length < 2 || procesando}
+          className="btn-ghost ml-auto px-2 py-1 text-[10px] text-danger disabled:opacity-40"
+          aria-label="Borrar el cuadro"
+          title={cuadros.length < 2 ? "Un sprite necesita al menos un cuadro" : "Quita este cuadro de la animación"}>
+          <Trash2 className="h-3 w-3" /> Borrar cuadro
+        </button>
       </div>
 
       <div className="sticky top-12 z-20 grid grid-cols-3 gap-1 rounded-lg border border-border bg-surface/95 p-1 backdrop-blur lg:static lg:grid-cols-2">
@@ -472,20 +636,6 @@ export function EditorSprite({
             <button type="button" onClick={restaurar} className="btn-ghost px-2 py-1 text-[10px]">
               <RotateCcw className="h-3 w-3" /> Restaurar
             </button>
-          </div>
-
-          <div className="rounded-lg border border-border bg-surface/50 p-2">
-            <span className="block text-[10px] text-muted">Cambiar orden del cuadro</span>
-            <div className="mt-1 grid grid-cols-2 gap-1">
-              <button type="button" onClick={() => cambiarOrden(-1)} disabled={elegido === 0}
-                className="btn-ghost px-2 py-1 text-[10px]">
-                <ArrowLeft className="h-3 w-3" /> Antes
-              </button>
-              <button type="button" onClick={() => cambiarOrden(1)} disabled={elegido === cuadros.length - 1}
-                className="btn-ghost px-2 py-1 text-[10px]">
-                Después <ArrowRight className="h-3 w-3" />
-              </button>
-            </div>
           </div>
         </div>
       </div>

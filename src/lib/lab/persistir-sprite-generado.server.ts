@@ -1,8 +1,10 @@
 import "server-only";
 import sharp from "sharp";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { archivarAnimacionEnAtlas } from "@/lib/lab/atlas-sprite.server";
 import { nombreCorto } from "@/lib/lab/biblioteca";
+import { refrescarPublicado } from "@/lib/lab/publicado.server";
 
 import { sinSitioPersonajes, sinSitioAnimaciones, type TopesTaller } from "./topes-taller";
 
@@ -17,6 +19,15 @@ export type MetaSpriteGenerado = {
   croma: string;
   /** Personaje existente al que colgar la nueva animación (opcional). */
   personajeId?: string;
+  /**
+   * Animación existente que esta hoja REEMPLAZA, en vez de crear otra.
+   *
+   * Es lo que pide «rehacer con IA»: se cambia el prompt o el número de cuadros
+   * y sale otra versión DEL MISMO sprite. Sin esto cada intento dejaba una
+   * animación nueva colgando, la biblioteca se llenaba de «Pescador 1, 2, 3» y
+   * los montajes seguían apuntando a la primera, que era la mala.
+   */
+  rehacerId?: string;
 };
 
 /**
@@ -114,6 +125,43 @@ export async function persistirSpriteGenerado(
       return false;
     }
   };
+
+  // REHACER: la versión nueva ocupa el sitio de la vieja.
+  //
+  // Se conservan tres cosas del original a propósito. El NOMBRE, porque lo puso
+  // la persona y es por el que la busca —y por el que la llaman las animaciones
+  // encadenadas—. Los FPS y el ANCLAJE, porque son ajustes finos que costó
+  // encontrar y no tienen nada que ver con el dibujo nuevo.
+  //
+  // Y se limpia `atlasFrames`: si la animación estaba compactada, esas
+  // coordenadas apuntan a los cuadros VIEJOS dentro de la lámina. Dejarlas con
+  // una tira nueva haría que el sprite se pintara con los recortes de la
+  // versión anterior, que es la que se acaba de tirar.
+  if (meta.rehacerId) {
+    const vieja = await prisma.spriteAnimation.findFirst({
+      where: { id: meta.rehacerId, character: { userId } },
+      select: { id: true, nombre: true, fps: true, anclaje: true, characterId: true },
+    });
+    if (!vieja) throw new Error("No encontré esa animación en tu taller.");
+    const a = await prisma.spriteAnimation.update({
+      where: { id: vieja.id },
+      data: {
+        ...data,
+        nombre: vieja.nombre,
+        fps: vieja.fps,
+        anclaje: vieja.anclaje,
+        atlasFrames: Prisma.DbNull,
+      },
+    });
+    // Si además estaba publicado, la copia común se pone al día sola: es el
+    // mismo sprite, y quien lo rehace no va a acordarse de volver a publicarlo.
+    await refrescarPublicado(a.id, {
+      nombre: vieja.nombre, que: data.que, fotogramas, fps: vieja.fps,
+      vista: data.vista, direccion: data.direccion, accion: data.accion,
+      anclaje: vieja.anclaje, ancho: cw, alto: ch, tira,
+    });
+    return { personajeId: vieja.characterId, animacionId: a.id, enAtlas: await pack(a.id) };
+  }
 
   if (meta.personajeId) {
     const c = await prisma.spriteCharacter.findFirst({
