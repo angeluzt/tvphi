@@ -1,6 +1,7 @@
 import {
   VFX, vfxDefaults, type VfxInput, type VfxKind, type VfxShape,
 } from "@/lib/story/vfx";
+import { cajaDeObjeto } from "./geometria-mapa";
 
 // Los efectos del motor, dentro del laboratorio.
 //
@@ -41,6 +42,14 @@ export interface EfectoEscena {
   depth: number;
   colorHex: string;
   params: Record<string, number>;
+  /**
+   * Id de la forma del mapa sobre la que va, si el modelo la nombró.
+   *
+   * Se guarda además de x/y para poder RECOLOCARLO: si luego se arrastra el
+   * agua, el efecto que iba encima puede volver a su sitio en vez de quedarse
+   * flotando donde estaba el agua antes.
+   */
+  ancla?: string;
 }
 
 const KINDS = new Set(VFX.map((v) => v.id as string));
@@ -137,6 +146,7 @@ export function normalizarEfectos(crudo: unknown): {
       depth: acotar(num(o.depth, 0.35), 0, 1),
       colorHex: colorDe(kind, o.colorHex ?? o.color),
       params,
+      ancla: typeof o.ancla === "string" && o.ancla ? o.ancla : undefined,
     });
   }
   return { efectos, avisos };
@@ -183,3 +193,97 @@ export const claveEfectos = (efectos: EfectoEscena[]) =>
 /** Para enseñarlo en la lista sin tener que abrir el catálogo. */
 export const nombreEfecto = (kind: VfxKind) =>
   VFX.find((v) => v.id === kind)?.label ?? kind;
+
+// ---------------------------------------------------------------------------
+// Anclar cada efecto a la forma del mapa a la que pertenece
+// ---------------------------------------------------------------------------
+//
+// EL PROBLEMA MEDIDO. Los efectos salían todos en el centro del cuadro: una
+// columna de luz atravesando la escena, la niebla en mitad del aire. La causa
+// no era el motor, era que NADIE le decía dónde ponerlos. La instrucción que se
+// le manda al modelo no mencionaba la forma («shape») ni ninguna regla de
+// colocación, y aquí, sin coordenadas, se cae a x=0,5 y=0,5. Con eso, todo
+// aterriza en el mismo punto y encima con la primera forma que el efecto
+// admita, que en varios es una línea.
+//
+// POR QUÉ SE ANCLA A UN OBJETO Y NO SE PIDEN COORDENADAS. El modelo acaba de
+// colocar el agua, el arco y la hoguera, y sabe cómo se llaman; repetir sus
+// números a mano es justo lo que hace mal —los redondea, los inventa, o copia
+// los del ejemplo—. Nombrar el objeto sí lo hace bien. Así que él dice «la
+// niebla va sobre el AGUA» y las coordenadas exactas las saca de aquí la
+// aplicación, de la caja que ese objeto ya tiene. Si luego se mueve el agua,
+// el efecto se puede volver a anclar y sigue encima.
+
+/** Una forma del mapa a la que un efecto se puede colgar. */
+export interface Ancla {
+  id: string;
+  caja: { x: number; y: number; w: number; h: number };
+  /** Profundidad de la capa donde vive, para que la cámara lo mueva igual. */
+  depth: number;
+}
+
+/**
+ * Coloca sobre su ancla los efectos que la nombran.
+ *
+ * Cada forma se coloca donde tiene sentido para ESE efecto, que no es siempre
+ * el centro de la caja:
+ *   · punto  → el centro, salvo el fuego y el humo, que salen del suelo del
+ *              objeto: una hoguera que arde en mitad de un tronco flotando se
+ *              ve mal, y es el error más fácil de cometer.
+ *   · linea  → el borde de arriba, de lado a lado. Es lo que hace que la niebla
+ *              corra a lo largo del agua en vez de salir de un punto.
+ *   · arriba → no se toca: cubre el cuadro entero por definición.
+ *
+ * Un ancla que no existe NO tira el efecto: se queda donde estaba y se avisa.
+ * Perder el efecto entero por un id mal escrito sería peor que dejarlo mal
+ * colocado, que al menos se ve y se arrastra.
+ */
+export function anclarEfectos(
+  efectos: EfectoEscena[],
+  anclas: Ancla[],
+): { efectos: EfectoEscena[]; avisos: string[] } {
+  const avisos: string[] = [];
+  const porId = new Map(anclas.map((a) => [a.id, a]));
+
+  const salida = efectos.map((e) => {
+    if (!e.ancla) return e;
+    const a = porId.get(e.ancla);
+    if (!a) {
+      avisos.push(`«${e.ancla}» no es ninguna forma del mapa: «${nombreEfecto(e.kind)}» se queda donde estaba.`);
+      return e;
+    }
+    const { x, y, w, h } = a.caja;
+    if (e.shape === "arriba") return { ...e, depth: a.depth };
+    if (e.shape === "linea" || e.shape === "libre") {
+      return { ...e, x, y, x2: x + w, y2: y, depth: a.depth };
+    }
+    const alSuelo = e.kind === "fuego" || e.kind === "humo" || e.kind === "burbujas";
+    return {
+      ...e,
+      x: x + w / 2,
+      y: alSuelo ? y + h * 0.92 : y + h / 2,
+      x2: x + w / 2,
+      y2: alSuelo ? y + h * 0.92 : y + h / 2,
+      depth: a.depth,
+    };
+  });
+  return { efectos: salida, avisos };
+}
+
+/** Saca de la escena todas las formas a las que se puede anclar un efecto. */
+export function anclasDeEscena(escena: {
+  layers?: { depth?: number; objects?: { id?: string }[] }[];
+}): Ancla[] {
+  const out: Ancla[] = [];
+  for (const capa of escena.layers ?? []) {
+    for (const o of capa.objects ?? []) {
+      if (!o || typeof o.id !== "string" || !o.id) continue;
+      out.push({
+        id: o.id,
+        caja: cajaDeObjeto(o as Parameters<typeof cajaDeObjeto>[0]),
+        depth: num(capa.depth, 0.35),
+      });
+    }
+  }
+  return out;
+}

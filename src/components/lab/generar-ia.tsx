@@ -55,6 +55,9 @@ export function GenerarIa({
   const [idea, setIdea] = useState("");
   const [formato, setFormato] = useState<"16:9" | "9:16" | "1:1">("16:9");
   const [nCapas, setNCapas] = useState(4);
+  // Si la IA añade efectos de partículas o no. Apagado no significa «que los
+  // devuelva vacíos»: la parte de la instrucción que los explica ni se manda.
+  const [conEfectos, setConEfectos] = useState(true);
   const [paso, setPaso] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hechas, setHechas] = useState<CapaGenerada[]>([]);
@@ -67,7 +70,7 @@ export function GenerarIa({
     try {
       const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/escena", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea, formato, capas: nCapas, viva: true }),
+        body: JSON.stringify({ idea, formato, capas: nCapas, viva: true, efectos: conEfectos }),
       });
       if (!r.ok) {
         // Con 422 viene también lo que contestó: se carga igual para poder
@@ -256,6 +259,12 @@ export function GenerarIa({
             {[3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </label>
+        <label className="flex items-center gap-1.5 text-[11px] text-muted"
+          title="Apagado, ni se le mandan las reglas de efectos: sale más barato y la escena queda limpia">
+          <input type="checkbox" checked={conEfectos} onChange={(e) => setConEfectos(e.target.checked)}
+            aria-label="Que la IA añada efectos" />
+          Efectos
+        </label>
         <button onClick={() => void pedirMapa()} disabled={idea.trim().length < 4 || trabajando} className="btn-brand text-xs">
           {trabajando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
           1 · Escribir el mapa
@@ -269,6 +278,8 @@ export function GenerarIa({
         Un solo prompt dirige composición, cámara, actores, tamaño, capas y rutas. El mapa es una
         llamada de texto barata: revísalo antes de generar. El segundo paso dibuja una imagen por
         capa, reutiliza los sprites compatibles de la biblioteca y solo fabrica los que falten.
+        Cada efecto se cuelga de una forma del mapa, así que cae encima de la cosa —la niebla sobre
+        el agua, el fuego en la hoguera— en vez de en mitad del cuadro.
       </p>
 
       {!!sprites.length && (
