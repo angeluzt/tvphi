@@ -87,13 +87,29 @@ export interface Golpe {
  * cielo cubra el cuadro, o sea siempre. Se recorre al revés, y dentro de cada
  * capa también, porque dentro de una capa lo último dibujado es lo de arriba.
  */
-export function objetoEn(esc: Escena, nx: number, ny: number, soloCapa?: string): Golpe | null {
+export function objetoEn(
+  esc: Escena,
+  nx: number,
+  ny: number,
+  soloCapa?: string,
+  /**
+   * El desplazamiento del paralaje, si está corriendo.
+   *
+   * Con paralaje, cada capa se DIBUJA corrida `offset × profundidad`, así que
+   * la forma no está donde se ve. Sin deshacer ese corrimiento aquí, tocar una
+   * forma de una capa cercana selecciona la de al lado o nada: cuanto más al
+   * frente, más falla. Se resta lo mismo que se sumó al pintar.
+   */
+  desfase?: { x: number; y: number },
+): Golpe | null {
   for (let i = esc.layers.length - 1; i >= 0; i--) {
     const capa = esc.layers[i];
     if (capa.visible === false) continue;
     if (soloCapa && capa.id !== soloCapa) continue;
+    const dx = desfase ? desfase.x * (capa.depth ?? 0) : 0;
+    const dy = desfase ? desfase.y * (capa.depth ?? 0) : 0;
     for (let j = capa.objects.length - 1; j >= 0; j--) {
-      if (tocaObjeto(capa.objects[j], nx, ny)) {
+      if (tocaObjeto(capa.objects[j], nx - dx, ny - dy)) {
         return { capaId: capa.id, objetoId: capa.objects[j].id };
       }
     }

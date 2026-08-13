@@ -13,6 +13,9 @@ import type { Golpe } from "@/lib/lab/geometria-mapa";
 import { RangoPreciso } from "./rango-preciso";
 import { LienzoMapa } from "./lienzo-mapa";
 import { InspectorForma } from "./inspector-forma";
+import {
+  SEMANTICAS, anadirCapa, anadirForma, formaNueva, puestoDe, recorrerFormas,
+} from "@/lib/lab/edicion-mapa";
 
 // El mapa de la escena: verlo, ajustarlo y no perderlo.
 //
@@ -59,6 +62,12 @@ export function MapaEditor({
   const [marcadas, setMarcadas] = useState<string[]>([]);
   const [trabajando, setTrabajando] = useState(false);
   const [editando, setEditando] = useState(true);
+  /** Nada se puede coger. Para no descolocar algo sin querer al desplazarse. */
+  const [bloqueado, setBloqueado] = useState(false);
+  /** Si hay una, solo esa capa se ve y se toca. */
+  const [aislada, setAislada] = useState<string | null>(null);
+  const [capasAbiertas, setCapasAbiertas] = useState(true);
+  const [formaNuevaEn, setFormaNuevaEn] = useState<string>("prop");
   const [seleccion, setSeleccion] = useState<Golpe | null>(null);
   const [guardado, setGuardado] = useState<string | null>(null);
   const [instruccion, setInstruccion] = useState("");
@@ -327,16 +336,37 @@ export function MapaEditor({
       <div className="grid gap-3 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
         {/* Capas */}
         <div className="card min-w-0 space-y-2 p-3">
-          {seleccion && (
-            <InspectorForma
-              esc={esc} seleccion={seleccion}
-              onEscena={ponerEscena} onSeleccion={setSeleccion}
-            />
-          )}
-          <div className="flex items-center gap-2">
+          {/* La cabecera de capas ES el interruptor: plegada, esta columna deja
+              de comerse la pantalla y el lienzo queda a la vista, que es donde
+              se trabaja. */}
+          <button
+            type="button"
+            onClick={() => setCapasAbiertas((v) => !v)}
+            className="flex w-full items-center gap-2 text-left"
+            aria-expanded={capasAbiertas}
+          >
             <span className="label">Capas</span>
             <span className="chip ml-auto bg-surface-2 text-muted">{esc.layers.length} · {total} formas</span>
-          </div>
+            <span className="text-muted">{capasAbiertas ? "▾" : "▸"}</span>
+          </button>
+
+          {/* Aislar una capa: se ve sola Y es la única que se puede tocar. Ver
+              sola sin lo segundo no servía de nada, porque el dedo seguía
+              agarrando formas de las capas de encima. */}
+          <label className="flex items-center gap-2 text-[11px] text-muted">
+            Trabajar en
+            <select
+              className="input min-w-0 flex-1 py-1 text-[11px]"
+              value={aislada ?? ""}
+              onChange={(e) => setAislada(e.target.value || null)}
+              aria-label="Capa aislada"
+            >
+              <option value="">Todas las capas</option>
+              {esc.layers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+
+          {capasAbiertas && (<>
           <p className="text-[11px] text-muted">
             De atrás hacia delante. El número es la profundidad: 0 no se mueve, 1 se mueve entero.
           </p>
@@ -387,6 +417,20 @@ export function MapaEditor({
             <button onClick={() => setMarcadas(esc.layers.map((c) => c.id))} className="btn-ghost flex-1 text-[11px]">Todas</button>
             <button onClick={() => setMarcadas([])} className="btn-ghost flex-1 text-[11px]">Ninguna</button>
           </div>
+          {/* Crear a mano, sin pasar por la IA. Va delante de todas porque la
+              primera capa es el fondo y meter una nueva ahí taparía la escena. */}
+          <button
+            onClick={() => {
+              const { escena, capaId } = anadirCapa(esc);
+              ponerEscena(escena);
+              setAislada(capaId);
+              setAviso("Capa nueva, delante de todas y ya aislada. Añádele formas abajo.");
+            }}
+            className="btn-ghost w-full text-[11px]"
+          >
+            + Capa nueva
+          </button>
+          </>)}
           <div className="space-y-1.5 border-t border-border pt-2">
             <label className="flex items-center gap-2 text-[11px] text-muted">
               <input type="checkbox" checked={etiquetas} onChange={(e) => setEtiquetas(e.target.checked)} />
@@ -472,7 +516,75 @@ export function MapaEditor({
             rejilla={rejilla}
             paralaje={paralaje}
             fuerza={fuerza}
+            bloqueado={bloqueado}
+            capaAislada={aislada}
           />
+
+          {/* LA FORMA COGIDA, JUSTO DEBAJO DEL LIENZO.
+              Estaba arriba del todo, en la columna de al lado: para mover una
+              forma había que mirar a un sitio y tocar en otro, y en el móvil ni
+              siquiera se veían a la vez. Aquí está donde se usa. */}
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-surface-2/40 p-1.5">
+            <button
+              onClick={() => setBloqueado((v) => !v)}
+              className={`btn-ghost text-[11px] ${bloqueado ? "border-gold text-gold" : ""}`}
+              title="Con el lienzo bloqueado no se puede coger ni mover nada"
+            >
+              {bloqueado ? "🔒 Bloqueado" : "🔓 Libre"}
+            </button>
+            {/* Recorrer las formas una a una: con dieciocho amontonadas, cazar
+                la de detrás con el dedo es imposible porque siempre coge la de
+                delante. */}
+            <button
+              onClick={() => setSeleccion(recorrerFormas(esc, seleccion, -1))}
+              disabled={!total}
+              className="btn-ghost px-2 text-[11px] disabled:opacity-40"
+              aria-label="Forma anterior"
+            >
+              ‹ Anterior
+            </button>
+            <span className="text-[10px] tabular-nums text-muted">
+              {puestoDe(esc, seleccion).i} de {total}
+            </span>
+            <button
+              onClick={() => setSeleccion(recorrerFormas(esc, seleccion, 1))}
+              disabled={!total}
+              className="btn-ghost px-2 text-[11px] disabled:opacity-40"
+              aria-label="Forma siguiente"
+            >
+              Siguiente ›
+            </button>
+            <span className="flex-1" />
+            <select
+              className="input w-auto min-w-0 py-1 text-[11px]"
+              value={formaNuevaEn}
+              onChange={(e) => setFormaNuevaEn(e.target.value)}
+              aria-label="Qué forma añadir"
+            >
+              {SEMANTICAS.map(([id, nombre]) => <option key={id} value={id}>{nombre}</option>)}
+            </select>
+            <button
+              onClick={() => {
+                const capaId = aislada ?? esc.layers[esc.layers.length - 1]?.id;
+                if (!capaId) { setAviso("Primero crea una capa."); return; }
+                const o = formaNueva(esc, formaNuevaEn);
+                ponerEscena(anadirForma(esc, capaId, o));
+                setSeleccion({ capaId, objetoId: o.id });
+                setAviso(`Forma añadida en «${esc.layers.find((c) => c.id === capaId)?.name}». Arrástrala a su sitio.`);
+              }}
+              className="btn-brand px-2 text-[11px]"
+              title={aislada ? "Se añade a la capa aislada" : "Se añade a la capa de delante"}
+            >
+              + Añadir
+            </button>
+          </div>
+
+          {seleccion && (
+            <InspectorForma
+              esc={esc} seleccion={seleccion}
+              onEscena={ponerEscena} onSeleccion={setSeleccion}
+            />
+          )}
 
           {puedeIa && (
             <div className="space-y-1 rounded-lg border border-brand/40 bg-brand/5 p-2">
