@@ -3,7 +3,7 @@
 import { MapPin, Pause, Move, Footprints, CheckSquare, Square, Copy } from "lucide-react";
 import type { AnimParalaje } from "@/lib/lab/anim-paralaje";
 
-export type ModoEdicionCanvas = "camara" | "colocar" | "punto" | null;
+export type ModoEdicionCanvas = "camara" | "colocar" | "punto" | "recorte" | null;
 
 const MOV_CAPA_RAPIDOS = [
   { id: "", label: "Quieto" },
@@ -19,8 +19,6 @@ export function InspectorRapido({
   esSprite,
   modo,
   onModo,
-  moverTodo,
-  onMoverTodo,
   volverRuta,
   onVolverRuta,
   voltearDefault,
@@ -35,12 +33,12 @@ export function InspectorRapido({
   puedeAplicarATodas,
   onBorrarRuta,
   puntosRuta,
+  seleccionadas,
+  onSeleccionarTodas,
 }: {
   esSprite: boolean;
   modo: ModoEdicionCanvas;
   onModo: (m: ModoEdicionCanvas) => void;
-  moverTodo: boolean;
-  onMoverTodo: (v: boolean) => void;
   volverRuta: boolean;
   onVolverRuta: (v: boolean) => void;
   voltearDefault: boolean;
@@ -58,6 +56,9 @@ export function InspectorRapido({
   onBorrarRuta?: () => void;
   /** Cuántos puntos lleva la ruta, para saber si hay algo que borrar. */
   puntosRuta?: number;
+  /** Capas marcadas en la lista: son las que se moverán al arrastrar. */
+  seleccionadas?: number;
+  onSeleccionarTodas?: () => void;
 }) {
   return (
     <div className={`space-y-2 rounded-lg border border-accent/40 bg-accent/5 p-2 ${bloqueada ? "opacity-55" : ""}`}>
@@ -149,15 +150,25 @@ export function InspectorRapido({
         </label>
       )}
 
-      <label className="flex items-center gap-1.5 text-[10px] text-muted">
-        <input
-          type="checkbox"
-          checked={moverTodo}
-          disabled={bloqueada}
-          onChange={(e) => onMoverTodo(e.target.checked)}
-        />
-        Arrastrar mueve todas las capas (no solo la seleccionada)
-      </label>
+      {/* Qué se va a mover al arrastrar. Antes esto era una casilla suya
+          —«arrastrar mueve todas»— que decidía en secreto algo que la lista de
+          capas ya sabía decir: se marcaba una capa allí y aquí seguía activo
+          «todas», así que uno arrastraba una y se le movían cinco. Ahora manda
+          la lista, y aquí solo se dice lo que va a pasar. */}
+      <p className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted">
+        {seleccionadas
+          ? `Al arrastrar se mueven las ${seleccionadas} capas marcadas en la lista.`
+          : "Al arrastrar se mueve solo esta capa."}
+        {!seleccionadas && onSeleccionarTodas && (
+          <button
+            type="button"
+            onClick={onSeleccionarTodas}
+            className="underline hover:text-fg"
+          >
+            Marcar todas
+          </button>
+        )}
+      </p>
 
       {/* Lo que se puede hacer con la animación que ya tiene esta capa.
           Sale solo cuando hay algo que copiar o que borrar: un botón que no
