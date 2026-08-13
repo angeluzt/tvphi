@@ -15,14 +15,26 @@ export interface Pedido {
   respuesta: Response;
 }
 
-/** Qué suele haber detrás de cada código cuando la respuesta no es JSON. */
+/**
+ * Qué suele haber detrás de cada código cuando la respuesta no es JSON.
+ *
+ * Que la respuesta NO sea JSON ya dice mucho: nuestras rutas siempre contestan
+ * JSON, incluso al fallar. Si llega una página de error, la cortó el borde del
+ * despliegue, y con diferencia la causa más común es una imagen en calidad alta
+ * que tardó más de lo que aguanta la conexión. No podemos saberlo con
+ * seguridad desde aquí, así que se dice como sospecha y con la salida al lado
+ * —«prueba en media»— en vez de dejar al usuario con un número de tres cifras.
+ */
 function pista(status: number): string {
-  if (status === 504 || status === 524) return "La petición tardó demasiado y se cortó.";
-  if (status === 502 || status === 503) return "El servidor no estaba disponible en ese momento.";
+  const cortado = "Suele pasar al generar imágenes en calidad alta: tardan más de lo que"
+    + " aguanta la conexión. Prueba en calidad media, y si ya tenías capas dibujadas"
+    + " se conservan: solo se repetirá la que falte.";
+  if (status === 504 || status === 524) return `La petición tardó demasiado y se cortó. ${cortado}`;
+  if (status === 502 || status === 503) return `El servidor no estaba disponible en ese momento. ${cortado}`;
   if (status === 413) return "Lo que se mandó pesa demasiado.";
   if (status === 429) return "Demasiadas peticiones seguidas.";
   if (status === 404) return "Esa dirección no existe en el servidor.";
-  if (status >= 500) return "Falló el servidor.";
+  if (status >= 500) return `Falló el servidor. ${cortado}`;
   return "El servidor contestó una página en vez de datos.";
 }
 

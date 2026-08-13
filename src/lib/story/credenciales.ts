@@ -117,9 +117,17 @@ export const OPENAI = (ruta: string) =>
  * JSON. El editor entonces solo sabía decir «Unexpected token '<'», que no
  * ayuda a nadie. Cortando aquí primero, siempre sale un mensaje que se entiende.
  *
- * Las imágenes van más holgadas porque de verdad tardan más.
+ * LAS IMÁGENES SUBIERON DE 100 A 240 s, y esto es un compromiso, no una mejora
+ * limpia. En calidad baja una imagen tarda 20–40 s y 100 s sobraban; en calidad
+ * ALTA, con un lienzo de 1024×1536, se pasa de 100 s a menudo y la generación
+ * fallaba SIEMPRE —o sea que la calidad alta no se podía usar—. Con 240 s cabe.
+ *
+ * Lo que se paga a cambio: si el borde de Railway corta antes que nosotros, se
+ * pierde el mensaje legible y vuelve la página de error. Por eso `pista()` en
+ * pedir-json.ts dice explícitamente que pruebe con calidad media cuando pasa:
+ * si no podemos explicar el fallo, al menos decimos qué hacer.
  */
-export const ESPERA_MS = { texto: 90_000, imagen: 100_000, voz: 90_000 } as const;
+export const ESPERA_MS = { texto: 90_000, imagen: 240_000, voz: 90_000 } as const;
 
 /** El `signal` para un fetch a OpenAI, con su límite de tiempo. */
 export const espera = (tipo: keyof typeof ESPERA_MS) => AbortSignal.timeout(ESPERA_MS[tipo]);

@@ -10,6 +10,9 @@ import { prepararCapa, type Recorte } from "@/lib/lab/quitar-fondo";
 import type { SpritePlaneado } from "@/lib/lab/plan-escena-viva";
 import { resolverSpritePlaneado, type SpriteMontado } from "@/lib/lab/sprite-automatico";
 import { normalizarEfectos, type EfectoEscena } from "@/lib/lab/efectos-escena";
+import {
+  avisoDeReanudar, hechasVigentes, paraRehacer, pendientesDe, textoDelBoton,
+} from "@/lib/lab/reanudar-capas";
 
 // Del texto a la escena montada, sin salir de aquí.
 //
@@ -37,6 +40,8 @@ export function GenerarIa({
   onAnimacion,
   onEfectos,
   onCapas,
+  hechas,
+  onHechas,
 }: {
   /** El mapa que hay ahora, para poder dibujar capa a capa. */
   escena: Escena | null;
@@ -49,8 +54,24 @@ export function GenerarIa({
   onAnimacion?: (pasos: any[], avisos: string[]) => void;
   /** Los efectos del motor que escribió la IA, ya validados contra el catálogo. */
   onEfectos?: (efectos: EfectoEscena[], avisos: string[]) => void;
-  /** El resumen viaja con las capas: esta tarjeta se cierra al montarlas. */
-  onCapas: (c: CapaGenerada[], resumen: string, sprites: SpriteMontado[]) => void;
+  /**
+   * El resumen viaja con las capas. `completo` dice si NO quedó nada pendiente.
+   *
+   * Hace falta porque al montar se salta a la pestaña del compositor y esta
+   * tarjeta deja de existir, llevándose el registro de lo ya dibujado. Con una
+   * capa fallida eso significaba empezar de cero y pagarlo todo otra vez. Si
+   * falta algo, quien manda decide quedarse aquí.
+   */
+  onCapas: (c: CapaGenerada[], resumen: string, sprites: SpriteMontado[], completo: boolean) => void;
+  /**
+   * Las capas ya dibujadas. VIVEN EN EL PADRE a propósito.
+   *
+   * Siendo estado de aquí morían al cambiar de pestaña —y al montar se cambia
+   * sola—, así que volver al mapa ofrecía repintar las cinco y pagarlas otra
+   * vez. Es el mismo motivo por el que la semilla y la cola tampoco viven aquí.
+   */
+  hechas: CapaGenerada[];
+  onHechas: (c: CapaGenerada[]) => void;
 }) {
   const [idea, setIdea] = useState("");
   const [formato, setFormato] = useState<"16:9" | "9:16" | "1:1">("16:9");
@@ -60,7 +81,6 @@ export function GenerarIa({
   const [conEfectos, setConEfectos] = useState(true);
   const [paso, setPaso] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [hechas, setHechas] = useState<CapaGenerada[]>([]);
   const [sprites, setSprites] = useState<SpritePlaneado[]>([]);
   const [trabajando, setTrabajando] = useState(false);
 
@@ -109,14 +129,27 @@ export function GenerarIa({
     finally { setTrabajando(false); }
   }
 
+  // Lo que falta por dibujar ahora mismo, para poder decirlo ANTES de pulsar.
+  const visiblesAhora = escena
+    ? escena.layers.filter((c) => c.visible !== false && !esGuia(c))
+    : [];
+  const conservadas = hechasVigentes(hechas, visiblesAhora);
+  const faltan = pendientesDe(visiblesAhora, conservadas).length;
+  const avisoReanudar = avisoDeReanudar(faltan, visiblesAhora.length);
+
   async function dibujar() {
     if (!escena) return;
-    setError(null); setHechas([]); setTrabajando(true);
+    setError(null); setTrabajando(true);
     // Las capas de reserva NO se mandan: son una guía de dónde va el personaje
     // y los efectos, y el modelo devolvería un PNG vacío que se paga igual.
     const visibles = escena.layers.filter((c) => c.visible !== false && !esGuia(c));
     const guias = escena.layers.filter((c) => c.visible !== false && esGuia(c)).length;
-    const out: CapaGenerada[] = [];
+    // LO QUE YA SE PAGÓ NO SE TIRA. Antes esto arrancaba vacío y se repintaban
+    // las cinco capas aunque cuatro estuvieran bien: si la tercera fallaba, la
+    // única salida era volver a empezar y pagarlo todo otra vez.
+    const yaEstaban = hechasVigentes(hechas, visibles);
+    const porHacer = pendientesDe(visibles, yaEstaban);
+    const out: CapaGenerada[] = [...yaEstaban];
     // Una capa que falle NO tumba el lote. Antes se cortaba en la primera y las
     // siguientes ni se intentaban: pagabas media escena y te quedabas sin nada
     // que montar. Ahora se sigue y al final se dice cuáles fallaron.
@@ -124,21 +157,25 @@ export function GenerarIa({
     const actores: SpriteMontado[] = [];
     const avisosActores: string[] = [];
     try {
-      for (let i = 0; i < visibles.length; i++) {
-        const capa = visibles[i];
-        setPaso(`Dibujando ${i + 1} de ${visibles.length}: ${capa.name}…`);
+      for (let i = 0; i < porHacer.length; i++) {
+        const capa = porHacer[i];
+        // El índice REAL en la escena, no el del bucle: decide si es el fondo
+        // (que se pide opaco) y qué se le tapa del mapa. Con el índice del
+        // bucle, al reanudar una capa media se dibujaría como si fuera fondo.
+        const iEsc = visibles.findIndex((c) => c.id === capa.id);
+        setPaso(`Dibujando ${i + 1} de ${porHacer.length}: ${capa.name}…`);
         // El mapa de ESTA capa, sin etiquetas de las demás y sin fondo: es lo
         // que se le da al modelo como referencia de dónde va cada cosa. Para el
         // fondo se fuerza un gris azulado neutro: mapBackground puede venir de
         // un JSON externo y jamás debe colarse como una pantalla magenta.
         const mapa = lienzoDeCapas(
-          escena, [capa.id], i > 0, true, i === 0 ? "#101820" : undefined,
+          escena, [capa.id], iEsc > 0, true, iEsc === 0 ? "#101820" : undefined,
         ).toDataURL("image/png");
         let rec: Recorte | null = null;
         let falloCapa = "";
         for (let intento = 0; intento < 2; intento++) {
           if (intento) {
-            setPaso(`Corrigiendo croma en ${i + 1} de ${visibles.length}: ${capa.name}…`);
+            setPaso(`Corrigiendo croma en ${i + 1} de ${porHacer.length}: ${capa.name}…`);
           }
           const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/capa", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -148,7 +185,7 @@ export function GenerarIa({
               excluir: capa.ai?.exclude,
               estilo: escena.scene.style,
               escena: escena.scene.description,
-              esFondo: i === 0,
+              esFondo: iEsc === 0,
               formato,
               corregirCroma: intento > 0,
             }),
@@ -163,8 +200,8 @@ export function GenerarIa({
           // opaca el color se usa solo para validar; no se vuelve transparente.
           rec = await prepararCapa(
             `data:image/png;base64,${j.imagen}`,
-            i === 0,
-            i === 0 || j.porCroma ? (j.croma ?? undefined) : undefined,
+            iEsc === 0,
+            iEsc === 0 || j.porCroma ? (j.croma ?? undefined) : undefined,
           );
           if (!rec.problema) break;
           falloCapa = rec.problema === "croma-en-fondo"
@@ -184,7 +221,11 @@ export function GenerarIa({
           mov: capa.mov,
           depth: capa.depth,
         });
-        setHechas([...out]);
+        // Ordenadas como en la escena, no como se dibujaron: al reanudar, la
+        // capa que faltaba se pintó la última y sin esto se apilaría delante
+        // de todo.
+        out.sort((a, b) => visibles.findIndex((c) => c.id === a.id) - visibles.findIndex((c) => c.id === b.id));
+        onHechas([...out]);
       }
       // Sin fondo no hay montaje al que incorporar actores. Además de ser más
       // claro, esto evita pagar hojas de sprites para una escena inutilizable.
@@ -211,7 +252,8 @@ export function GenerarIa({
       const reutilizados = actores.filter((s) => s.fuente === "biblioteca").length;
       const generados = actores.filter((s) => s.fuente === "generado").length;
       const resumen =
-        `${out.length} de ${visibles.length} capas.`
+        `${out.length} de ${visibles.length} capas`
+        + (yaEstaban.length ? ` (${yaEstaban.length} ya estaban y no se han vuelto a pagar).` : ".")
         + (actores.length
           ? ` ${actores.length} actores montados (${reutilizados} reutilizados, ${generados} nuevos y guardados).`
           : sprites.length ? " No se pudo montar ningún actor." : " La escena no necesitó actores animados.")
@@ -224,7 +266,7 @@ export function GenerarIa({
       // El resumen sube con las capas porque al montarlas esta tarjeta
       // desaparece: si se quedara aquí, lo que costó y lo que no no lo leería
       // nadie.
-      if (out.length) onCapas(out, resumen, actores);
+      if (out.length) onCapas(out, resumen, actores, fallos.length === 0);
       // Los fallos se cuentan al final y por separado, sin borrar lo que sí salió.
       if (fallos.length) setError(`No salieron ${fallos.length}: ${fallos.join(" · ")}`);
     } catch (e) { setError((e as Error).message); setPaso(null); }
@@ -270,9 +312,25 @@ export function GenerarIa({
           1 · Escribir el mapa
         </button>
         <button onClick={() => void dibujar()} disabled={!escena || trabajando} className="btn-ghost text-xs">
-          <Wand2 className="h-3.5 w-3.5 text-accent" /> 2 · Generar y montar todo
+          <Wand2 className="h-3.5 w-3.5 text-accent" />
+          {textoDelBoton(faltan, visiblesAhora.length)}
         </button>
+        {!!conservadas.length && !trabajando && (
+          <button
+            onClick={() => onHechas([])}
+            className="btn-ghost text-[10px] text-muted"
+            title="Tira lo dibujado y vuelve a empezar. Se pagan todas otra vez."
+          >
+            Rehacer todo
+          </button>
+        )}
       </div>
+
+      {avisoReanudar && (
+        <p className="rounded-lg border border-ok/40 bg-ok/5 p-2 text-[11px] text-ok">
+          {avisoReanudar}
+        </p>
+      )}
 
       <p className="text-[10px] text-muted">
         Un solo prompt dirige composición, cámara, actores, tamaño, capas y rutas. El mapa es una
@@ -311,9 +369,23 @@ export function GenerarIa({
             <div key={c.id} className="overflow-hidden rounded-lg border border-border">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={c.url} alt={c.nombre} className="block h-auto w-full bg-[repeating-conic-gradient(#222_0_25%,#2c2c2c_0_50%)] bg-[length:14px_14px]" />
-              <p className="truncate px-1.5 py-1 text-[9px] text-muted">
-                {c.nombre} · {c.via === "croma" ? `croma ${c.color}` : c.via} · {Math.round(c.vacio * 100)}% vacío
-              </p>
+              <div className="flex items-center gap-1 px-1.5 py-1">
+                <p className="min-w-0 flex-1 truncate text-[9px] text-muted">
+                  {c.nombre} · {c.via === "croma" ? `croma ${c.color}` : c.via} · {Math.round(c.vacio * 100)}% vacío
+                </p>
+                {/* Rehacer SOLO esta. Que una capa salga fea es lo normal, y
+                    hasta ahora arreglarla obligaba a repintar y pagar las
+                    cinco. */}
+                <button
+                  type="button"
+                  disabled={trabajando}
+                  onClick={() => onHechas(paraRehacer(hechas, c.id))}
+                  className="shrink-0 rounded border border-border px-1 text-[9px] text-muted hover:border-accent hover:text-fg disabled:opacity-40"
+                  title={`Descartar «${c.nombre}» para volver a dibujarla. Las demás se conservan.`}
+                >
+                  rehacer
+                </button>
+              </div>
             </div>
           ))}
         </div>
