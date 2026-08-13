@@ -6,6 +6,8 @@ import {
   type ClipVideo, type VfxLayer,
 } from "./model";
 import { VfxScene, type VfxInput } from "./vfx";
+import { escenaEstaViva } from "@/lib/lab/escena-viva";
+import { PintorEscenaViva, laminasPintables } from "./pintar-viva";
 import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
 import { esDeBiblioteca, esDeBibliotecaSonido, esRitmico } from "./musica";
@@ -50,6 +52,12 @@ export class StoryEngine {
   private ventanasVoz: { a: number; b: number }[] = [];
 
   private images = new Map<string, HTMLImageElement>();
+  /**
+   * El dibujante bueno, para las escenas que llevan cámara, movimiento o
+   * actores. Uno solo para todo el motor: guarda un lienzo aparte, y tener uno
+   * por escena sería reservar varios megas por capítulo sin necesidad.
+   */
+  private vivas = new PintorEscenaViva();
   private buffers = new Map<string, AudioBuffer>();
   // Voces ya estiradas para una velocidad/tono concretos. Estirar cuesta unos
   // milisegundos, así que se guarda el resultado: mientras no se toquen las
@@ -161,6 +169,8 @@ export class StoryEngine {
 
   async setProject(p: StoryProject) {
     this.applyAspect(p);
+    // La cola planificada de cada escena deja de valer: el proyecto es otro.
+    this.vivas.invalidar();
     this.project = p;
     this.flat = flatten(p);
     await this.ensureAssets(p);
@@ -168,6 +178,9 @@ export class StoryEngine {
   }
   update(p: StoryProject) {
     this.applyAspect(p);
+    // Editar la cámara de una escena tiene que verse al momento: si no se tira
+    // lo planificado, se seguiría reproduciendo la cola anterior.
+    this.vivas.invalidar();
     this.project = p;
     this.flat = flatten(p);
     void this.ensureAssets(p);
@@ -920,7 +933,24 @@ export class StoryEngine {
     if (offsetX) ctx.translate(offsetX, 0);
     const fr = lerpFrame(frames.from, frames.to, p);
     const capas = f.scene.capas ?? [];
-    if (capas.length) {
+    // ESCENA VIVA: la que trae cámara propia, láminas que se mueven o actores.
+    // Se pinta entera con el dibujante del laboratorio y se recorta después con
+    // el encuadre de la toma, igual que si fuera una foto. Antes esto se tiraba
+    // al guardar: la IA escribía la escena completa y en el capítulo quedaban
+    // láminas quietas.
+    const viva = capas.length && escenaEstaViva(capas, f.scene.camara)
+      ? this.vivas.dibujar(
+        f.scene,
+        laminasPintables(capas, (id) => this.images.get(id)),
+        lt,
+        f.scene.imgW || iw,
+        f.scene.imgH || ih,
+      )
+      : null;
+    if (viva) {
+      const { sx, sy, sw, sh } = framePx(fr, viva.width, viva.height);
+      ctx.drawImage(viva, sx, sy, sw, sh, 0, 0, this.w, this.h);
+    } else if (capas.length) {
       // PARALAJE. Cada lámina se recorta con SU propio encuadre: el de la
       // cámara mezclado con el de partida según su profundidad. Con depth 1 la
       // lámina sigue a la cámara igual que una foto normal; con depth 0 se

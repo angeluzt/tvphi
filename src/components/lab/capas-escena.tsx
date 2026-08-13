@@ -24,6 +24,7 @@ export function CapasEscena({
   prompt,
   formato,
   onCambio,
+  onEscenaViva,
   onGuardarImagen,
 }: {
   capas: EscenaCapa[];
@@ -31,6 +32,14 @@ export function CapasEscena({
   prompt: string;
   formato: "16:9" | "9:16" | "1:1";
   onCambio: (c: EscenaCapa[]) => void;
+  /**
+   * Lo demás que la IA escribe junto al mapa: la cola de cámara y los efectos.
+   *
+   * Hasta ahora se pedía, se pagaba y se tiraba: solo se guardaban las
+   * imágenes y su profundidad, así que una escena que la IA había escrito con
+   * su movimiento y su lluvia acababa siendo láminas quietas.
+   */
+  onEscenaViva?: (v: { camara?: unknown[]; efectos?: unknown[] }) => void;
   /** Guarda el PNG donde vivan las imágenes y devuelve su id. */
   onGuardarImagen: (dataUrl: string, nombre: string) => Promise<string>;
 }) {
@@ -111,7 +120,16 @@ export function CapasEscena({
           opacidad: 1,
         });
       }
-      if (nuevas.length) onCambio(nuevas);
+      if (nuevas.length) {
+        onCambio(nuevas);
+        // La cámara y los efectos vienen del MISMO mapa que las láminas, así
+        // que se guardan a la vez o no se guardan: una cola de cámara escrita
+        // para otras capas no encuadraría nada.
+        onEscenaViva?.({
+          camara: Array.isArray(jm.animacion) ? jm.animacion : undefined,
+          efectos: Array.isArray(jm.efectos) ? jm.efectos : undefined,
+        });
+      }
       setPaso(null);
       setNota(guias
         ? `${nuevas.length} capas listas. ${guias} de reserva no se mandó a dibujar: es una guía y no se ha pagado.`
