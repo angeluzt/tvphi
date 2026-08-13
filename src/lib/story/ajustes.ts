@@ -24,6 +24,18 @@ export interface AjustesIa {
   vozDePago: boolean;
   /** Apagarlo deja al usuario normal sin generar imágenes. */
   imagenesIa: boolean;
+  /**
+   * Paralaje 2.5D en el editor normal de historias.
+   *
+   * Apagado, el editor de siempre no cambia en NADA: ni un botón nuevo, ni una
+   * escena que traiga capas se comporta distinto. Encendido, cada escena puede
+   * partirse en láminas con profundidad y editarse en una ventana aparte.
+   *
+   * Va apagado por defecto porque es lo que llevaba meses viviendo solo en el
+   * laboratorio: encenderlo para todo el mundo sin que un admin lo decida sería
+   * estrenar en producción una cosa que aún se estaba probando.
+   */
+  paralaje25d: boolean;
 }
 
 /**
@@ -39,6 +51,7 @@ export const AJUSTES_DEFECTO: AjustesIa = {
   textosPorDia: 30,
   vozDePago: false,
   imagenesIa: true,
+  paralaje25d: false,
 };
 
 /** Lo que cuesta cada calidad, para poder enseñarlo al elegir. */
@@ -62,6 +75,7 @@ const CLAVES = {
   textosPorDia: "ia_textos_por_dia",
   vozDePago: "ia_voz_de_pago",
   imagenesIa: "ia_imagenes_activas",
+  paralaje25d: "story_paralaje_25d",
 } as const;
 
 const esCalidad = (v: unknown): v is CalidadImagen =>
@@ -95,6 +109,8 @@ export async function leerAjustes(): Promise<AjustesIa> {
       textosPorDia: entero(m.get(CLAVES.textosPorDia), 0, 500) ?? AJUSTES_DEFECTO.textosPorDia,
       vozDePago: m.get(CLAVES.vozDePago) === "1",
       imagenesIa: m.get(CLAVES.imagenesIa) !== "0",
+      // Este sí pide un «1» explícito: lo que no se ha decidido está apagado.
+      paralaje25d: m.get(CLAVES.paralaje25d) === "1",
     };
   } catch {
     // Tabla aún sin migrar, base caída… da igual: lo barato.
@@ -130,6 +146,7 @@ export async function guardarAjustes(a: Partial<AjustesIa>): Promise<AjustesIa> 
   }
   if (a.vozDePago !== undefined) pares.push([CLAVES.vozDePago, a.vozDePago ? "1" : "0"]);
   if (a.imagenesIa !== undefined) pares.push([CLAVES.imagenesIa, a.imagenesIa ? "1" : "0"]);
+  if (a.paralaje25d !== undefined) pares.push([CLAVES.paralaje25d, a.paralaje25d ? "1" : "0"]);
 
   for (const [key, value] of pares) {
     await prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } });

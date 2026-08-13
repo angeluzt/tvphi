@@ -6,7 +6,7 @@ import {
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
   Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
   MapPinned, Plus, RotateCcw, Square, Lock, LockOpen, ChevronsUp, ChevronsDown,
-  Paintbrush, MoreHorizontal, CheckSquare,
+  Paintbrush, MoreHorizontal, CheckSquare, ChevronRight,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
@@ -47,6 +47,11 @@ import { pintarGuiaRuta } from "@/lib/lab/guia-ruta";
 import { pintarCapas } from "@/lib/lab/pintar-escena";
 import { MandosMovimientoCapa, movimientoInicial } from "./mandos-movimiento";
 import { MandosPiezas } from "./mandos-piezas";
+import { usePlegados } from "./plegable";
+import { PanelAnimaciones } from "./panel-animaciones";
+import {
+  cajaContenido, colorDeGuia, pintarGuiaAnimacion, resumenDeMov, type CapaGuia,
+} from "@/lib/lab/guia-animacion";
 import { MandosSprite } from "./mandos-sprite";
 import { PanelGrupo } from "./panel-grupo";
 import {
@@ -228,6 +233,10 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   // toque en la escena lo planta ahí en vez de mover la cámara.
   const [efectoPendiente, setEfectoPendiente] = useState<string | null>(null);
   const [modoEdicion, setModoEdicion] = useState<ModoEdicionCanvas>(null);
+  /** Señalar en el lienzo lo marcado y los caminos. Se puede apagar para ver la escena limpia. */
+  const [verGuias, setVerGuias] = useState(true);
+  /** Qué secciones dejó abiertas el usuario. Sobrevive a la recarga. */
+  const { abierto: seccionAbierta, alternar: alternarSeccion } = usePlegados();
   /**
    * El candado del visor: NADA se mueve arrastrando.
    *
@@ -324,6 +333,10 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
    * despegaría del dibujo en cuanto una de las dos copias cambiara.
    */
   const planosRef = useRef(new Map<string, PlanoMovimiento>());
+  /** El mismo plano pero sin el movimiento propio: es sobre el que va la guía. */
+  const reposoRef = useRef(new Map<string, PlanoMovimiento>());
+  /** Qué capas hay que señalar en el lienzo, sin que el bucle mire a React. */
+  const guiaRef = useRef<{ seleccion: string[]; activa: string | null }>({ seleccion: [], activa: null });
   const enSecuenciaRef = useRef(enSecuencia);
   const pasoActivoRef = useRef(pasoActivo);
   const repetirRef = useRef(repetirCola);
@@ -355,6 +368,14 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   colaRef.current = cola;
   capasRef.current = capas;
   grupoRef.current = grupo;
+  // Lo que hay que señalar en el lienzo. Va por ref porque el bucle de dibujo
+  // no ve el estado de React.
+  guiaRef.current = verGuias
+    ? {
+      seleccion: grupo.length ? grupo : capaActivaId ? [capaActivaId] : [],
+      activa: capaActivaId,
+    }
+    : { seleccion: [], activa: null };
   enSecuenciaRef.current = enSecuencia;
   pasoActivoRef.current = pasoActivo;
   repetirRef.current = repetirCola;
@@ -1077,13 +1098,17 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     // Antes había dos dibujantes y se habían separado: el del PNG no pintaba
     // efectos ni el movimiento propio de las capas.
     planosRef.current.clear();
+    reposoRef.current.clear();
     const guia = pintarCapas(c, {
       capas,
       vista,
       w, h,
       idFondo,
       rutaVisibleId,
-      apuntarPlano: (id, plano) => planosRef.current.set(id, plano),
+      apuntarPlano: (id, plano, reposo) => {
+        planosRef.current.set(id, plano);
+        reposoRef.current.set(id, reposo);
+      },
       // Cada capa lleva su reloj: un sprite y una capa con «mov» no comparten
       // el mismo, y por eso el tiempo se pide por capa en vez de pasarlo suelto.
       tiempoDeCapa: (capa) => (capa.spr
@@ -1101,6 +1126,29 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
 
     // Guía solo en la vista previa. Nunca entra al PNG ni al ZIP.
     if (guia) pintarGuiaRuta(c, guia.spr, guia.plano, guia.tiempo);
+
+    // Lo marcado y lo animado, señalado encima de la escena. Esto es lo que
+    // convierte «le puse movimiento» en algo que se ve sin darle al play.
+    const marca = guiaRef.current;
+    const paraGuia: CapaGuia[] = [];
+    capas.forEach((capa, i) => {
+      if (!capa.visible || capa.spr) return;
+      const plano = planosRef.current.get(capa.id);
+      const reposo = reposoRef.current.get(capa.id);
+      if (!plano || !reposo) return;
+      const seleccionada = marca.seleccion.includes(capa.id);
+      if (!seleccionada && !capa.mov) return;
+      paraGuia.push({
+        nombre: capa.nombre,
+        plano, reposo,
+        caja: cajaContenido(capa.img),
+        mov: capa.mov,
+        color: colorDeGuia(i),
+        seleccionada,
+        activa: capa.id === marca.activa,
+      });
+    });
+    if (paraGuia.length) pintarGuiaAnimacion(c, paraGuia, w);
 
     // El recuadro de recorte, encima de todo y solo en pantalla.
     const z = recorteRef.current;
@@ -1787,6 +1835,33 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     }
   }
 
+  /** Dejar una capa quieta desde la lista de animaciones. */
+  function quitarMovDeCapa(id: string) {
+    const capa = capasRef.current.find((c) => c.id === id);
+    if (!capa) return;
+    if (capa.bloqueada || bloqueoTotal) {
+      setAviso(`«${capa.nombre}» está bloqueada: quítale el candado para cambiarla.`);
+      return;
+    }
+    relojesCapaRef.current.delete(id);
+    upd(id, { mov: undefined });
+    setAviso(`«${capa.nombre}» se queda quieta.`);
+  }
+
+  /** Cambiar el orden de los pasos de cámara sin rehacer la cola entera. */
+  function moverPasoCola(id: string, delta: -1 | 1) {
+    setCola((cs) => {
+      const i = cs.findIndex((p) => p.id === id);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= cs.length) return cs;
+      const n = [...cs];
+      [n[i], n[j]] = [n[j], n[i]];
+      return n;
+    });
+    // La cola planificada deja de valer en cuanto cambia el orden.
+    pararSecuencia();
+  }
+
   function limpiarRecorte() {
     recorteRef.current = null;
     setHayRecorte(false);
@@ -2038,39 +2113,68 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     setEfectos((prev) => prev.filter((e) => e.id !== id));
   }
 
+  /**
+   * Dar movimiento a lo que esté marcado, no solo a la capa abierta.
+   *
+   * Animar cinco capas era abrirlas una a una y repetir el mismo gesto cinco
+   * veces. Ahora lo marcado en la lista es lo que se anima, que es lo mismo que
+   * ya decidía qué se movía al arrastrar: una sola idea de «selección» para
+   * todo, en vez de una por herramienta.
+   */
   function movCapaRapido(tipo: string) {
-    if (!capaActivaId) return;
+    const objetivo = seleccionMovible().filter((c) => !c.spr);
+    if (!objetivo.length) {
+      setAviso(bloqueoTotal
+        ? "La escena está bloqueada: suelta el candado del visor para animar."
+        : "Esa capa está bloqueada o no hay ninguna elegida.");
+      return;
+    }
+    const ids = objetivo.map((c) => c.id);
+    const cuantas = ids.length === 1
+      ? `«${objetivo[0].nombre}»`
+      : `${ids.length} capas`;
+    const aplicar = (mov: MovCapa | undefined) => {
+      setCapas((cs) => cs.map((c) => (ids.includes(c.id) ? { ...c, mov } : c)));
+      const ahora = performance.now();
+      // Cada capa arranca su reloj al recibir el movimiento; si no, una capa
+      // animada ahora aparecería a mitad de recorrido.
+      ids.forEach((id) => {
+        if (mov) relojesCapaRef.current.set(id, { inicio: ahora });
+        else relojesCapaRef.current.delete(id);
+      });
+    };
+
     if (!tipo) {
-      upd(capaActivaId, { mov: undefined });
+      aplicar(undefined);
+      setAviso(`${cuantas} sin movimiento.`);
       return;
     }
     if (tipo === "ruta") {
       // Una ruta sin puntos no existe todavía: no hay nada que guardar. Lo que
       // se hace es dejar el lienzo esperando toques, que es como se construye.
       // Guardar aquí un `mov` vacío sería guardar un movimiento que no mueve.
+      if (ids.length > 1) {
+        setAviso("Una ruta se dibuja capa a capa: deja marcada solo una y toca el lienzo.");
+        return;
+      }
       setModoEdicion("punto");
       acercarLienzo();
       setAviso("Toca la escena para ir marcando por dónde pasa. Cada toque, un tramo.");
       return;
     }
     if (tipo === "trayectoria") {
-      upd(capaActivaId, {
-        mov: normalizarMov({
-          tipo: "trayectoria",
-          desdeX: 0, desdeY: 0,
-          x: 0.25, y: 0,
-          segundos: 4, bucle: true, volver: true, suavizado: "suave",
-        }),
-      });
-      return;
+      aplicar(normalizarMov({
+        tipo: "trayectoria",
+        desdeX: 0, desdeY: 0,
+        x: 0.25, y: 0,
+        segundos: 4, bucle: true, volver: true, suavizado: "suave",
+      }));
+    } else if (tipo === "deriva") {
+      aplicar(normalizarMov({ tipo: "deriva", x: 0.08, y: 0, bucle: true }));
+    } else {
+      aplicar(normalizarMov({ tipo: tipo as MovCapa["tipo"], amplitud: 0.03, segundos: 4 }));
     }
-    if (tipo === "deriva") {
-      upd(capaActivaId, { mov: normalizarMov({ tipo: "deriva", x: 0.08, y: 0, bucle: true }) });
-      return;
-    }
-    upd(capaActivaId, {
-      mov: normalizarMov({ tipo: tipo as MovCapa["tipo"], amplitud: 0.03, segundos: 4 }),
-    });
+    setAviso(`${cuantas} con movimiento. Míralo en «Animaciones de la escena».`);
   }
 
   const upd = (id: string, p: Partial<CapaImg>) =>
@@ -2218,10 +2322,24 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
           tarjetas es lo que deja que los `truncate` de dentro funcionen. */}
       <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
         <div className="card order-2 min-w-0 space-y-2 self-start p-3 lg:order-1 lg:sticky lg:top-2">
-          <div className="flex items-center gap-2">
-            <span className="label">Capas · vista compacta</span>
+          <button
+            type="button"
+            onClick={() => alternarSeccion("capas")}
+            aria-expanded={seccionAbierta("capas")}
+            className="flex w-full items-center gap-2"
+          >
+            {seccionAbierta("capas")
+              ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" />
+              : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />}
+            <span className="label">Capas</span>
+            {!seccionAbierta("capas") && capaActiva && (
+              <span className="min-w-0 flex-1 truncate text-left text-[10px] text-muted">
+                {capaActiva.nombre}
+              </span>
+            )}
             <span className="chip ml-auto bg-surface-2 text-muted">{capas.length}</span>
-          </div>
+          </button>
+          {seccionAbierta("capas") && (<>
           {!!capas.length && (
             <>
               {/* «Todas» vive AQUÍ, junto a las casillas que selecciona, y no
@@ -2308,6 +2426,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               </div>
             ))}
           </div>
+          </>)}
         </div>
 
         <div className="order-1 space-y-2 lg:order-2">
@@ -2335,6 +2454,13 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   disabled={indiceActivo < 0 || indiceActivo >= capas.length - 1}
                   className="rounded border border-border p-1 text-muted disabled:opacity-25"
                   title="Capa siguiente" aria-label="Capa siguiente"><ChevronDown className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => setVerGuias((v) => !v)}
+                  className={`rounded border p-1 ${verGuias ? "border-accent text-accent" : "border-border text-muted"}`}
+                  title={verGuias ? "Ocultar las guías de selección y animación" : "Señalar en el lienzo lo marcado y los caminos"}
+                  aria-pressed={verGuias}
+                  aria-label={verGuias ? "Ocultar guías" : "Ver guías"}>
+                  {verGuias ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                </button>
                 {/* El candado del VISOR bloquea la escena entera, no la capa
                     de al lado. Antes era un tercer botón para lo mismo que ya
                     hacían la lista y el panel, y encima con el aspecto de
@@ -2537,7 +2663,20 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               }}
               onDragOver={(e) => e.preventDefault()}
             >
-              <canvas ref={canvas} className="block h-auto w-full" />
+              {/* El alto va TOPADO. Una escena vertical (1024×1536) a todo lo
+                  ancho ocupaba 1.500 px de alto: los mandos empezaban fuera de
+                  la pantalla, y para tocar una profundidad había que bajar,
+                  perder de vista el lienzo, tocar y volver a subir a mirar. Con
+                  el tope, la escena y lo que la controla caben a la vez.
+
+                  Sin `w-full`: con un ancho impuesto, el tope de alto aplasta
+                  la imagen en vez de encogerla (medido: una escena vertical
+                  salía a 816×580, relación 1.4 en vez de 0.67). Dejando que el
+                  ancho lo ponga la propia imagen, el tope reduce los dos lados
+                  a la vez y el rectángulo del canvas sigue siendo el de la
+                  imagen — que es lo que mide `coordsEnLienzo`, y por eso
+                  colocar y recortar siguen cayendo donde toca. */}
+              <canvas ref={canvas} className="mx-auto block max-h-[58vh] max-w-full" />
             </div>
             {/* El transporte, PEGADO a la vista. Antes vivía al final de todos
                 los mandos: para darle al play había que bajar hasta abajo, y
@@ -2585,6 +2724,45 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               plegado={transportePlegado}
               onPlegar={setTransportePlegado}
             />
+            {/* Qué se mueve, a la vista y pegado al lienzo. Antes había que
+                entrar en cada capa para saber si tenía animación, y los pasos
+                de cámara vivían en otra pestaña: nunca se veía el conjunto. */}
+            <PanelAnimaciones
+              abierto={seccionAbierta("animaciones")}
+              onAlternar={() => alternarSeccion("animaciones")}
+              enSecuencia={enSecuencia}
+              camara={cola.map((p, i) => ({
+                id: p.id,
+                label: nombreMov(p),
+                distancia: p.distancia,
+                durMs: p.durMs,
+                activo: enSecuencia && i === pasoActivo,
+              }))}
+              capas={capas
+                .map((c, i) => ({ c, i }))
+                .filter(({ c }) => !!c.mov || !!c.spr?.ruta?.pasos?.length)
+                .map(({ c, i }) => ({
+                  id: c.id,
+                  nombre: c.nombre,
+                  resumen: c.spr
+                    ? `Actor · ruta de ${c.spr.ruta?.pasos.length ?? 0} paso(s)`
+                    : resumenDeMov(c.mov),
+                  color: colorDeGuia(i),
+                  seleccionada: c.id === capaActivaId || grupo.includes(c.id),
+                  esSprite: !!c.spr,
+                }))}
+              onQuitarPaso={(id) => setCola((cs) => cs.filter((x) => x.id !== id))}
+              onMoverPaso={moverPasoCola}
+              onAbrirPaso={(id) => { setPanel("camara"); setAbierto(id); }}
+              onQuitarMovCapa={quitarMovDeCapa}
+              onIrACapa={(id) => { setCapaActivaId(id); setPanel("elemento"); setSubPanel("animar"); }}
+              onVaciarCamara={() => {
+                setCola([]);
+                pararSecuencia();
+                retenerPoseRef.current = false;
+                estadoRef.current = clonarEstado(inicioRef.current);
+              }}
+            />
             <PestanasMontaje
               activo={panel}
               onCambiar={setPanel}
@@ -2610,12 +2788,22 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                 capaActiva.bloqueada ? "border-gold/50 bg-gold/5" : "border-accent/35 bg-accent/5"
               }`}>
                 <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold">{capaActiva.nombre}</p>
-                    <p className="text-[9px] text-muted">
-                      Capa {indiceActivo + 1} de {capas.length} · {indiceActivo === 0 ? "al fondo" : indiceActivo === capas.length - 1 ? "al frente" : "entre otras capas"}
-                    </p>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => alternarSeccion("elemento")}
+                    aria-expanded={seccionAbierta("elemento")}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                  >
+                    {seccionAbierta("elemento")
+                      ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" />
+                      : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-semibold">{capaActiva.nombre}</span>
+                      <span className="block text-[9px] text-muted">
+                        Capa {indiceActivo + 1} de {capas.length} · {indiceActivo === 0 ? "al fondo" : indiceActivo === capas.length - 1 ? "al frente" : "entre otras capas"}
+                      </span>
+                    </span>
+                  </button>
                   {capaActiva.bloqueada && <span className="chip bg-gold/15 text-[9px] text-gold">bloqueada</span>}
                   <button type="button" onClick={() => upd(capaActiva.id, { bloqueada: !capaActiva.bloqueada })}
                     className="btn-ghost px-2 py-1 text-[10px]">
@@ -2624,7 +2812,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   </button>
                 </div>
 
-                <fieldset disabled={!!capaActiva.bloqueada || bloqueoTotal} className="space-y-2 disabled:opacity-60">
+                <fieldset disabled={!!capaActiva.bloqueada || bloqueoTotal}
+                  className={`space-y-2 disabled:opacity-60 ${seccionAbierta("elemento") ? "" : "hidden"}`}>
                   <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
                     <button type="button" onClick={() => moverAlExtremo(capaActiva.id, "fondo")}
                       disabled={indiceActivo === 0} className="btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-25"
@@ -2762,6 +2951,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                     hayRecorte={hayRecorte}
                     onRecortar={() => void recortarZonaActiva()}
                     seleccionadas={seleccionMovible().length}
+                    abierto={seccionAbierta("colocar")}
+                    onAlternar={() => alternarSeccion("colocar")}
                   />
 
                   {capaActiva.via && (

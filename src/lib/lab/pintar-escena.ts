@@ -6,7 +6,9 @@ import {
   copiarPlanoBucle, moverPlano, planoCentrado, type PlanoMovimiento,
 } from "@/lib/lab/plano-movimiento";
 import { desplazamientoCapa, type MovCapa } from "@/lib/lab/movimiento-capa";
-import { holguraDelAjuste, transformarPorAjuste, type AjusteCapa } from "@/lib/lab/ajuste-capa";
+import {
+  holguraDelAjuste, planoAjustado, transformarPorAjuste, type AjusteCapa,
+} from "@/lib/lab/ajuste-capa";
 import type { VistaCamara } from "@/lib/lab/anim-paralaje";
 
 // Pintar la escena: capas, sprites y sus copias de bucle.
@@ -70,7 +72,7 @@ export interface OpcionesPintado {
    * existe resuelto es aquí. Recalcularlo fuera sería mantener dos veces las
    * mismas cuentas, que es justo como se despegan las cosas.
    */
-  apuntarPlano?: (id: string, plano: PlanoMovimiento) => void;
+  apuntarPlano?: (id: string, plano: PlanoMovimiento, reposo: PlanoMovimiento) => void;
 }
 
 /** Lo que hace falta para pintar la guía de ruta encima, si se quiere. */
@@ -163,7 +165,7 @@ export function pintarCapas(
       c.save();
       c.globalAlpha = capa.opacidad;
       const plano = transformarPorAjuste(c, conMov, capa.ajuste);
-      o.apuntarPlano?.(capa.id, plano);
+      o.apuntarPlano?.(capa.id, plano, planoAjustado(base, capa.ajuste));
       c.drawImage(capa.img, plano.x0, plano.y0, plano.w, plano.h);
       if (propio.repetir) {
         const copias = copiarPlanoBucle(plano, capa.mov, "pantalla", w, h);
@@ -229,7 +231,11 @@ export function pintarCapas(
     // toca, y encima se empuja, gira o encoge la pieza. Al revés, el giro se
     // llevaría por delante el paralaje.
     const plano = transformarPorAjuste(c, planoCapa, capa.ajuste);
-    o.apuntarPlano?.(capa.id, plano);
+    // El plano DE REPOSO va sin el movimiento propio: los puntos de una ruta
+    // son desplazamientos desde donde la capa está quieta, así que dibujarlos
+    // sobre el plano ya movido haría que el camino se persiguiera a sí mismo
+    // mientras se reproduce.
+    o.apuntarPlano?.(capa.id, plano, planoAjustado(base, capa.ajuste));
     c.drawImage(capa.img, plano.x0, plano.y0, plano.w, plano.h);
     // Con bucle se pinta una segunda copia a un cuadro de distancia: es lo
     // que evita el hueco negro mientras la primera termina de salir.

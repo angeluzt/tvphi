@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, motivoFallo } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
-import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
+import { esAdminHistorias, puedeParalaje, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { CROMA } from "@/lib/lab/quitar-fondo";
 import { leerAjustes, calidadEfectiva } from "@/lib/story/ajustes";
 
@@ -129,8 +129,8 @@ function instruccion(d: z.infer<typeof cuerpo>, croma = false) {
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  if (!esAdminHistorias(user.email)) {
-    return NextResponse.json({ error: "Solo administradores" }, { status: 403 });
+  if (!(await puedeParalaje(user.email))) {
+    return NextResponse.json({ error: "El paralaje 2.5D está desactivado." }, { status: 403 });
   }
   const sinCupo = await bloqueoDeGasto(user);
   if (sinCupo) return respuestaBloqueo(sinCupo);
@@ -164,7 +164,14 @@ export async function POST(req: Request) {
   // Esta ruta se saltaba el panel: tenía «medium» escrito a mano, así que una
   // escena de 3 capas costaba 3 × $0.041 aunque los ajustes dijeran «baja». Es
   // el sitio donde más se nota, porque aquí se paga por CAPA y no por escena.
-  const calidad = calidadEfectiva(await leerAjustes(), true, parsed.data.calidad);
+  // El «es admin» va de verdad, no a mano en `true`. Con el paralaje abierto a
+  // todo el mundo, ese true dejaba que cualquiera pidiera calidad alta —33×
+  // más cara— saltándose el panel de gasto que existe justo para eso.
+  const calidad = calidadEfectiva(
+    await leerAjustes(),
+    esAdminHistorias(user.email),
+    parsed.data.calidad,
+  );
 
   // El formulario se arma cada vez: un FormData ya enviado no se puede reusar.
   const armar = (croma: boolean) => {

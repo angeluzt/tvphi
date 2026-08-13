@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { estadoCupoHistorias, esAdminHistorias } from "@/lib/story/cupo";
 import { StoryApp } from "@/components/story/story-app";
+import { leerAjustes } from "@/lib/story/ajustes";
 import { AvisoVerificar } from "@/components/auth/aviso-verificar";
 
 export const dynamic = "force-dynamic";
@@ -15,13 +16,14 @@ export default async function StoryPage({
   const user = await getCurrentUser();
   if (!user) redirect("/auth/login");
 
-  const [rows, cupo] = await Promise.all([
+  const [rows, cupo, ajustes] = await Promise.all([
     prisma.storyProject.findMany({
       where: { userId: user.id },
       orderBy: { updatedAt: "desc" },
       select: { id: true, name: true, seriesId: true, updatedAt: true },
     }),
     estadoCupoHistorias(user.id, user.email),
+    leerAjustes(),
   ]);
   const projects = rows.map((r) => ({ id: r.id, name: r.name, seriesId: r.seriesId, updatedAt: r.updatedAt.toISOString() }));
   // Si el id no es tuyo, se ignora: el cliente abre el inicio.
@@ -55,6 +57,7 @@ export default async function StoryPage({
         initialCupo={cupo}
         initialOpenId={openId}
         initialSerie={serieInicial}
+        paralaje={ajustes.paralaje25d}
       />
     </div>
   );

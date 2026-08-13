@@ -266,9 +266,18 @@ export function ParalajeGlobalSimple({
           <input type="number" min={0} max={30} step={0.5} value={pausaSeg} onChange={(e) => onPausaSeg(Math.max(0, Number(e.target.value) || 0))} className="input mt-0.5 w-full py-1 text-[11px]" />
         </label>
       </div>
-      <button type="button" onClick={onAplicarCola} className="btn-brand text-xs" disabled={anim === "quieto"}>
-        Añadir a la cola de cámara
-      </button>
+      {/* Un botón apagado sin decir por qué es un callejón: se le da, no pasa
+          nada, y no hay forma de saber qué falta. Aquí faltaba elegir el tipo. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={onAplicarCola} className="btn-brand text-xs disabled:opacity-40"
+          disabled={anim === "quieto"}
+          title={anim === "quieto" ? "Elige antes un tipo de movimiento" : "Añade este movimiento al final de la cola de cámara"}>
+          Añadir a la cola de cámara
+        </button>
+        {anim === "quieto" && (
+          <span className="text-[10px] text-muted">Elige un tipo arriba para poder añadirlo.</span>
+        )}
+      </div>
     </div>
   );
 }
