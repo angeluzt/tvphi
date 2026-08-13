@@ -30,6 +30,14 @@ export type CapaMontajeMeta = {
   /** Movimiento propio de la capa, si lo tiene. */
   mov?: unknown;
   /**
+   * Colocación a mano: empujón, giro, tamaño y centro de la pieza.
+   *
+   * Sin esto, un montaje separado en piezas y recolocado a mano volvía del ZIP
+   * con todas las piezas apiladas en su sitio de origen: se recuperaba el
+   * recorte y se perdía justo el trabajo de acomodarlas.
+   */
+  ajuste?: unknown;
+  /**
    * Si la capa es un sprite de la biblioteca: cómo leer su PNG.
    *
    * El archivo que se guarda es la TIRA entera —los N fotogramas en fila—, así
@@ -97,6 +105,7 @@ export async function bajarMontajeZip(opts: {
     via?: CapaMontajeMeta["via"];
     vacio?: number;
     mov?: unknown;
+    ajuste?: unknown;
     spr?: unknown;
     img: HTMLImageElement;
     tiras?: Record<string, HTMLImageElement>;
@@ -127,6 +136,7 @@ export async function bajarMontajeZip(opts: {
       via: c.via,
       vacio: c.vacio,
       mov: c.mov,
+      ajuste: c.ajuste,
       spr: c.spr,
       ...(tiras ? { tiras } : {}),
     });
@@ -154,7 +164,8 @@ export async function bajarMontajeZip(opts: {
       + "  · las imágenes de cada capa, con su profundidad\n"
       + "  · el mapa de formas que las originó\n"
       + "  · la animación de cámara\n"
-      + "  · las secuencias de sprites y qué capas dejaste bloqueadas\n\n"
+      + "  · las secuencias de sprites y qué capas dejaste bloqueadas\n"
+      + "  · las piezas que separaste y dónde las dejaste colocadas\n\n"
       + "Para recuperarlo: laboratorio → Montaje y paralaje → «Importar todo».\n"
       + "La primera imagen es el fondo; el resto deberían ser PNG con transparencia.\n",
     ),
@@ -173,6 +184,7 @@ export type CapaImportada = {
   via?: CapaMontajeMeta["via"];
   vacio?: number;
   mov?: unknown;
+  ajuste?: unknown;
   spr?: unknown;
   url: string;
   /** Tiras de las animaciones ligadas, por clave, ya como blob URL. */
@@ -238,6 +250,7 @@ export async function leerMontajeZip(file: Blob): Promise<{
         via: m.via,
         vacio: m.vacio,
         mov: m.mov,
+        ajuste: m.ajuste,
         spr: m.spr,
         url,
       });

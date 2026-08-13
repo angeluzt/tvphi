@@ -2,8 +2,11 @@ import {
   cajaSprite, fotogramaActivo, pintarSprite, spriteSigueCamara,
   type Plano, type SpriteEnCapa,
 } from "@/lib/lab/sprite-capa";
-import { copiarPlanoBucle, moverPlano, planoCentrado } from "@/lib/lab/plano-movimiento";
+import {
+  copiarPlanoBucle, moverPlano, planoCentrado, type PlanoMovimiento,
+} from "@/lib/lab/plano-movimiento";
 import { desplazamientoCapa, type MovCapa } from "@/lib/lab/movimiento-capa";
+import { holguraDelAjuste, transformarPorAjuste, type AjusteCapa } from "@/lib/lab/ajuste-capa";
 import type { VistaCamara } from "@/lib/lab/anim-paralaje";
 
 // Pintar la escena: capas, sprites y sus copias de bucle.
@@ -33,6 +36,8 @@ export interface CapaPintable {
   opacidad: number;
   mov?: MovCapa;
   spr?: SpriteEnCapa;
+  /** Colocación a mano: desplazamiento, giro y tamaño fijos de esta capa. */
+  ajuste?: AjusteCapa;
   /**
    * Las tiras de las animaciones ligadas, por clave.
    *
@@ -56,6 +61,16 @@ export interface OpcionesPintado {
   idFondo?: string;
   /** De qué sprite hay que devolver la guía de ruta para dibujarla luego. */
   rutaVisibleId?: string | null;
+  /**
+   * Dónde acabó cada capa de imagen en el lienzo, ya con cámara y ajuste.
+   *
+   * Lo necesita quien edita ENCIMA del dibujo: para saber a qué píxel de la
+   * imagen corresponde un dedo puesto en la pantalla hay que deshacer el zoom,
+   * el paneo y la colocación a mano, y el único sitio donde ese rectángulo
+   * existe resuelto es aquí. Recalcularlo fuera sería mantener dos veces las
+   * mismas cuentas, que es justo como se despegan las cosas.
+   */
+  apuntarPlano?: (id: string, plano: PlanoMovimiento) => void;
 }
 
 /** Lo que hace falta para pintar la guía de ruta encima, si se quiere. */
@@ -144,9 +159,11 @@ export function pintarCapas(
       const base = planoCentrado({
         lienzoW: w, lienzoH: h, escala: capa.escala * propio.escala,
       });
-      const plano = moverPlano(base, propio, "pantalla", w, h);
+      const conMov = moverPlano(base, propio, "pantalla", w, h);
       c.save();
       c.globalAlpha = capa.opacidad;
+      const plano = transformarPorAjuste(c, conMov, capa.ajuste);
+      o.apuntarPlano?.(capa.id, plano);
       c.drawImage(capa.img, plano.x0, plano.y0, plano.w, plano.h);
       if (propio.repetir) {
         const copias = copiarPlanoBucle(plano, capa.mov, "pantalla", w, h);
@@ -171,7 +188,11 @@ export function pintarCapas(
       // cuadro, asoma el negro por el canto. Se le da justo el margen que
       // necesita para el paneo de este fotograma —(e−1)/2 tiene que cubrir el
       // desplazamiento— así que ni se ve el negro ni se agranda de más.
-      const holgura = 1 + 2 * Math.max(Math.abs(vista.ox * pan), Math.abs(vista.oy * pan));
+      // La colocación a mano cuenta igual que el paneo: un fondo empujado medio
+      // cuadro también destapa el canto, y sin sumarlo aquí el arreglo del
+      // paneo se quedaba a medias en cuanto alguien tocaba el fondo.
+      const suelto = holguraDelAjuste(capa.ajuste);
+      const holgura = 1 + 2 * (Math.max(Math.abs(vista.ox * pan), Math.abs(vista.oy * pan)) + suelto);
       e = Math.max(e, holgura);
     }
     e *= propio.escala;
@@ -204,11 +225,16 @@ export function pintarCapas(
       continue;
     }
 
-    c.drawImage(capa.img, x0, y0, dw, dh);
+    // La colocación a mano va la ÚLTIMA: primero la cámara pone el plano donde
+    // toca, y encima se empuja, gira o encoge la pieza. Al revés, el giro se
+    // llevaría por delante el paralaje.
+    const plano = transformarPorAjuste(c, planoCapa, capa.ajuste);
+    o.apuntarPlano?.(capa.id, plano);
+    c.drawImage(capa.img, plano.x0, plano.y0, plano.w, plano.h);
     // Con bucle se pinta una segunda copia a un cuadro de distancia: es lo
     // que evita el hueco negro mientras la primera termina de salir.
     if (propio.repetir) {
-      const copias = copiarPlanoBucle(planoCapa, capa.mov!, "capa", w, h);
+      const copias = copiarPlanoBucle(plano, capa.mov!, "capa", w, h);
       if (copias.horizontal) c.drawImage(capa.img, copias.horizontal.x0, copias.horizontal.y0, copias.horizontal.w, copias.horizontal.h);
       if (copias.vertical) c.drawImage(capa.img, copias.vertical.x0, copias.vertical.y0, copias.vertical.w, copias.vertical.h);
     }

@@ -20,6 +20,8 @@ export type BorradorMontaje = {
     via?: "transparente" | "croma" | "opaca";
     vacio?: number;
     mov?: unknown;
+    /** Colocación a mano: empujón, giro, tamaño y centro de la pieza. */
+    ajuste?: unknown;
     spr?: unknown;
     dataUrl: string;
     /** Tiras de las animaciones ligadas, por clave, también como data URL. */

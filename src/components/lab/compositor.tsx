@@ -6,13 +6,17 @@ import {
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
   Move, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut,
   MapPinned, Plus, RotateCcw, Square, Lock, LockOpen, ChevronsUp, ChevronsDown,
-  Paintbrush, MoreHorizontal,
+  Paintbrush, MoreHorizontal, CheckSquare,
 } from "lucide-react";
 import { bajar } from "@/lib/lab/exportar";
 import { bajarMontajeZip, leerMontajeZip } from "@/lib/lab/montaje-zip";
 import { CROMA, prepararCapa } from "@/lib/lab/quitar-fondo";
 import { desplazamientoCapa, normalizarMov, MOVS_CAPA, type MovCapa } from "@/lib/lab/movimiento-capa";
-import { copiarPlanoBucle, moverPlano, planoCentrado } from "@/lib/lab/plano-movimiento";
+import { copiarPlanoBucle, moverPlano, planoCentrado, type PlanoMovimiento } from "@/lib/lab/plano-movimiento";
+import {
+  conAjuste, desplazarAjuste, esAjusteNeutro, normalizarAjuste, type AjusteCapa,
+} from "@/lib/lab/ajuste-capa";
+import { extraerZona, partirEnPiezas, type ZonaRecorte } from "@/lib/lab/piezas-capa";
 import {
   cajaSprite, estadoSpriteEn, fotogramaEn, normalizarSprite, pintarSprite, spriteSigueCamara,
   type AnimLigada, type PasoRutaSprite, type Plano, type SpriteEnCapa,
@@ -42,6 +46,7 @@ import { Palanca, Flecha, Num, Barra } from "./controles-basicos";
 import { pintarGuiaRuta } from "@/lib/lab/guia-ruta";
 import { pintarCapas } from "@/lib/lab/pintar-escena";
 import { MandosMovimientoCapa, movimientoInicial } from "./mandos-movimiento";
+import { MandosPiezas } from "./mandos-piezas";
 import { MandosSprite } from "./mandos-sprite";
 import { PanelGrupo } from "./panel-grupo";
 import {
@@ -99,6 +104,14 @@ interface CapaImg {
   /** Movimiento propio, además del de la cámara. */
   mov?: MovCapa;
   /**
+   * Dónde la ha puesto el usuario a mano: empujón, giro y tamaño.
+   *
+   * Separado de `mov` a propósito. `mov` es una animación —consume tiempo y
+   * reloj— y solo cabe una por capa; esto es una colocación fija. Mezclarlos
+   * hacía que acomodar una pieza gastara su única animación.
+   */
+  ajuste?: AjusteCapa;
+  /**
    * Si la capa es un sprite: `img` es la TIRA entera y esto dice cómo leerla.
    * Sin esto, la imagen se pinta a pantalla completa, como siempre.
    */
@@ -125,6 +138,7 @@ export interface Semilla {
   via?: CapaImg["via"];
   vacio?: number;
   mov?: MovCapa;
+  ajuste?: AjusteCapa;
   spr?: SpriteEnCapa;
   bloqueada?: boolean;
 }
@@ -214,7 +228,24 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   // toque en la escena lo planta ahí en vez de mover la cámara.
   const [efectoPendiente, setEfectoPendiente] = useState<string | null>(null);
   const [modoEdicion, setModoEdicion] = useState<ModoEdicionCanvas>(null);
-  const [moverTodo, setMoverTodo] = useState(false);
+  /**
+   * El candado del visor: NADA se mueve arrastrando.
+   *
+   * Es distinto del candado de cada capa. Aquel dice «esta no me la toques»;
+   * este dice «ya está todo donde quiero, no me lo estropees con el dedo». Sin
+   * él, cualquier roce en el lienzo recolocaba la cámara y deshacía el encuadre
+   * que acababas de dejar bien, que es lo que pasaba al desplazar en el móvil.
+   */
+  const [bloqueoTotal, setBloqueoTotal] = useState(false);
+  const bloqueoTotalRef = useRef(false);
+  bloqueoTotalRef.current = bloqueoTotal;
+  /** Los mandos de reproducción, plegados. Ya no van pegados a la pantalla. */
+  const [transportePlegado, setTransportePlegado] = useState(false);
+  /** Qué se está haciendo con las piezas ahora mismo, para no pedirlo dos veces. */
+  const [busyPiezas, setBusyPiezas] = useState<string | null>(null);
+  /** El rectángulo que se está dibujando para recortar, en 0..1 del lienzo. */
+  const recorteRef = useRef<ZonaRecorte | null>(null);
+  const [hayRecorte, setHayRecorte] = useState(false);
   const [volverRuta, setVolverRuta] = useState(true);
   const [voltearDefault, setVoltearDefault] = useState(true);
   const [pausaSegInspector, setPausaSegInspector] = useState(1.5);
@@ -283,6 +314,16 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   const moviendoRef = useRef(moviendo);
   const colaRef = useRef(cola);
   const capasRef = useRef(capas);
+  const grupoRef = useRef<string[]>([]);
+  /**
+   * Dónde cayó cada capa en el lienzo en el último fotograma.
+   *
+   * Lo rellena el dibujante. Es lo que permite convertir un dedo puesto en la
+   * pantalla en un píxel de la imagen sin repetir por fuera las cuentas del
+   * zoom, el paneo y el ajuste: si se recalcularan aquí, el recorte se
+   * despegaría del dibujo en cuanto una de las dos copias cambiara.
+   */
+  const planosRef = useRef(new Map<string, PlanoMovimiento>());
   const enSecuenciaRef = useRef(enSecuencia);
   const pasoActivoRef = useRef(pasoActivo);
   const repetirRef = useRef(repetirCola);
@@ -313,6 +354,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   moviendoRef.current = moviendo;
   colaRef.current = cola;
   capasRef.current = capas;
+  grupoRef.current = grupo;
   enSecuenciaRef.current = enSecuencia;
   pasoActivoRef.current = pasoActivo;
   repetirRef.current = repetirCola;
@@ -370,6 +412,13 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   useEffect(() => {
     if (rutaVisibleId && rutaVisibleId !== capaActivaId) setRutaVisibleId(null);
   }, [capaActivaId, rutaVisibleId]);
+  // Un recuadro dibujado sobre una capa no vale para la siguiente: cada capa
+  // cae en un sitio distinto del lienzo, así que aplicarlo tal cual recortaría
+  // por donde nadie pidió.
+  useEffect(() => {
+    recorteRef.current = null;
+    setHayRecorte(false);
+  }, [capaActivaId]);
   // Una capa borrada tiene que salir del grupo o «Separarlas» contaría
   // fantasmas y el número del panel dejaría de cuadrar con la lista.
   useEffect(() => {
@@ -414,6 +463,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               via: c.via,
               vacio: c.vacio,
               mov: c.mov,
+              ajuste: c.ajuste,
               spr: c.spr,
               dataUrl: await imgADataUrl(c.img),
               ...(await tirasADataUrls(c.tiras)),
@@ -458,7 +508,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
           clave: c.clave || base.id,
           depth: c.depth, escala: c.escala, opacidad: c.opacidad,
           bloqueada: c.bloqueada, via: c.via, vacio: c.vacio,
-          mov: normalizarMov(c.mov), spr: normalizarSprite(c.spr),
+          mov: normalizarMov(c.mov), ajuste: normalizarAjuste(c.ajuste),
+          spr: normalizarSprite(c.spr),
           tiras: await cargarTiras(c.tiras),
         });
       }
@@ -674,8 +725,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
         efectos,
         capas: capas.map((c) => ({
           clave: c.clave, nombre: c.nombre, depth: c.depth, escala: c.escala, opacidad: c.opacidad,
-          bloqueada: c.bloqueada, via: c.via, vacio: c.vacio, mov: c.mov, spr: c.spr, img: c.img,
-          tiras: c.tiras,
+          bloqueada: c.bloqueada, via: c.via, vacio: c.vacio, mov: c.mov, ajuste: c.ajuste,
+          spr: c.spr, img: c.img, tiras: c.tiras,
         })),
       });
       setAviso(
@@ -721,6 +772,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
           depth: c.depth, escala: c.escala, opacidad: c.opacidad, via, vacio,
           bloqueada: c.bloqueada,
           mov: normalizarMov(c.mov),
+          ajuste: normalizarAjuste(c.ajuste),
           spr: normalizarSprite(c.spr),
           tiras: await cargarTiras(c.tiras),
         });
@@ -783,7 +835,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
           nuevas.push({
             ...hacerCapa(s.nombre, await cargar(s.url)),
             ...(s.id ? { clave: s.id } : {}),
-            via: s.via, vacio: s.vacio, mov: s.mov, spr: s.spr, bloqueada: s.bloqueada,
+            via: s.via, vacio: s.vacio, mov: s.mov, ajuste: normalizarAjuste(s.ajuste),
+            spr: s.spr, bloqueada: s.bloqueada,
           });
           ajustes.push(s);
         } catch {}
@@ -1023,12 +1076,14 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     // Las capas las pinta un módulo aparte, el MISMO que usa «Montaje PNG».
     // Antes había dos dibujantes y se habían separado: el del PNG no pintaba
     // efectos ni el movimiento propio de las capas.
+    planosRef.current.clear();
     const guia = pintarCapas(c, {
       capas,
       vista,
       w, h,
       idFondo,
       rutaVisibleId,
+      apuntarPlano: (id, plano) => planosRef.current.set(id, plano),
       // Cada capa lleva su reloj: un sprite y una capa con «mov» no comparten
       // el mismo, y por eso el tiempo se pide por capa en vez de pasarlo suelto.
       tiempoDeCapa: (capa) => (capa.spr
@@ -1046,6 +1101,23 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
 
     // Guía solo en la vista previa. Nunca entra al PNG ni al ZIP.
     if (guia) pintarGuiaRuta(c, guia.spr, guia.plano, guia.tiempo);
+
+    // El recuadro de recorte, encima de todo y solo en pantalla.
+    const z = recorteRef.current;
+    if (z) {
+      const x = Math.min(z.x0, z.x1) * w;
+      const y = Math.min(z.y0, z.y1) * h;
+      const rw = Math.abs(z.x1 - z.x0) * w;
+      const rh = Math.abs(z.y1 - z.y0) * h;
+      c.save();
+      c.fillStyle = "rgba(56,189,248,.16)";
+      c.fillRect(x, y, rw, rh);
+      c.strokeStyle = "rgba(56,189,248,.95)";
+      c.lineWidth = Math.max(1.5, w / 400);
+      c.setLineDash([w / 80, w / 120]);
+      c.strokeRect(x, y, rw, rh);
+      c.restore();
+    }
   }
 
   /**
@@ -1346,11 +1418,16 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
    * usarla desplazaría todo lo que se coloque. El rectángulo del canvas es el
    * de la imagen de verdad.
    */
-  function coordsEnLienzo(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
+  function rectLienzo(): DOMRect | null {
     const el = (previewAbiertaRef.current ? canvasPreview.current : canvas.current) ?? caja.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) return null;
+    return r.width < 1 || r.height < 1 ? null : r;
+  }
+
+  function coordsEnLienzo(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
+    const r = rectLienzo();
+    if (!r) return null;
     return {
       x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
       y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
@@ -1472,17 +1549,53 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     setAviso(`Pausa de ${pausaSegInspector}s en «${capa.nombre}».`);
   }
 
-  function colocarSeleccion(nx: number, ny: number) {
-    const ids = moverTodo
-      ? capasRef.current.filter((c) => !c.bloqueada).map((c) => c.id)
-      : capaActivaId ? [capaActivaId] : [];
-    if (!ids.length) return;
+  /**
+   * Qué capas se van a mover al arrastrar.
+   *
+   * LAS MARCADAS EN LA LISTA, y si no hay ninguna, la que se esté editando.
+   * Antes esto lo decidía una casilla escondida —«arrastrar mueve todas»— que
+   * no se veía desde la lista, así que uno arrastraba creyendo mover una capa y
+   * movía cinco, o al revés. Ahora lo que se ve marcado es exactamente lo que
+   * se va a mover, y «Todas» está donde se eligen las capas.
+   *
+   * El candado, tanto el del visor como el de cada capa, manda por encima.
+   */
+  function seleccionMovible(): CapaImg[] {
+    if (bloqueoTotalRef.current) return [];
+    const cs = capasRef.current;
+    const marcadas = cs.filter((c) => grupoRef.current.includes(c.id));
+    const base = marcadas.length
+      ? marcadas
+      : cs.filter((c) => c.id === capaActivaId);
+    return base.filter((c) => !c.bloqueada);
+  }
+
+  /**
+   * Empujar la selección, en fracción de PANTALLA.
+   *
+   * Se convierte al plano de cada capa con el rectángulo que apuntó el
+   * dibujante: una capa al fondo y otra en primer plano no ocupan el mismo
+   * espacio en el lienzo, así que el mismo centímetro de dedo tiene que valer
+   * distinto en cada una para que las dos sigan al dedo.
+   */
+  function arrastrarSeleccion(dxPantalla: number, dyPantalla: number) {
+    const objetivo = seleccionMovible();
+    if (!objetivo.length) return;
+    const ids = new Set(objetivo.map((c) => c.id));
+    const cv = previewAbiertaRef.current ? canvasPreview.current : canvas.current;
+    const anchoLienzo = cv?.width || tam.current.w;
+    const altoLienzo = cv?.height || tam.current.h;
     setCapas((cs) => cs.map((c) => {
-      if (!ids.includes(c.id)) return c;
+      if (!ids.has(c.id)) return c;
       if (c.spr) {
-        const dx = nx - c.spr.x;
-        const dy = ny - c.spr.y;
-        const spr = { ...c.spr, x: nx, y: ny };
+        // Un actor ya sabe dónde está: se le mueve el punto, no el plano.
+        const dx = dxPantalla;
+        const dy = dyPantalla;
+        const spr = {
+          ...c.spr,
+          x: Math.max(-0.5, Math.min(1.5, c.spr.x + dx)),
+          y: Math.max(-0.5, Math.min(1.5, c.spr.y + dy)),
+        };
         if (c.spr.ruta?.pasos.length) {
           spr.ruta = {
             ...c.spr.ruta,
@@ -1500,21 +1613,183 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
         }
         return { ...c, spr };
       }
-      // Capa de imagen: desplazamiento local rápido
-      return {
-        ...c,
-        mov: {
-          tipo: "trayectoria",
-          desdeX: 0,
-          desdeY: 0,
-          x: (nx - 0.5) * 0.35,
-          y: (ny - 0.5) * 0.35,
-          segundos: 0.01,
-          bucle: false,
-          volver: false,
-        },
-      };
+      const plano = planosRef.current.get(c.id);
+      const fx = plano?.w ? anchoLienzo / plano.w : 1;
+      const fy = plano?.h ? altoLienzo / plano.h : 1;
+      return { ...c, ajuste: desplazarAjuste(c.ajuste, dxPantalla * fx, dyPantalla * fy) };
     }));
+  }
+
+  /** Retocar a mano la colocación de la capa activa (giro, tamaño, empujón). */
+  function ajustarCapaActiva(patch: Partial<AjusteCapa>) {
+    const capa = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!capa || capa.bloqueada || bloqueoTotalRef.current) return;
+    upd(capa.id, { ajuste: conAjuste(capa.ajuste, patch) });
+  }
+
+  function soltarAjuste(id: string) {
+    const capa = capasRef.current.find((c) => c.id === id);
+    if (!capa?.ajuste) return;
+    // El pivote se conserva: es de dónde ESTÁ la pieza, no de cómo se colocó.
+    upd(id, {
+      ajuste: conAjuste(undefined, {
+        pivoteX: capa.ajuste.pivoteX,
+        pivoteY: capa.ajuste.pivoteY,
+      }),
+    });
+    setAviso(`«${capa.nombre}» vuelve a donde salió.`);
+  }
+
+  // ── Piezas: partir una capa en las cosas que lleva dentro ─────────────────
+
+  /**
+   * Sustituye una capa por varias, conservando su sitio en la pila.
+   *
+   * Las nuevas heredan profundidad, escala y opacidad, y el EMPUJÓN que
+   * tuviera la capa madre —eso no cambia cómo se ven—, pero no su giro ni su
+   * tamaño: esos van anclados al centro de la pieza, y cada trozo tiene el
+   * suyo, así que heredarlos movería los trozos de sitio al separarlos.
+   */
+  function sustituirCapa(id: string, nuevas: CapaImg[]) {
+    relojesCapaRef.current.delete(id);
+    relojesSpriteRef.current.delete(id);
+    const ahora = performance.now();
+    nuevas.forEach((c) => { if (c.mov) relojesCapaRef.current.set(c.id, { inicio: ahora }); });
+    setCapas((cs) => {
+      const i = cs.findIndex((c) => c.id === id);
+      if (i < 0) return cs;
+      return [...cs.slice(0, i), ...nuevas, ...cs.slice(i + 1)];
+    });
+    setGrupo((g) => g.filter((x) => x !== id));
+  }
+
+  function heredar(madre: CapaImg, nombre: string, img: HTMLImageElement, extra: {
+    pivoteX: number; pivoteY: number; vacio: number;
+  }): CapaImg {
+    return {
+      ...hacerCapa(nombre, img),
+      depth: madre.depth,
+      escala: madre.escala,
+      opacidad: madre.opacidad,
+      visible: madre.visible,
+      via: madre.via === "opaca" ? "transparente" : madre.via,
+      vacio: extra.vacio,
+      mov: madre.mov,
+      ajuste: conAjuste(undefined, {
+        dx: madre.ajuste?.dx ?? 0,
+        dy: madre.ajuste?.dy ?? 0,
+        pivoteX: extra.pivoteX,
+        pivoteY: extra.pivoteY,
+      }),
+    };
+  }
+
+  /** Partir la capa activa por sus trozos sueltos. */
+  async function separarEnPiezas() {
+    const capa = capasRef.current.find((c) => c.id === capaActivaId);
+    if (!capa || busyPiezas) return;
+    if (capa.bloqueada) { setAviso("Esa capa está bloqueada: quítale el candado primero."); return; }
+    if (capa.spr) { setAviso("Un actor no se parte en piezas: es una tira de fotogramas."); return; }
+    setBusyPiezas("Buscando piezas sueltas…");
+    try {
+      const { piezas, mapa } = await partirEnPiezas(capa.img, capa.nombre);
+      if (piezas.length < 2) {
+        setAviso(
+          mapa.piezas.length <= 1
+            ? `«${capa.nombre}» es una sola mancha: todo lo que tiene dentro se toca. `
+              + "Usa «Recortar zona» para separar a mano la parte que quieras."
+            : "No se pudo separar esta capa.",
+        );
+        return;
+      }
+      const nuevas: CapaImg[] = [];
+      for (const p of piezas) {
+        nuevas.push(heredar(capa, p.nombre, await cargar(p.url), p));
+        // La imagen ya está en memoria; el blob solo era el camino.
+        URL.revokeObjectURL(p.url);
+      }
+      sustituirCapa(capa.id, nuevas);
+      setCapaActivaId(nuevas[0].id);
+      const perdido = capa.ajuste && (capa.ajuste.giro !== 0 || capa.ajuste.escala !== 1);
+      setAviso(
+        `«${capa.nombre}» separada en ${nuevas.length} piezas`
+        + (piezas.some((p) => p.resto) ? " (la última junta los trozos pequeños)" : "")
+        + ". Cada una se mueve, gira y se ordena por su cuenta."
+        + (perdido ? " El giro y el tamaño de la capa se reinician: cada pieza gira por su centro." : ""),
+      );
+    } catch (e) {
+      setAviso((e as Error).message || "No se pudo separar la capa en piezas.");
+    } finally {
+      setBusyPiezas(null);
+    }
+  }
+
+  /**
+   * Sacar a otra capa lo que quede dentro del recuadro dibujado en el lienzo.
+   *
+   * El recuadro se dibuja SOBRE LA PANTALLA, así que hay que devolverlo a
+   * coordenadas de la imagen deshaciendo el zoom, el paneo y la colocación a
+   * mano de esa capa. El rectángulo que hace falta es el que apuntó el
+   * dibujante en el último fotograma.
+   */
+  async function recortarZonaActiva() {
+    const capa = capasRef.current.find((c) => c.id === capaActivaId);
+    const z = recorteRef.current;
+    if (!capa || !z || busyPiezas) return;
+    if (capa.bloqueada) { setAviso("Esa capa está bloqueada: quítale el candado primero."); return; }
+    if (capa.spr) { setAviso("Un actor no se recorta desde aquí."); return; }
+    const plano = planosRef.current.get(capa.id);
+    if (!plano || plano.w < 1 || plano.h < 1) {
+      setAviso("Esa capa no se está viendo: hazla visible antes de recortarla.");
+      return;
+    }
+    const cv = previewAbiertaRef.current ? canvasPreview.current : canvas.current;
+    const anchoLienzo = cv?.width || tam.current.w;
+    const altoLienzo = cv?.height || tam.current.h;
+    const aImagen = (x: number, y: number) => ({
+      x: (x * anchoLienzo - plano.x0) / plano.w,
+      y: (y * altoLienzo - plano.y0) / plano.h,
+    });
+    const a = aImagen(z.x0, z.y0);
+    const b = aImagen(z.x1, z.y1);
+
+    setBusyPiezas("Recortando…");
+    try {
+      const r = await extraerZona(capa.img, capa.nombre, { x0: a.x, y0: a.y, x1: b.x, y1: b.y });
+      if (!r) {
+        setAviso("En ese recuadro no hay nada pintado de esta capa.");
+        return;
+      }
+      if (!r.fuera) {
+        URL.revokeObjectURL(r.dentro.url);
+        setAviso("Ese recuadro se lleva la capa entera: encierra solo la parte que quieras separar.");
+        return;
+      }
+      const dentro = heredar(capa, r.dentro.nombre, await cargar(r.dentro.url), r.dentro);
+      const fuera = heredar(capa, r.fuera.nombre, await cargar(r.fuera.url), r.fuera);
+      URL.revokeObjectURL(r.dentro.url);
+      URL.revokeObjectURL(r.fuera.url);
+      // La recortada va DELANTE de lo que queda: es lo que se acaba de coger,
+      // y lo primero que uno hace es moverla para ver dónde encaja.
+      sustituirCapa(capa.id, [fuera, dentro]);
+      setCapaActivaId(dentro.id);
+      limpiarRecorte();
+      setModoEdicion("colocar");
+      setAviso(
+        r.modo === "piezas"
+          ? `Separada la silueta entera que había en el recuadro («${dentro.nombre}»). Arrástrala para colocarla.`
+          : `Recortado el rectángulo («${dentro.nombre}»). Arrástralo para colocarlo.`,
+      );
+    } catch (e) {
+      setAviso((e as Error).message || "No se pudo recortar esa zona.");
+    } finally {
+      setBusyPiezas(null);
+    }
+  }
+
+  function limpiarRecorte() {
+    recorteRef.current = null;
+    setHayRecorte(false);
   }
 
   /**
@@ -1948,10 +2223,37 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
             <span className="chip ml-auto bg-surface-2 text-muted">{capas.length}</span>
           </div>
           {!!capas.length && (
-            <p className="text-[10px] text-muted">
-              Toca el nombre para editarla; marca la casilla para meterla en el grupo y aplicarle
-              paralaje o animación en bloque. Arriba queda detrás; abajo, delante.
-            </p>
+            <>
+              {/* «Todas» vive AQUÍ, junto a las casillas que selecciona, y no
+                  escondida en el inspector: lo que se marca en esta lista es
+                  exactamente lo que se va a mover al arrastrar. */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setGrupo(grupo.length === capas.length ? [] : capas.map((c) => c.id))}
+                  className={`btn-ghost px-1.5 py-1 text-[10px] ${grupo.length === capas.length ? "border-accent text-accent" : ""}`}
+                  aria-pressed={grupo.length === capas.length}
+                  title="Marcar o desmarcar todas las capas"
+                >
+                  {grupo.length === capas.length
+                    ? <CheckSquare className="h-3.5 w-3.5 text-accent" />
+                    : <Square className="h-3.5 w-3.5" />}
+                  Seleccionar todas
+                </button>
+                {!!grupo.length && (
+                  <button type="button" onClick={() => setGrupo([])}
+                    className="text-[10px] text-muted underline hover:text-fg">
+                    Quitar selección
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-muted">
+                {grupo.length
+                  ? `Al arrastrar en el lienzo se mueven las ${grupo.length} capa${grupo.length === 1 ? "" : "s"} marcada${grupo.length === 1 ? "" : "s"}.`
+                  : "Sin nada marcado, al arrastrar se mueve solo la capa que estés editando."}
+                {" "}Arriba queda detrás; abajo, delante.
+              </p>
+            </>
           )}
           {!capas.length && (
             <p className="text-[11px] text-muted">
@@ -1981,21 +2283,25 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   title={c.nombre}>
                   <span className={c.visible ? "" : "text-muted line-through"}>{c.nombre}</span>
                   {c.spr && <span className="ml-1 text-[8px] text-accent">sprite</span>}
+                  {!esAjusteNeutro(c.ajuste) && !c.spr && (
+                    <span className="ml-1 text-[8px] text-accent" title="Colocada a mano">·movida</span>
+                  )}
                 </button>
                 <button type="button" onClick={() => upd(c.id, { bloqueada: !c.bloqueada })}
-                  className={c.bloqueada ? "text-gold" : "text-muted hover:text-fg"}
-                  title={c.bloqueada ? "Desbloquear capa" : "Bloquear capa"}
+                  disabled={bloqueoTotal}
+                  className={`disabled:opacity-40 ${c.bloqueada || bloqueoTotal ? "text-gold" : "text-muted hover:text-fg"}`}
+                  title={bloqueoTotal ? "La escena entera está bloqueada" : c.bloqueada ? "Desbloquear capa" : "Bloquear capa"}
                   aria-label={`${c.bloqueada ? "Desbloquear" : "Bloquear"} ${c.nombre}`}>
-                  {c.bloqueada ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+                  {c.bloqueada || bloqueoTotal ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
                 </button>
-                <button type="button" onClick={() => mover(i, -1)} disabled={i === 0 || c.bloqueada}
+                <button type="button" onClick={() => mover(i, -1)} disabled={i === 0 || c.bloqueada || bloqueoTotal}
                   className="text-muted hover:text-fg disabled:opacity-25" title="Una capa hacia detrás"
                   aria-label={`Mover ${c.nombre} detrás`}><ChevronUp className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => mover(i, 1)} disabled={i === capas.length - 1 || c.bloqueada}
+                <button type="button" onClick={() => mover(i, 1)} disabled={i === capas.length - 1 || c.bloqueada || bloqueoTotal}
                   className="text-muted hover:text-fg disabled:opacity-25" title="Una capa hacia delante"
                   aria-label={`Mover ${c.nombre} delante`}><ChevronDown className="h-3.5 w-3.5" /></button>
                 <button type="button" onClick={() => upd(c.id, { visible: !c.visible })}
-                  disabled={c.bloqueada} className="text-muted hover:text-fg disabled:opacity-25"
+                  disabled={c.bloqueada || bloqueoTotal} className="text-muted hover:text-fg disabled:opacity-25"
                   aria-label={`${c.visible ? "Ocultar" : "Mostrar"} ${c.nombre}`}>
                   {c.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </button>
@@ -2029,22 +2335,38 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   disabled={indiceActivo < 0 || indiceActivo >= capas.length - 1}
                   className="rounded border border-border p-1 text-muted disabled:opacity-25"
                   title="Capa siguiente" aria-label="Capa siguiente"><ChevronDown className="h-3.5 w-3.5" /></button>
-                {capaActiva && (
-                  <button type="button" onClick={() => upd(capaActiva.id, { bloqueada: !capaActiva.bloqueada })}
-                    className={`rounded border p-1 ${capaActiva.bloqueada ? "border-gold text-gold" : "border-border text-muted"}`}
-                    title={capaActiva.bloqueada ? "Desbloquear esta capa" : "Bloquear esta capa"}
-                    aria-label={capaActiva.bloqueada ? "Desbloquear esta capa" : "Bloquear esta capa"}>
-                    {capaActiva.bloqueada ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
-                  </button>
-                )}
+                {/* El candado del VISOR bloquea la escena entera, no la capa
+                    de al lado. Antes era un tercer botón para lo mismo que ya
+                    hacían la lista y el panel, y encima con el aspecto de
+                    «bloquear esto que estoy viendo»: se le daba esperando que
+                    dejara de moverse todo, y seguía moviéndose todo. */}
+                <button type="button" onClick={() => {
+                  setBloqueoTotal((v) => !v);
+                  setAviso(bloqueoTotal
+                    ? "Escena suelta: ya puedes volver a mover la cámara y las capas."
+                    : "Escena bloqueada: no se mueve nada al arrastrar. Vuelve a tocar el candado para soltarla.");
+                }}
+                  className={`rounded border p-1 ${bloqueoTotal ? "border-gold bg-gold/15 text-gold" : "border-border text-muted"}`}
+                  title={bloqueoTotal ? "Soltar la escena" : "Bloquear toda la escena: nada se moverá al arrastrar"}
+                  aria-pressed={bloqueoTotal}
+                  aria-label={bloqueoTotal ? "Soltar toda la escena" : "Bloquear toda la escena"}>
+                  {bloqueoTotal ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+                </button>
               </div>
+              {bloqueoTotal && (
+                <p className="rounded-lg border border-gold/40 bg-gold/10 px-2 py-1 text-[10px] text-gold">
+                  Escena bloqueada · arrastrar no mueve nada. Toca el candado de arriba para soltarla.
+                </p>
+              )}
             <div
               ref={caja}
               // «touch-none» es lo que hace que en el móvil se pueda arrastrar:
               // sin ello el navegador se queda el gesto para desplazar la página
               // y el dedo no mueve nada.
               className={`z-20 touch-none overflow-hidden rounded-lg border border-border bg-black shadow-lg shadow-black/40 sm:sticky sm:top-12 ${
-                modoEdicion === "punto" ? "cursor-crosshair"
+                bloqueoTotal ? "cursor-not-allowed ring-2 ring-gold/60"
+                  : modoEdicion === "punto" ? "cursor-crosshair"
+                  : modoEdicion === "recorte" ? "cursor-crosshair"
                   : modoEdicion === "colocar" ? "cursor-move"
                   : enSecuencia ? "" : arrastrando ? "cursor-grabbing" : "cursor-grab"
               }`}
@@ -2061,16 +2383,32 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   setEfectoPendiente(null);
                   return;
                 }
+                // El candado del visor corta aquí: ni cámara, ni capas, ni
+                // recortes. Lo de arriba —plantar un efecto ya elegido— sí
+                // pasa, porque eso no es arrastrar nada.
+                if (bloqueoTotal) return;
                 if (modoEdicion === "punto" && xy) {
                   e.preventDefault();
                   anadirPuntoRuta(xy.x, xy.y);
+                  return;
+                }
+                if (modoEdicion === "recorte" && xy) {
+                  e.preventDefault();
+                  dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                  recorteRef.current = { x0: xy.x, y0: xy.y, x1: xy.x, y1: xy.y };
+                  setHayRecorte(false);
+                  arrastreRef.current = { x: e.clientX, y: e.clientY };
+                  setArrastrando(true);
                   return;
                 }
                 if (modoEdicion === "colocar" && xy) {
                   e.preventDefault();
                   dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
                   try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-                  colocarSeleccion(xy.x, xy.y);
+                  // Sin salto al tocar: la capa se mueve LO QUE SE ARRASTRE.
+                  // Colocarla de golpe donde cae el dedo hacía imposible
+                  // afinar, que es justo para lo que se usa esto.
                   arrastreRef.current = { x: e.clientX, y: e.clientY };
                   setArrastrando(true);
                   return;
@@ -2093,9 +2431,21 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                 retenerPoseRef.current = true;
               }}
               onPointerMove={(e) => {
-                if (modoEdicion === "colocar" && arrastreRef.current && dedos.current.has(e.pointerId)) {
+                if (bloqueoTotal) return;
+                if (modoEdicion === "recorte") {
+                  if (!recorteRef.current || !dedos.current.has(e.pointerId)) return;
                   const xy = coordsEnLienzo(e);
-                  if (xy) colocarSeleccion(xy.x, xy.y);
+                  if (xy) recorteRef.current = { ...recorteRef.current, x1: xy.x, y1: xy.y };
+                  return;
+                }
+                if (modoEdicion === "colocar" && arrastreRef.current && dedos.current.has(e.pointerId)) {
+                  const r = rectLienzo();
+                  if (r) {
+                    arrastrarSeleccion(
+                      (e.clientX - arrastreRef.current.x) / r.width,
+                      (e.clientY - arrastreRef.current.y) / r.height,
+                    );
+                  }
                   arrastreRef.current = { x: e.clientX, y: e.clientY };
                   return;
                 }
@@ -2138,6 +2488,13 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   arrastreRef.current = null;
                   setArrastrando(false);
                 }
+                // Un recuadro de menos de un 2% no es un recorte: es un toque.
+                if (modoEdicion === "recorte") {
+                  const z = recorteRef.current;
+                  const grande = !!z && Math.abs(z.x1 - z.x0) > 0.02 && Math.abs(z.y1 - z.y0) > 0.02;
+                  if (!grande) recorteRef.current = null;
+                  setHayRecorte(grande);
+                }
               }}
               onPointerCancel={(e) => {
                 dedos.current.delete(e.pointerId);
@@ -2147,7 +2504,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               // Con el foco puesto, las flechas del teclado colocan la toma.
               tabIndex={0}
               onKeyDown={(e) => {
-                if (enSecuencia || !capas.length) return;
+                if (enSecuencia || !capas.length || bloqueoTotal) return;
                 const salto = e.shiftKey ? 0.14 : 0.05;
                 const mapa: Record<string, () => void> = {
                   ArrowUp: () => moverPose(0, salto),
@@ -2167,7 +2524,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               // La rueda acerca y aleja: es el gesto que todo el mundo espera y
               // deja poner la profundidad de arranque sin teclear nada.
               onWheel={(e) => {
-                if (enSecuencia || !capas.length) return;
+                if (enSecuencia || !capas.length || bloqueoTotal) return;
                 e.preventDefault();
                 retenerPoseRef.current = true;
                 acercarPose(e.deltaY < 0 ? 1 : -1);
@@ -2225,6 +2582,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                 setPreviewAbierta(true);
                 if (!enSecuencia && cola.length) iniciarSecuencia();
               }}
+              plegado={transportePlegado}
+              onPlegar={setTransportePlegado}
             />
             <PestanasMontaje
               activo={panel}
@@ -2265,7 +2624,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   </button>
                 </div>
 
-                <fieldset disabled={!!capaActiva.bloqueada} className="space-y-2 disabled:opacity-60">
+                <fieldset disabled={!!capaActiva.bloqueada || bloqueoTotal} className="space-y-2 disabled:opacity-60">
                   <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
                     <button type="button" onClick={() => moverAlExtremo(capaActiva.id, "fondo")}
                       disabled={indiceActivo === 0} className="btn-ghost justify-center px-1 py-1 text-[9px] disabled:opacity-25"
@@ -2357,9 +2716,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   <InspectorRapido
                     esSprite={!!capaActiva.spr}
                     modo={modoEdicion}
-                    onModo={(m) => { setModoEdicion(m); if (m) acercarLienzo(); }}
-                    moverTodo={moverTodo}
-                    onMoverTodo={setMoverTodo}
+                    onModo={(m) => { setModoEdicion(m); limpiarRecorte(); if (m) acercarLienzo(); }}
                     volverRuta={volverRuta}
                     onVolverRuta={(v) => {
                       setVolverRuta(v);
@@ -2383,7 +2740,28 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                     onBorrarRuta={borrarRutaCapa}
                     puntosRuta={puntosDeLaRuta()}
                     movCapaTipo={capaActiva.mov?.tipo ?? ""}
-                    bloqueada={capaActiva.bloqueada}
+                    bloqueada={capaActiva.bloqueada || bloqueoTotal}
+                    seleccionadas={grupo.length}
+                    onSeleccionarTodas={() => setGrupo(capas.map((c) => c.id))}
+                  />
+
+                  <MandosPiezas
+                    ajuste={capaActiva.ajuste}
+                    onAjuste={ajustarCapaActiva}
+                    onSoltar={() => soltarAjuste(capaActiva.id)}
+                    esSprite={!!capaActiva.spr}
+                    bloqueada={capaActiva.bloqueada || bloqueoTotal}
+                    ocupado={busyPiezas}
+                    onSeparar={() => void separarEnPiezas()}
+                    modoRecorte={modoEdicion === "recorte"}
+                    onModoRecorte={(v) => {
+                      setModoEdicion(v ? "recorte" : null);
+                      limpiarRecorte();
+                      if (v) acercarLienzo();
+                    }}
+                    hayRecorte={hayRecorte}
+                    onRecortar={() => void recortarZonaActiva()}
+                    seleccionadas={seleccionMovible().length}
                   />
 
                   {capaActiva.via && (
