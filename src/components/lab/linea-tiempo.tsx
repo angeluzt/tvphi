@@ -53,6 +53,7 @@ export function LineaTiempo({
   onAbrirBloque,
   seleccionId,
   onAnadir,
+  onEstirar,
   alto = 26,
 }: {
   cola: PasoCamaraLT[];
@@ -68,6 +69,15 @@ export function LineaTiempo({
   seleccionId?: string | null;
   /** Añadir una pista nueva desde la propia línea. */
   onAnadir?: (que: "camara" | "efecto" | "actor") => void;
+  /**
+   * Estirar un bloque por sus cantos. Devuelve el nuevo principio y final en ms.
+   *
+   * Solo por los CANTOS, no arrastrando el cuerpo: el carril entero es la barra
+   * de posición —se pulsa en cualquier parte para saltar ahí— y si el cuerpo de
+   * un bloque también arrastrara, mover el cabezal sobre una escena llena de
+   * bloques sería imposible sin tocar algo sin querer.
+   */
+  onEstirar?: (pista: Pista, b: Bloque, desdeMs: number, hastaMs: number) => void;
   alto?: number;
 }) {
   const lt = useMemo(() => lineaDeTiempo(cola, sprites, efectos), [cola, sprites, efectos]);
@@ -165,6 +175,16 @@ export function LineaTiempo({
                     <span className="truncate">{b.etiqueta}</span>
                   </button>
                 ))}
+                {onEstirar && p.bloques.map((b) => (
+                  <Cantos
+                    key={`canto-${b.id}`}
+                    b={b}
+                    pct={pct}
+                    total={lt.totalMs}
+                    carril={() => carril.current}
+                    onEstirar={(d, h) => onEstirar(p, b, d, h)}
+                  />
+                ))}
                 {p.marcas.map((m, i) => (
                   <span
                     key={`${m.clase}-${i}`}
@@ -234,3 +254,63 @@ export function LineaTiempo({
 }
 
 export type { Bloque, Marca, Pista };
+
+/**
+ * Los dos tiradores de un bloque, uno en cada canto.
+ *
+ * Paran la propagación a propósito: el carril de debajo mueve el cabezal, y sin
+ * pararla estirar un bloque saltaría además a otro segundo, así que verías el
+ * resultado de tu arrastre en un sitio de la escena que no habías pedido.
+ */
+function Cantos({
+  b,
+  pct,
+  total,
+  carril,
+  onEstirar,
+}: {
+  b: Bloque;
+  pct: (ms: number) => string;
+  total: number;
+  carril: () => HTMLDivElement | null;
+  onEstirar: (desdeMs: number, hastaMs: number) => void;
+}) {
+  const arrastre = (lado: "izq" | "der") => (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const el = e.currentTarget as HTMLElement;
+    try { el.setPointerCapture(e.pointerId); } catch { /* se sigue */ }
+    const mover = (ev: PointerEvent) => {
+      const r = carril()?.getBoundingClientRect();
+      if (!r || r.width < 1) return;
+      const ms = Math.max(0, Math.min(total, ((ev.clientX - r.left) / r.width) * total));
+      // Medio segundo de mínimo: un bloque de ancho cero no se puede volver a
+      // coger, y el usuario se quedaría sin forma de deshacerlo con el ratón.
+      if (lado === "izq") onEstirar(Math.min(ms, b.hasta - 500), b.hasta);
+      else onEstirar(b.desde, Math.max(ms, b.desde + 500));
+    };
+    const soltar = () => {
+      el.removeEventListener("pointermove", mover);
+      el.removeEventListener("pointerup", soltar);
+      el.removeEventListener("pointercancel", soltar);
+    };
+    el.addEventListener("pointermove", mover);
+    el.addEventListener("pointerup", soltar);
+    el.addEventListener("pointercancel", soltar);
+  };
+
+  return (
+    <>
+      {(["izq", "der"] as const).map((lado) => (
+        <span
+          key={lado}
+          role="separator"
+          aria-label={`Estirar ${b.etiqueta} por la ${lado === "izq" ? "izquierda" : "derecha"}`}
+          onPointerDown={arrastre(lado)}
+          className="absolute top-0 z-10 h-full w-2 cursor-ew-resize rounded bg-white/0 hover:bg-white/50"
+          style={{ left: `calc(${pct(lado === "izq" ? b.desde : b.hasta)} - ${lado === "izq" ? "0px" : "8px"})` }}
+        />
+      ))}
+    </>
+  );
+}

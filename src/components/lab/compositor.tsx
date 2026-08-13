@@ -38,7 +38,8 @@ import { LineaTiempo } from "./linea-tiempo";
 import { duracionCamara, type SpriteLT } from "@/lib/lab/linea-tiempo";
 import { PestanasMontaje, PanelMontajeCaja, type PanelMontaje } from "./paneles-montaje";
 import {
-  aEntradaVfx, claveEfectos, nombreEfecto, normalizarEfectos, type EfectoEscena,
+  aEntradaVfx, claveEfectos, efectoActivo, nombreEfecto, normalizarEfectos,
+  type EfectoEscena,
 } from "@/lib/lab/efectos-escena";
 import { VfxScene } from "@/lib/story/vfx";
 import { PanelEfectos } from "./panel-efectos";
@@ -1201,7 +1202,9 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
      */
     propia?: VfxScene,
   ) {
-    const lista = efectosRef.current;
+    // Solo los que suenan en este instante. Antes entraban todos siempre, que
+    // es lo que hacía imposible decir «el humo empieza cuando llega el gato».
+    const lista = efectosRef.current.filter((e) => efectoActivo(e, reloj));
     if (!lista.length) return;
     if (!propia && !vfxRef.current) vfxRef.current = new VfxScene();
     const escenaVfx = propia ?? vfxRef.current!;
@@ -2157,6 +2160,61 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     );
   }
 
+  /**
+   * Cuándo suena un efecto.
+   *
+   * Un final por delante del principio se acota en vez de rechazarse: al
+   * teclear «2» en un campo que iba a 8 se pasa por valores imposibles, y
+   * negarse a mitad de escritura es lo que hace que un campo pelee contigo.
+   */
+  function tiempoDeEfecto(id: string, patch: { desde?: number; hasta?: number }) {
+    setEfectos((fx) => fx.map((e) => {
+      if (e.id !== id) return e;
+      const total = Math.max(0.5, totalLineaMs / 1000);
+      const quitar = patch.desde === undefined && patch.hasta === undefined
+        && "desde" in patch && "hasta" in patch;
+      if (quitar) {
+        const { desde: _d, hasta: _h, ...resto } = e;
+        return resto;
+      }
+      const desde = patch.desde !== undefined
+        ? Math.max(0, Math.min(total, patch.desde))
+        : e.desde;
+      const hasta = patch.hasta !== undefined
+        ? Math.max(0, Math.min(total, patch.hasta))
+        : e.hasta;
+      return {
+        ...e,
+        desde,
+        hasta: hasta !== undefined && desde !== undefined && hasta <= desde
+          ? Math.min(total, desde + 0.5)
+          : hasta,
+      };
+    }));
+  }
+
+  /**
+   * Meter un «cambia a esta animación» en un punto de la ruta.
+   *
+   * Va JUSTO ANTES del paso pulsado, no después: lo que uno quiere decir al
+   * pulsar un tramo es «a partir de aquí, con esta otra», y el cambio tiene que
+   * estar puesto cuando ese tramo empieza.
+   */
+  function cambiarAnimEnRuta(capaId: string, indice: number, clave: string) {
+    const capa = capasRef.current.find((c) => c.id === capaId);
+    const pasos = capa?.spr?.ruta?.pasos;
+    if (!capa?.spr || !pasos) return;
+    const corte = Math.max(0, Math.min(pasos.length, indice));
+    const nuevos = [
+      ...pasos.slice(0, corte),
+      { tipo: "cambiar" as const, segundos: 0, anim: clave },
+      ...pasos.slice(corte),
+    ];
+    upd(capaId, { spr: { ...capa.spr, ruta: { ...capa.spr.ruta!, pasos: nuevos } } });
+    reiniciarSprite(capaId);
+    setAviso(`«${capa.nombre}» cambia a «${clave}» en ese punto.`);
+  }
+
   function quitarEfecto(id: string) {
     setEfectos((prev) => prev.filter((e) => e.id !== id));
   }
@@ -2740,7 +2798,9 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                     : undefined,
                 }))}
                 sprites={spritesDeLaLinea}
-                efectos={efectos.map((e) => ({ id: e.id, nombre: nombreEfecto(e.kind) }))}
+                efectos={efectos.map((e) => ({
+                  id: e.id, nombre: nombreEfecto(e.kind), desde: e.desde, hasta: e.hasta,
+                }))}
                 ms={progresoUi * totalLineaMs}
                 reproduciendo={enSecuencia}
                 onSeek={(ms) => seekCola(Math.max(0, Math.min(1, ms / totalLineaMs)))}
@@ -2754,6 +2814,22 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   else if (pista.clase === "sprite" && pista.refId) setCapaActivaId(pista.refId);
                 }}
                 onAnadir={anadirDesdeLinea}
+                onEstirar={(pista, b, desdeMs, hastaMs) => {
+                  if (pista.clase === "efectos") {
+                    tiempoDeEfecto(b.id, {
+                      desde: Math.round(desdeMs) / 1000,
+                      hasta: Math.round(hastaMs) / 1000,
+                    });
+                    return;
+                  }
+                  if (pista.clase === "camara") {
+                    // De un paso de cámara solo se estira lo DURA: dónde empieza
+                    // lo decide el paso anterior, así que moverlo sería
+                    // reordenar la cola, y eso ya se hace con las flechas.
+                    const paso = colaRef.current[b.indice];
+                    if (paso) updPaso(paso.id, { durMs: Math.max(800, Math.round(hastaMs - b.desde)) });
+                  }
+                }}
               />
               ) : null}
               debajo={bloqueSel ? (
@@ -2781,13 +2857,22 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                           sitio: e.shape === "arriba"
                             ? "Cae sobre toda la escena"
                             : `En ${Math.round(e.x * 100)}% · ${Math.round(e.y * 100)}%`,
+                          desde: e.desde,
+                          hasta: e.hasta,
+                          totalSeg: Math.round(totalLineaMs / 100) / 10,
                         }
                         : null;
                     })()
                     : null}
                   onQuitarEfecto={(id) => { quitarEfecto(id); setBloqueSel(null); }}
+                  onTiempoEfecto={tiempoDeEfecto}
                   actor={bloqueSel.pista.clase === "sprite" && bloqueSel.pista.refId
-                    ? { capaId: bloqueSel.pista.refId, nombre: bloqueSel.pista.nombre }
+                    ? {
+                      capaId: bloqueSel.pista.refId,
+                      nombre: bloqueSel.pista.nombre,
+                      anims: (capas.find((c) => c.id === bloqueSel.pista.refId)?.spr?.anims ?? [])
+                        .map((a) => a.clave),
+                    }
                     : null}
                   onIrAlActor={(id) => {
                     setCapaActivaId(id);
@@ -2795,6 +2880,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                     setSubPanel("animar");
                   }}
                   onQuitarActor={(id) => { eliminarCapa(id); setBloqueSel(null); }}
+                  onCambiarAnim={cambiarAnimEnRuta}
                 />
               ) : null}
               reproduciendo={enSecuencia || (moviendo && !retenerPoseRef.current && anim !== "quieto")}
@@ -2847,9 +2933,14 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               efectos={efectos.map((e) => ({
                 id: e.id,
                 nombre: nombreEfecto(e.kind),
-                resumen: e.shape === "arriba"
-                  ? "Cae sobre toda la escena"
-                  : `En ${Math.round(e.x * 100)}% · ${Math.round(e.y * 100)}%`,
+                resumen: [
+                  e.shape === "arriba"
+                    ? "Cae sobre toda la escena"
+                    : `En ${Math.round(e.x * 100)}% · ${Math.round(e.y * 100)}%`,
+                  e.desde !== undefined || e.hasta !== undefined
+                    ? `${(e.desde ?? 0).toFixed(1)}s → ${(e.hasta ?? totalLineaMs / 1000).toFixed(1)}s`
+                    : "",
+                ].filter(Boolean).join(" · "),
               }))}
               onQuitarEfecto={quitarEfecto}
               onQuitarMovCapa={quitarMovDeCapa}

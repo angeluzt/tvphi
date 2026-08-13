@@ -28,9 +28,11 @@ export function InspectorBloque({
   onQuitarPaso,
   efecto,
   onQuitarEfecto,
+  onTiempoEfecto,
   actor,
   onIrAlActor,
   onQuitarActor,
+  onCambiarAnim,
 }: {
   seleccion: SeleccionBloque;
   onCerrar: () => void;
@@ -39,12 +41,22 @@ export function InspectorBloque({
   onPaso?: (id: string, patch: { mov?: MovCola; distancia?: number; durMs?: number }) => void;
   onQuitarPaso?: (id: string) => void;
   /** El efecto, si la barra es de efectos. */
-  efecto?: { id: string; nombre: string; sitio: string } | null;
+  efecto?: {
+    id: string; nombre: string; sitio: string;
+    desde?: number; hasta?: number; totalSeg: number;
+  } | null;
   onQuitarEfecto?: (id: string) => void;
+  onTiempoEfecto?: (id: string, patch: { desde?: number; hasta?: number }) => void;
   /** El actor y el tramo pulsado, si la barra es de un sprite. */
-  actor?: { capaId: string; nombre: string } | null;
+  actor?: {
+    capaId: string; nombre: string;
+    /** Las otras animaciones ligadas de este actor, para poder saltar a una. */
+    anims: string[];
+  } | null;
   onIrAlActor?: (capaId: string) => void;
   onQuitarActor?: (capaId: string) => void;
+  /** Mete un «cambiar a esta animación» justo en este punto de la ruta. */
+  onCambiarAnim?: (capaId: string, indice: number, clave: string) => void;
 }) {
   const { pista, bloque } = seleccion;
 
@@ -93,11 +105,25 @@ export function InspectorBloque({
       )}
 
       {efecto && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[10px] text-muted">{efecto.sitio}</span>
-          {/* Los efectos aún no se pueden temporizar: se dice, en vez de
-              enseñar unos mandos de principio y fin que el motor ignoraría. */}
-          <span className="text-[9px] text-muted">Suena durante toda la escena.</span>
+        <div className="flex flex-wrap items-end gap-2">
+          <span className="pb-1 text-[10px] text-muted">{efecto.sitio}</span>
+          {onTiempoEfecto && (
+            <>
+              <Num etiqueta="Empieza" valor={efecto.desde ?? 0} min={0} max={efecto.totalSeg} paso={0.5}
+                sufijo="s" ancho="w-14"
+                onCambio={(v) => onTiempoEfecto(efecto.id, { desde: v })} />
+              <Num etiqueta="Acaba" valor={efecto.hasta ?? efecto.totalSeg} min={0.5} max={efecto.totalSeg} paso={0.5}
+                sufijo="s" ancho="w-14"
+                onCambio={(v) => onTiempoEfecto(efecto.id, { hasta: v })} />
+              {(efecto.desde !== undefined || efecto.hasta !== undefined) && (
+                <button type="button"
+                  onClick={() => onTiempoEfecto(efecto.id, { desde: undefined, hasta: undefined })}
+                  className="rounded-md border border-border px-1.5 py-1 text-[10px] text-muted hover:text-fg">
+                  Toda la escena
+                </button>
+              )}
+            </>
+          )}
           {onQuitarEfecto && (
             <button type="button" onClick={() => onQuitarEfecto(efecto.id)}
               className="ml-auto rounded-md border border-border px-1.5 py-1 text-[10px] text-muted hover:border-danger/60 hover:text-danger">
@@ -116,6 +142,29 @@ export function InspectorBloque({
                   : "Se desplaza"}
             {bloque.nota ? ` · ${bloque.nota}` : ""}
           </span>
+          {/* Sustituir la animación A PARTIR DE AQUÍ. Es lo que convierte un
+              actor que solo anda en uno que anda, se para y saluda: hasta
+              ahora había que ir a sus mandos y contar los pasos a mano. */}
+          {onCambiarAnim && actor.anims.length > 0 && (
+            <label className="flex items-center gap-1 text-[10px] text-muted">
+              A partir de aquí
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) onCambiarAnim(actor.capaId, bloque.indice, e.target.value);
+                }}
+                className="input py-0.5 text-[10px]"
+              >
+                <option value="">cambia a…</option>
+                {actor.anims.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </label>
+          )}
+          {onCambiarAnim && !actor.anims.length && (
+            <span className="text-[9px] text-muted">
+              Para que cambie de animación, líga otra en sus mandos.
+            </span>
+          )}
           {onIrAlActor && (
             <button type="button" onClick={() => onIrAlActor(actor.capaId)}
               className="rounded-md border border-accent/40 px-1.5 py-1 text-[10px] text-accent hover:bg-accent/10">

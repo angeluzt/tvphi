@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  anclarEfectos, franjaDeArriba, normalizarEfectos, separarApilados,
+  anclarEfectos, efectoActivo, franjaDeArriba, normalizarEfectos, separarApilados,
 } from "./efectos-escena";
 
 // Los tres fallos que salieron probando dos escenas de mercado nocturno:
@@ -112,5 +112,46 @@ describe("dos efectos no se quedan uno encima del otro", () => {
     const { efectos } = normalizarEfectos([{ id: "lluvia" }, { id: "nieve" }]);
     const r = separarApilados(efectos);
     expect(r.every((e) => e.x === 0 && e.x2 === 1)).toBe(true);
+  });
+});
+
+describe("cuándo suena cada efecto", () => {
+  it("sin tiempo, suena siempre: es como se comportaba antes", () => {
+    expect(efectoActivo({}, 0)).toBe(true);
+    expect(efectoActivo({}, 999)).toBe(true);
+  });
+
+  it("respeta el principio y el final", () => {
+    const e = { desde: 2, hasta: 5 };
+    expect(efectoActivo(e, 1.9)).toBe(false);
+    expect(efectoActivo(e, 2)).toBe(true);
+    expect(efectoActivo(e, 4.9)).toBe(true);
+    // El final NO entra: si no, dos efectos encadenados suenan juntos un
+    // fotograma en la juntura.
+    expect(efectoActivo(e, 5)).toBe(false);
+  });
+
+  it("solo principio o solo final también valen", () => {
+    expect(efectoActivo({ desde: 3 }, 2)).toBe(false);
+    expect(efectoActivo({ desde: 3 }, 90)).toBe(true);
+    expect(efectoActivo({ hasta: 3 }, 2)).toBe(true);
+    expect(efectoActivo({ hasta: 3 }, 4)).toBe(false);
+  });
+
+  it("lee los tiempos que mande la IA y descarta un final imposible", () => {
+    const { efectos } = normalizarEfectos([
+      { id: "humo", forma: "punto", desde: 1.5, hasta: 4 },
+      { id: "fuego", forma: "punto", desde: 5, hasta: 2 },
+    ]);
+    expect(efectos[0]).toMatchObject({ desde: 1.5, hasta: 4 });
+    // Acabar antes de empezar no suena nunca: se ignora el final.
+    expect(efectos[1].desde).toBe(5);
+    expect(efectos[1].hasta).toBeUndefined();
+  });
+
+  it("sin tiempos no se inventan campos", () => {
+    const { efectos } = normalizarEfectos([{ id: "humo", forma: "punto" }]);
+    expect(efectos[0].desde).toBeUndefined();
+    expect(efectos[0].hasta).toBeUndefined();
   });
 });

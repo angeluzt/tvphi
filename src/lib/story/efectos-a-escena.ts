@@ -59,9 +59,11 @@ export function aCapaVfx(e: EfectoEscena): VfxLayer {
     auto: false,
     colorHex: e.colorHex,
     params: { ...e.params },
-    timing: "all",
-    startSec: 0,
-    endSec: 0,
+    // La escena ya sabía de tiempo (`timing`/`startSec`/`endSec`); lo que no
+    // había era de dónde sacarlo, porque el laboratorio no lo guardaba.
+    timing: e.desde !== undefined || e.hasta !== undefined ? "range" : "all",
+    startSec: Math.max(0, e.desde ?? 0),
+    endSec: Math.max(0, e.hasta ?? 0),
   };
 }
 
