@@ -29,6 +29,20 @@ export type ReservaUso =
   | { ok: false; cupo: CupoHistorias; mensaje: string };
 
 /** Correos admin / sin cupo. Separados por coma en STORY_QUOTA_EXEMPT_EMAILS. */
+/**
+ * ¿Puede esta persona partir escenas en láminas con profundidad?
+ *
+ * El admin siempre —es quien lo está probando—. Los demás, solo si el ajuste
+ * «Paralaje 2.5D en historias» está encendido. Vive aquí y no en cada ruta
+ * porque el botón del editor y la puerta del servidor tienen que decidir con
+ * la MISMA regla: si se separan, o se enseña un botón que da 403, o se abre
+ * una puerta que nadie vigila.
+ */
+export async function puedeParalaje(email: string): Promise<boolean> {
+  if (esAdminHistorias(email)) return true;
+  return (await leerAjustes()).paralaje25d;
+}
+
 export function esAdminHistorias(email: string): boolean {
   const raw = (process.env["STORY_QUOTA_EXEMPT_EMAILS"] ?? "").trim();
   if (!raw) return false;

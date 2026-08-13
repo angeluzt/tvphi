@@ -118,6 +118,14 @@ export function AjustesIaForm({ inicial }: { inicial: AjustesIa }) {
         cuandoSi="Encendido: pueden generarlas, con la calidad y el cupo de arriba."
       />
 
+      <Interruptor
+        etiqueta="Paralaje 2.5D en historias"
+        puesto={a.paralaje25d}
+        onCambio={(v) => set("paralaje25d", v)}
+        cuandoNo="Apagado: el editor de historias se queda exactamente como está."
+        cuandoSi="Encendido: cada escena puede partirse en láminas con profundidad y editarse en una ventana aparte, como en el laboratorio."
+      />
+
       <div className="rounded-lg border border-border bg-surface-2/50 p-2 text-[11px] text-muted">
         Con lo puesto, un capítulo de 6 escenas le cuesta{" "}
         <b className="tabular-nums text-fg">${porCapitulo.toFixed(3)}</b> en imágenes

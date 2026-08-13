@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import {
   Play, Pause, Download, Plus, Trash2, ChevronUp, ChevronDown, GripVertical,
   Mic, Music, Volume2, Save, FolderOpen, Film, Layers, Loader2, X, MoveVertical, FileJson, Repeat,
-  Settings2, AlertTriangle, Sparkles, Check, RefreshCw, Image as ImageIcon,
+  Settings2, AlertTriangle, Sparkles, Check, RefreshCw, Image as ImageIcon, Layers3,
 } from "lucide-react";
 import { ModelosIa } from "./modelos-ia";
 import { BibliotecaMusica } from "./biblioteca-musica";
@@ -29,6 +29,7 @@ import { MarcaEfecto } from "./marca-efecto";
 import { MoverEfectos, desplazar } from "./mover-efectos";
 import type { PestanaToma } from "./pestanas-toma";
 import { CapasEscena } from "@/components/lab/capas-escena";
+import { VentanaCapas } from "@/components/story/ventana-capas";
 import { MandoEdicion } from "./mando-edicion";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
@@ -150,6 +151,7 @@ export function StoryApp({
   initialOpenId = null,
   initialSerie = null,
   lab = false,
+  paralaje = false,
 }: {
   initialProjects: ProjMeta[];
   initialCupo: CupoHistorias;
@@ -163,6 +165,14 @@ export function StoryApp({
    * En el editor normal esto no existe, así que nadie más puede tropezárselo.
    */
   lab?: boolean;
+  /**
+   * Paralaje 2.5D encendido por un admin desde /admin.
+   *
+   * Separado de `lab` a propósito: `lab` es «enséñame lo que está en pruebas»
+   * y va por página; esto es «esto ya vale para todo el mundo» y va por ajuste.
+   * Apagado, el editor no enseña nada nuevo.
+   */
+  paralaje?: boolean;
 }) {
   const [project, setProject] = useState<StoryProject>(emptyProject());
   const [projects, setProjects] = useState<ProjMeta[]>(initialProjects);
@@ -305,6 +315,8 @@ export function StoryApp({
   const [agarre, setAgarre] = useState<string | null>(null);
   // Tramo que se está viendo suelto (una escena o una toma) + su miniatura flotante.
   const [section, setSection] = useState<{ start: number; end: number; label: string; shotId?: string; sceneId?: string } | null>(null);
+  /** Qué escena tiene abierto el editor de paralaje, si alguna. */
+  const [capasAbiertas, setCapasAbiertas] = useState<string | null>(null);
   // Escena cuya posición se está cambiando escribiendo el número.
   const [movingScene, setMovingScene] = useState<{ id: string; value: string } | null>(null);
   // Al crear un proyecto se elige primero la forma del video.
@@ -2745,25 +2757,55 @@ export function StoryApp({
                           />
                         </label>
                       </div>
-                      {/* En pruebas y solo en el editor del laboratorio: partir
-                          la escena en láminas con profundidad. */}
-                      {lab && (
-                        <CapasEscena
-                          capas={sc.capas ?? []}
-                          prompt={sc.prompt ?? ""}
-                          formato={project.aspect === "9:16" ? "9:16" : project.aspect === "1:1" ? "1:1" : "16:9"}
-                          onCambio={(capas) => mut((p) => ({
-                            ...p,
-                            scenes: p.scenes.map((s) => (s.id === sc.id ? { ...s, capas: capas.length ? capas : undefined } : s)),
-                          }))}
-                          onGuardarImagen={async (dataUrl, nombre) => {
-                            const blob = await (await fetch(dataUrl)).blob();
-                            const id = `capa-${nanoid(8)}`;
-                            await putAsset(id, blob);
-                            await assetUrl(id);
-                            return id;
-                          }}
-                        />
+                      {/* Paralaje 2.5D: partir la escena en láminas con
+                          profundidad. Sale en el laboratorio siempre, y en el
+                          editor normal solo si un admin lo ha encendido.
+
+                          Es UN BOTÓN, no el editor entero: montarlo aquí dentro
+                          convertía cada escena en varios miles de píxeles de
+                          mandos por los que había que pasar para llegar a la
+                          siguiente, la usaras o no. */}
+                      {(lab || paralaje) && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2 py-1.5">
+                          <Layers3 className="h-3.5 w-3.5 shrink-0 text-accent" />
+                          <span className="text-[11px] font-medium">Paralaje 2.5D</span>
+                          <span className="text-[10px] text-muted">
+                            {sc.capas?.length
+                              ? `${sc.capas.length} lámina${sc.capas.length === 1 ? "" : "s"} con profundidad`
+                              : "Sin láminas: la escena se ve plana"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setCapasAbiertas(sc.id)}
+                            className="btn-ghost ml-auto px-2 py-1 text-[11px]"
+                          >
+                            {sc.capas?.length ? "Editar" : "Crear láminas"}
+                          </button>
+                        </div>
+                      )}
+                      {(lab || paralaje) && capasAbiertas === sc.id && (
+                        <VentanaCapas
+                          titulo={`Paralaje · escena ${si + 1}`}
+                          subtitulo={sc.prompt?.slice(0, 120) || undefined}
+                          onCerrar={() => setCapasAbiertas(null)}
+                        >
+                          <CapasEscena
+                            capas={sc.capas ?? []}
+                            prompt={sc.prompt ?? ""}
+                            formato={project.aspect === "9:16" ? "9:16" : project.aspect === "1:1" ? "1:1" : "16:9"}
+                            onCambio={(capas) => mut((p) => ({
+                              ...p,
+                              scenes: p.scenes.map((s) => (s.id === sc.id ? { ...s, capas: capas.length ? capas : undefined } : s)),
+                            }))}
+                            onGuardarImagen={async (dataUrl, nombre) => {
+                              const blob = await (await fetch(dataUrl)).blob();
+                              const id = `capa-${nanoid(8)}`;
+                              await putAsset(id, blob);
+                              await assetUrl(id);
+                              return id;
+                            }}
+                          />
+                        </VentanaCapas>
                       )}
                       {dibujo?.ancla === sc.id && (
                         <div className="mt-2 rounded-lg border border-accent/40 bg-surface p-2.5">

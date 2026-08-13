@@ -18,6 +18,7 @@ const cuerpo = z.object({
   textosPorDia: z.number().int().min(0).max(500).optional(),
   vozDePago: z.boolean().optional(),
   imagenesIa: z.boolean().optional(),
+  paralaje25d: z.boolean().optional(),
 });
 
 async function puerta() {

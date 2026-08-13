@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { claveOpenAi, preferenciasModelos, OPENAI, IA_NO_DISPONIBLE, espera, motivoFallo } from "@/lib/story/credenciales";
 import { anotarFallo } from "@/lib/story/fallidos";
-import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
+import { esAdminHistorias, puedeParalaje, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { revisar } from "@/lib/lab/escena";
 import { leerAnimacion } from "@/lib/lab/animacion-ia";
 import { referenciaAnimacion } from "@/lib/lab/referencia-camara";
@@ -177,9 +177,10 @@ REGLAS DEL DIRECTOR
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  // El laboratorio es solo para quien administra, igual que su página.
-  if (!esAdminHistorias(user.email)) {
-    return NextResponse.json({ error: "Solo administradores" }, { status: 403 });
+  // Admin siempre; el resto, solo si un admin ha encendido el paralaje 2.5D.
+  // Apagado —que es como viene— esto sigue siendo una puerta de administración.
+  if (!(await puedeParalaje(user.email))) {
+    return NextResponse.json({ error: "El paralaje 2.5D está desactivado." }, { status: 403 });
   }
   const sinCupo = await bloqueoDeGasto(user);
   if (sinCupo) return respuestaBloqueo(sinCupo);

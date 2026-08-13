@@ -1,7 +1,8 @@
 "use client";
 
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crop, Loader2, RotateCcw, RotateCw, Scissors,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronDown, ChevronRight, Crop, Loader2,
+  RotateCcw, RotateCw, Scissors,
 } from "lucide-react";
 import { Barra, Flecha } from "./controles-basicos";
 import { estaColocadaAMano, type AjusteCapa } from "@/lib/lab/ajuste-capa";
@@ -27,6 +28,8 @@ export function MandosPiezas({
   hayRecorte,
   onRecortar,
   seleccionadas,
+  abierto,
+  onAlternar,
 }: {
   ajuste?: AjusteCapa;
   onAjuste: (patch: Partial<AjusteCapa>) => void;
@@ -42,6 +45,8 @@ export function MandosPiezas({
   onRecortar: () => void;
   /** Cuántas capas se moverán al arrastrar, para no prometer de más. */
   seleccionadas: number;
+  abierto: boolean;
+  onAlternar: () => void;
 }) {
   const a = ajuste;
   const paso = 0.01;
@@ -52,7 +57,23 @@ export function MandosPiezas({
   return (
     <div className="space-y-2 rounded-lg border border-border bg-surface-2/40 p-2">
       <div className="flex items-center gap-2">
-        <p className="text-[10px] font-semibold text-fg">Colocar a mano</p>
+        <button
+          type="button"
+          onClick={onAlternar}
+          aria-expanded={abierto}
+          className="flex min-w-0 items-center gap-1.5 text-left"
+        >
+          {abierto
+            ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" />
+            : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />}
+          <span className="text-[10px] font-semibold text-fg">Colocar a mano</span>
+          {!abierto && puesta && (
+            <span className="text-[9px] text-accent">
+              {a?.giro ? `${Math.round(a.giro)}° · ` : ""}
+              {a?.escala !== 1 ? `${Math.round((a?.escala ?? 1) * 100)}% · ` : ""}movida
+            </span>
+          )}
+        </button>
         {puesta && (
           <button type="button" onClick={onSoltar} disabled={bloqueada}
             className="ml-auto rounded border border-border px-1.5 py-0.5 text-[9px] text-muted hover:text-fg disabled:opacity-40">
@@ -61,6 +82,7 @@ export function MandosPiezas({
         )}
       </div>
 
+      <div className={abierto ? "space-y-2" : "hidden"}>
       {esSprite ? (
         <p className="text-[10px] text-muted">
           Este es un actor: se coloca con su punto X/Y en «Más opciones», o arrastrándolo en el lienzo.
@@ -152,6 +174,7 @@ export function MandosPiezas({
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }
