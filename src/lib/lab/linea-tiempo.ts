@@ -205,27 +205,37 @@ export function pistaSprite(s: SpriteLT, totalMs: number): Pista {
 }
 
 /**
- * La pista de efectos.
+ * UNA PISTA POR EFECTO.
  *
- * Hoy los efectos no tienen tiempo —el motor los arranca en 0 y no los apaga
- * nunca—, así que ocupan la escena entera. Se dibujan igual, y a propósito: ver
- * la barra completa es lo que hace evidente que NO se pueden temporizar todavía,
- * en vez de dejar la pista vacía y que parezca que no hay efectos.
+ * Antes iban todos en la misma fila, y como ninguno tiene tiempo —el motor los
+ * arranca en 0 y no los apaga nunca— los tres ocupaban la escena entera y se
+ * dibujaban uno encima de otro: las etiquetas se pisaban y se leía
+ * «Hlonjivasl yu pvéita(oltodass)». Con la lluvia y los pétalos a la vez no
+ * había forma de saber cuántos efectos había, ni de pulsar uno concreto.
+ *
+ * Con una fila cada uno se leen, se seleccionan y se borran por separado, que
+ * es lo mismo que ya podía hacerse con cada actor.
+ *
+ * Siguen ocupando el ancho completo a propósito: es lo que hace evidente que
+ * todavía no se pueden temporizar, en vez de insinuar un principio y un fin que
+ * el motor no respeta.
  */
-export function pistaEfectos(efectos: EfectoLT[], totalMs: number): Pista {
+export function pistaEfecto(efecto: EfectoLT, indice: number, totalMs: number): Pista {
   return {
-    id: "efectos",
-    nombre: "Efectos",
+    id: `efecto-${efecto.id}`,
+    nombre: efecto.nombre,
     clase: "efectos",
-    bloques: efectos.map((e, i) => ({
-      id: e.id,
+    bloques: [{
+      id: efecto.id,
       desde: 0,
       hasta: totalMs,
-      etiqueta: e.nombre,
+      etiqueta: efecto.nombre,
       clase: "efecto" as const,
-      indice: i,
-    })),
+      indice,
+      nota: "toda la escena",
+    }],
     marcas: [],
+    refId: efecto.id,
   };
 }
 
@@ -248,7 +258,7 @@ export function lineaDeTiempo(
     pistas: [
       pistaCamara(cola),
       ...sprites.map((s) => pistaSprite(s, totalMs)),
-      ...(efectos.length ? [pistaEfectos(efectos, totalMs)] : []),
+      ...efectos.map((e, i) => pistaEfecto(e, i, totalMs)),
     ],
   };
 }

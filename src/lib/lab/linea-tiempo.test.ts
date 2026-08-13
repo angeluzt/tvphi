@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  duracionCamara, duracionRuta, pistaCamara, pistaSprite, pistaEfectos,
+  duracionCamara, duracionRuta, pistaCamara, pistaSprite, pistaEfecto,
   lineaDeTiempo, bloqueEn, cortes, saltar, reloj, nombreMov,
   type PasoCamaraLT, type SpriteLT,
 } from "./linea-tiempo";
@@ -120,12 +120,34 @@ describe("pista de sprite", () => {
 
 describe("efectos", () => {
   it("ocupan la escena entera, porque hoy no se pueden temporizar", () => {
-    const p = pistaEfectos([{ id: "f1", nombre: "Niebla" }], 8000);
+    const p = pistaEfecto({ id: "f1", nombre: "Niebla" }, 0, 8000);
     expect(p.bloques[0]).toMatchObject({ desde: 0, hasta: 8000, etiqueta: "Niebla" });
   });
 
   it("sin efectos no se inventa la pista", () => {
     expect(lineaDeTiempo(cam, [], []).pistas.some((p) => p.clase === "efectos")).toBe(false);
+  });
+
+  it("cada efecto tiene SU fila: antes se pisaban las etiquetas", () => {
+    // Con todos en la misma fila y sin tiempo, los tres ocupaban el ancho
+    // entero y se dibujaban uno encima de otro: se leía un amasijo.
+    const linea = lineaDeTiempo(cam, [], [
+      { id: "f1", nombre: "Lluvia" },
+      { id: "f2", nombre: "Hojas / pétalos" },
+      { id: "f3", nombre: "Humo" },
+    ]);
+    const suyas = linea.pistas.filter((p) => p.clase === "efectos");
+    expect(suyas).toHaveLength(3);
+    expect(suyas.map((p) => p.nombre)).toEqual(["Lluvia", "Hojas / pétalos", "Humo"]);
+    // Y cada fila lleva un solo bloque, así que nada se solapa.
+    expect(suyas.every((p) => p.bloques.length === 1)).toBe(true);
+  });
+
+  it("cada fila sabe a qué efecto apunta, para poder seleccionarlo y borrarlo", () => {
+    const linea = lineaDeTiempo(cam, [], [{ id: "f1", nombre: "Lluvia" }]);
+    const p = linea.pistas.find((x) => x.clase === "efectos")!;
+    expect(p.refId).toBe("f1");
+    expect(p.bloques[0].indice).toBe(0);
   });
 });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef } from "react";
-import { Camera, Sparkles, User } from "lucide-react";
+import { Camera, Plus, Sparkles, User } from "lucide-react";
 import {
   lineaDeTiempo, reloj, type Bloque, type EfectoLT, type Marca,
   type PasoCamaraLT, type Pista, type SpriteLT,
@@ -51,6 +51,8 @@ export function LineaTiempo({
   reproduciendo,
   onSeek,
   onAbrirBloque,
+  seleccionId,
+  onAnadir,
   alto = 26,
 }: {
   cola: PasoCamaraLT[];
@@ -62,6 +64,10 @@ export function LineaTiempo({
   onSeek: (ms: number) => void;
   /** Pulsar un bloque abre lo que sea que lo edite. */
   onAbrirBloque?: (pista: Pista, b: Bloque) => void;
+  /** Qué bloque está abierto ahora mismo, para señalarlo. */
+  seleccionId?: string | null;
+  /** Añadir una pista nueva desde la propia línea. */
+  onAnadir?: (que: "camara" | "efecto" | "actor") => void;
   alto?: number;
 }) {
   const lt = useMemo(() => lineaDeTiempo(cola, sprites, efectos), [cola, sprites, efectos]);
@@ -138,15 +144,21 @@ export function LineaTiempo({
                   <button
                     key={b.id}
                     type="button"
-                    // El pointerdown NO se para: tiene que llegar al carril para
-                    // que el cabezal salte al punto que se ha pulsado. Pararlo
-                    // hacía que pulsar sobre un bloque —o sea, sobre casi toda
-                    // la línea— abriera sus ajustes pero dejara el cabezal
-                    // donde estaba, que es lo contrario de lo que hace
-                    // cualquier editor. Las dos cosas a la vez: saltas ahí y se
-                    // abre lo que hay ahí.
-                    onClick={() => onAbrirBloque?.(p, b)}
-                    className={`absolute top-0 flex h-full items-center overflow-hidden rounded border px-1 text-left text-[9px] text-white ${COLOR[b.clase]}`}
+                    // VA EN pointerdown, NO en click. El carril captura el
+                    // puntero para poder arrastrar el cabezal, y con la captura
+                    // puesta el `click` acaba yendo al carril y no al botón:
+                    // pulsar una barra no abría nada. En pointerdown el botón
+                    // es todavía el destino, así que se entera él primero y el
+                    // evento sigue subiendo al carril, que salta al punto
+                    // pulsado. Las dos cosas a la vez: saltas ahí y se abre lo
+                    // que hay ahí, que es lo que hace cualquier editor.
+                    onPointerDown={() => onAbrirBloque?.(p, b)}
+                    // El seleccionado se marca con un aro claro: sin señal, se
+                    // pulsaba un bloque, se abrían sus ajustes debajo y no
+                    // había forma de saber cuál de los ocho se estaba tocando.
+                    className={`absolute top-0 flex h-full items-center overflow-hidden rounded border px-1 text-left text-[9px] text-white ${COLOR[b.clase]} ${
+                      seleccionId === b.id ? "ring-2 ring-white/80 ring-offset-1 ring-offset-surface" : ""
+                    }`}
                     style={{ left: pct(b.desde), width: pct(Math.max(1, b.hasta - b.desde)) }}
                     title={`${b.etiqueta}${b.nota ? ` · ${b.nota}` : ""} · ${reloj(b.desde)} → ${reloj(b.hasta)}`}
                   >
@@ -170,6 +182,27 @@ export function LineaTiempo({
           );
         })}
 
+        {onAnadir && (
+          <>
+            <span className="text-[10px] text-muted">Añadir</span>
+            <div className="flex flex-wrap items-center gap-1">
+              {([
+                ["camara", "Paso de cámara"],
+                ["efecto", "Efecto"],
+                ["actor", "Actor"],
+              ] as const).map(([que, et]) => (
+                <button
+                  key={que}
+                  type="button"
+                  onClick={() => onAnadir(que)}
+                  className="rounded border border-border px-1.5 py-0.5 text-[9px] text-muted hover:border-accent hover:text-accent"
+                >
+                  <Plus className="mr-0.5 inline h-2.5 w-2.5" />{et}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* EL CABEZAL, de una pieza y por encima de todas las pistas.
