@@ -30,6 +30,7 @@ import { MoverEfectos, desplazar } from "./mover-efectos";
 import type { PestanaToma } from "./pestanas-toma";
 import { CapasEscena } from "@/components/lab/capas-escena";
 import { VentanaCapas } from "@/components/story/ventana-capas";
+import { capasVfxDeLaIa } from "@/lib/story/efectos-a-escena";
 import { MandoEdicion } from "./mando-edicion";
 import { Slider } from "./slider";
 import { LockToggle } from "./lock-toggle";
@@ -2795,7 +2796,31 @@ export function StoryApp({
                             formato={project.aspect === "9:16" ? "9:16" : project.aspect === "1:1" ? "1:1" : "16:9"}
                             onCambio={(capas) => mut((p) => ({
                               ...p,
-                              scenes: p.scenes.map((s) => (s.id === sc.id ? { ...s, capas: capas.length ? capas : undefined } : s)),
+                              scenes: p.scenes.map((s) => (s.id === sc.id
+                                ? {
+                                  ...s,
+                                  capas: capas.length ? capas : undefined,
+                                  // Sin láminas no hay escena viva que animar:
+                                  // dejar la cola sería guardar una cámara que
+                                  // no encuadra nada.
+                                  ...(capas.length ? {} : { camara: undefined }),
+                                }
+                                : s)),
+                            }))}
+                            onEscenaViva={({ camara, efectos }) => mut((p) => ({
+                              ...p,
+                              scenes: p.scenes.map((s) => {
+                                if (s.id !== sc.id) return s;
+                                const nuevos = capasVfxDeLaIa(efectos);
+                                return {
+                                  ...s,
+                                  camara: camara?.length ? camara : undefined,
+                                  // Los que ya hubiera puestos a mano se
+                                  // respetan: la IA añade, no borra el trabajo
+                                  // de nadie.
+                                  vfx: nuevos.length ? [...s.vfx, ...nuevos] : s.vfx,
+                                };
+                              }),
                             }))}
                             onGuardarImagen={async (dataUrl, nombre) => {
                               const blob = await (await fetch(dataUrl)).blob();

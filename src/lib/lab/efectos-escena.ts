@@ -66,14 +66,40 @@ function colorDe(kind: VfxKind, pedido: unknown): string {
 }
 
 /** La forma pedida si el efecto la admite; si no, la primera que admita. */
+/**
+ * Lo que CAE DEL CIELO sobre toda la escena.
+ *
+ * Estos no son emisores: son tiempo atmosférico. Pedidos como «punto» salen
+ * por un agujero, y eso es exactamente lo que se veía —«la lluvia es un chorro
+ * raro, los pétalos igual»—. El modelo los pide como punto a menudo porque
+ * piensa «cae sobre el árbol»; da igual lo que piense: la lluvia cae sobre el
+ * cuadro entero o no es lluvia.
+ */
+const CAEN_DEL_CIELO = new Set<VfxKind>(["lluvia", "nieve", "ceniza", "hojas"]);
+
 function formaDe(kind: VfxKind, pedida: unknown): VfxShape {
   const spec = VFX.find((v) => v.id === kind);
   if (!spec) return "punto";
+  // El tiempo atmosférico no se negocia: siempre de arriba y de lado a lado.
+  if (CAEN_DEL_CIELO.has(kind)) return "arriba";
   const f = String(pedida ?? "").trim() as VfxShape;
   // Un efecto pedido con una forma que no admite no se descarta: se le pone la
   // suya. Descartarlo dejaría la escena sin el efecto por un detalle que el
   // modelo no tenía por qué acertar.
   return spec.shapes.includes(f) ? f : spec.shapes[0];
+}
+
+/**
+ * La franja de arriba, de lado a lado.
+ *
+ * Un efecto «arriba» describe un BORDE, no un sitio: sus dos extremos son las
+ * dos esquinas de arriba. Lo que llegaba del modelo era un punto —x, y— y los
+ * dos extremos acababan pegados, así que la lluvia salía toda del mismo agujero
+ * en mitad del cuadro. El sitio que diga el modelo aquí no aporta nada: la
+ * franja es siempre la misma.
+ */
+export function franjaDeArriba() {
+  return { x: 0, y: -0.02, x2: 1, y2: -0.02 };
 }
 
 /**
@@ -111,10 +137,12 @@ export function normalizarEfectos(crudo: unknown): {
     const nodo = Array.isArray(o.nodes) && o.nodes[0] && typeof o.nodes[0] === "object"
       ? o.nodes[0] as Record<string, unknown>
       : null;
-    const x = acotar(num(nodo?.x ?? o.x, 0.5), -0.5, 1.5);
-    const y = acotar(num(nodo?.y ?? o.y, 0.5), -0.5, 1.5);
-    const x2 = acotar(num(nodo?.x2 ?? o.x2, x), -0.5, 1.5);
-    const y2 = acotar(num(nodo?.y2 ?? o.y2, y), -0.5, 1.5);
+    const enFranja = shape === "arriba";
+    const franja = franjaDeArriba();
+    const x = enFranja ? franja.x : acotar(num(nodo?.x ?? o.x, 0.5), -0.5, 1.5);
+    const y = enFranja ? franja.y : acotar(num(nodo?.y ?? o.y, 0.5), -0.5, 1.5);
+    const x2 = enFranja ? franja.x2 : acotar(num(nodo?.x2 ?? o.x2, x), -0.5, 1.5);
+    const y2 = enFranja ? franja.y2 : acotar(num(nodo?.y2 ?? o.y2, y), -0.5, 1.5);
 
     // «escala» es el mando que se le ofrece al modelo: se traduce a los ajustes
     // de tamaño y cantidad del efecto, que es lo que el motor entiende.
@@ -249,11 +277,31 @@ export function anclarEfectos(
     if (!e.ancla) return e;
     const a = porId.get(e.ancla);
     if (!a) {
-      avisos.push(`«${e.ancla}» no es ninguna forma del mapa: «${nombreEfecto(e.kind)}» se queda donde estaba.`);
-      return e;
+      // NO se queda «donde estaba»: cuando el modelo manda un ancla, las
+      // coordenadas que trae al lado son de relleno y suelen ser basura —en las
+      // pruebas, dos lámparas ancladas a «faroles-izquierdos» y
+      // «faroles-derechos», que no existían, aparecieron las dos apiladas en
+      // (0.05, 0.05), o sea en la esquina de arriba a la izquierda—.
+      //
+      // Sin sitio bueno, el centro: se ve, se entiende que hay que moverlo y no
+      // parece un fallo de dibujo. Y se dice, para que se pueda arreglar.
+      // A una franja de arriba el ancla no le hacía falta —cubre el cuadro
+      // entero—, así que se dice, pero sin alarmar: no hay nada que recolocar.
+      if (e.shape === "arriba") {
+        avisos.push(
+          `«${e.ancla}» no es ninguna forma del mapa; «${nombreEfecto(e.kind)}» cae sobre toda la escena igualmente.`,
+        );
+        return e;
+      }
+      avisos.push(
+        `«${e.ancla}» no es ninguna forma del mapa: «${nombreEfecto(e.kind)}» se ha puesto en el centro.`,
+      );
+      return { ...e, x: 0.5, y: 0.55, x2: 0.5, y2: 0.55 };
     }
     const { x, y, w, h } = a.caja;
-    if (e.shape === "arriba") return { ...e, depth: a.depth };
+    // La franja de arriba no se mueve al ancla: cubre el cuadro entero por
+    // definición. Del ancla solo se toma a qué distancia está.
+    if (e.shape === "arriba") return { ...e, ...franjaDeArriba(), depth: a.depth };
     if (e.shape === "linea" || e.shape === "libre") {
       return { ...e, x, y, x2: x + w, y2: y, depth: a.depth };
     }
@@ -267,7 +315,42 @@ export function anclarEfectos(
       depth: a.depth,
     };
   });
-  return { efectos: salida, avisos };
+  return { efectos: separarApilados(salida), avisos };
+}
+
+/**
+ * Aparta los que hayan caído exactamente en el mismo sitio.
+ *
+ * Pasa cuando varias anclas fallan: todas van al mismo sitio de reserva y se
+ * apilan, así que se ve UN efecto donde el modelo quería tres y parece que dos
+ * no se han puesto. Se reparten en horizontal alrededor de donde estaban: sigue
+ * habiendo que colocarlos a mano, pero se ven los tres y se pueden coger.
+ */
+export function separarApilados(efectos: EfectoEscena[]): EfectoEscena[] {
+  const grupos = new Map<string, EfectoEscena[]>();
+  for (const e of efectos) {
+    if (e.shape === "arriba") continue;
+    const clave = `${e.kind}@${e.x.toFixed(3)},${e.y.toFixed(3)}`;
+    const g = grupos.get(clave);
+    if (g) g.push(e); else grupos.set(clave, [e]);
+  }
+  const movidos = new Map<string, { x: number; y: number }>();
+  for (const g of grupos.values()) {
+    if (g.length < 2) continue;
+    const paso = 0.16;
+    const inicio = -((g.length - 1) / 2) * paso;
+    g.forEach((e, i) => {
+      movidos.set(e.id, {
+        x: Math.max(0.04, Math.min(0.96, e.x + inicio + i * paso)),
+        y: e.y,
+      });
+    });
+  }
+  if (!movidos.size) return efectos;
+  return efectos.map((e) => {
+    const m = movidos.get(e.id);
+    return m ? { ...e, x: m.x, y: m.y, x2: m.x, y2: m.y } : e;
+  });
 }
 
 /** Saca de la escena todas las formas a las que se puede anclar un efecto. */

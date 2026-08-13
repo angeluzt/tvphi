@@ -7,6 +7,7 @@ import type { EscenaCapa } from "@/lib/story/model";
 import { revisar, esGuia, type Escena } from "@/lib/lab/escena";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { prepararCapa } from "@/lib/lab/quitar-fondo";
+import { listaDeExclusion } from "@/lib/lab/prompt-capa";
 import { RangoPreciso } from "./rango-preciso";
 
 // Convertir una escena del guion en varias láminas con profundidad.
@@ -24,6 +25,7 @@ export function CapasEscena({
   prompt,
   formato,
   onCambio,
+  onEscenaViva,
   onGuardarImagen,
 }: {
   capas: EscenaCapa[];
@@ -31,6 +33,14 @@ export function CapasEscena({
   prompt: string;
   formato: "16:9" | "9:16" | "1:1";
   onCambio: (c: EscenaCapa[]) => void;
+  /**
+   * Lo demás que la IA escribe junto al mapa: la cola de cámara y los efectos.
+   *
+   * Hasta ahora se pedía, se pagaba y se tiraba: solo se guardaban las
+   * imágenes y su profundidad, así que una escena que la IA había escrito con
+   * su movimiento y su lluvia acababa siendo láminas quietas.
+   */
+  onEscenaViva?: (v: { camara?: unknown[]; efectos?: unknown[] }) => void;
   /** Guarda el PNG donde vivan las imágenes y devuelve su id. */
   onGuardarImagen: (dataUrl: string, nombre: string) => Promise<string>;
 }) {
@@ -81,7 +91,15 @@ export function CapasEscena({
           const rc = await fetch("/api/story/ia/lab/capa", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              mapa, prompt: capa.ai?.prompt ?? capa.name, excluir: capa.ai?.exclude,
+              mapa, prompt: capa.ai?.prompt ?? capa.name,
+              // Nombrar las OTRAS capas es lo que impide que esta las pinte
+              // también. El mapa ya sabe cuáles son; el modelo, no.
+              excluir: listaDeExclusion({
+                capa: capa.name,
+                otras: visibles.map((c) => c.name),
+                extra: capa.ai?.exclude,
+                esFondo: i === 0,
+              }),
               estilo: esc.scene.style, escena: esc.scene.description,
               esFondo: i === 0, formato, corregirCroma: intento > 0,
             }),
@@ -111,7 +129,16 @@ export function CapasEscena({
           opacidad: 1,
         });
       }
-      if (nuevas.length) onCambio(nuevas);
+      if (nuevas.length) {
+        onCambio(nuevas);
+        // La cámara y los efectos vienen del MISMO mapa que las láminas, así
+        // que se guardan a la vez o no se guardan: una cola de cámara escrita
+        // para otras capas no encuadraría nada.
+        onEscenaViva?.({
+          camara: Array.isArray(jm.animacion) ? jm.animacion : undefined,
+          efectos: Array.isArray(jm.efectos) ? jm.efectos : undefined,
+        });
+      }
       setPaso(null);
       setNota(guias
         ? `${nuevas.length} capas listas. ${guias} de reserva no se mandó a dibujar: es una guía y no se ha pagado.`

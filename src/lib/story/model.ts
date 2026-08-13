@@ -325,6 +325,19 @@ export interface EscenaCapa {
   /** Se agranda un poco para que al desplazarse no asome el borde. */
   escala: number;
   opacidad: number;
+  /**
+   * Movimiento propio de la lámina: deriva, flotar, A→B, una ruta…
+   *
+   * Va como `unknown` a propósito. El tipo de verdad vive en el laboratorio
+   * (`MovCapa`) y se normaliza al leerlo; traerlo aquí ataría el modelo de las
+   * historias —que se serializa y viaja en los proyectos guardados— a los tipos
+   * de una herramienta que todavía se está moviendo.
+   */
+  mov?: unknown;
+  /** Colocación a mano: empujón, giro y tamaño fijos. */
+  ajuste?: unknown;
+  /** Si la lámina es un actor: cómo leer su tira de fotogramas. */
+  spr?: unknown;
 }
 
 export interface StoryScene {
@@ -345,6 +358,15 @@ export interface StoryScene {
    * sigue guardándose porque es la miniatura y el respaldo si se quitan.
    */
   capas?: EscenaCapa[];
+  /**
+   * Cola de cámara del laboratorio: acercarse, panear, atravesar, encadenados.
+   *
+   * Es lo que la IA escribe junto con el mapa y hasta ahora se tiraba al
+   * guardar la escena. Es OTRA cámara que la de la toma: esta anima la escena
+   * por dentro —cada lámina según su profundidad—, y la de la toma recorta el
+   * resultado como recorta una foto. Cada una hace lo suyo y no se mezclan.
+   */
+  camara?: unknown[];
 }
 
 export interface AudioLayer {
