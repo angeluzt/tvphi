@@ -9,10 +9,15 @@ const base: EfectoEscena = {
 };
 
 describe("los efectos de la IA, guardados en la escena", () => {
-  it("pone el sitio en espacio «imagen», no «encuadre»", () => {
+  it("lo que va en un sitio se mide sobre la imagen", () => {
     // La IA sitúa sobre la imagen entera; guardarlo como «encuadre» movería el
     // efecto en cuanto alguien recortara la toma.
     expect(aCapaVfx(base).espacio).toBe("imagen");
+  });
+
+  it("lo que cae del cielo se mide sobre el encuadre", () => {
+    // La lluvia moja lo que se ve, no un trozo concreto de la foto.
+    expect(aCapaVfx({ ...base, kind: "lluvia", shape: "arriba" }).espacio).toBe("encuadre");
   });
 
   it("un punto repite su sitio en el segundo extremo", () => {

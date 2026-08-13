@@ -92,10 +92,22 @@ function instruccion(d: z.infer<typeof cuerpo>, croma = false) {
     d.corregirCroma
       ? "CORRECTION ATTEMPT: the previous image leaked the technical magenta into the artwork. Replace every leaked guide/background area correctly; do not repeat it."
       : "",
-    d.escena ? `Scene: ${d.escena}` : "",
+    // La descripción de la escena va marcada como CONTEXTO. Sin esa etiqueta el
+    // modelo la leía como el encargo: en una escena «callejón nocturno con
+    // neón, luna baja entre nubes, suelo mojado», la capa de los rascacielos
+    // volvió con la luna, las nubes, el agua y sus reflejos dentro.
+    d.escena
+      ? `CONTEXT ONLY — the full scene is: ${d.escena}. This tells you the lighting, palette and mood. It is NOT what you draw. You draw only the one element named below.`
+      : "",
     d.estilo ? `Visual style, identical across all layers: ${d.estilo}` : "",
-    `Draw: ${d.prompt}`,
-    d.excluir ? `Do NOT draw: ${d.excluir}` : "",
+    `Draw ONLY this, and nothing else: ${d.prompt}`,
+    // Lo que el mapa marca es la HUELLA del objeto, no una ventana. Se dice
+    // porque lo que volvió parecían recortes de un paisaje: dentro de cada
+    // silueta había una escena entera.
+    "The marked areas are the SILHOUETTE and footprint of that element — where it sits and how big it is.",
+    "They are NOT windows, frames, screens or holes: do not paint a landscape, a view or any other scene inside them.",
+    "Everything else in the scene belongs to OTHER layers and is drawn separately. Painting it here would duplicate it.",
+    d.excluir ? `Do NOT draw any of these, not even partially, not even inside the marked areas: ${d.excluir}` : "",
   ].filter(Boolean);
 
   if (d.esFondo) {

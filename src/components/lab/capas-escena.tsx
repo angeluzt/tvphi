@@ -7,6 +7,7 @@ import type { EscenaCapa } from "@/lib/story/model";
 import { revisar, esGuia, type Escena } from "@/lib/lab/escena";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
 import { prepararCapa } from "@/lib/lab/quitar-fondo";
+import { listaDeExclusion } from "@/lib/lab/prompt-capa";
 import { RangoPreciso } from "./rango-preciso";
 
 // Convertir una escena del guion en varias láminas con profundidad.
@@ -90,7 +91,15 @@ export function CapasEscena({
           const rc = await fetch("/api/story/ia/lab/capa", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              mapa, prompt: capa.ai?.prompt ?? capa.name, excluir: capa.ai?.exclude,
+              mapa, prompt: capa.ai?.prompt ?? capa.name,
+              // Nombrar las OTRAS capas es lo que impide que esta las pinte
+              // también. El mapa ya sabe cuáles son; el modelo, no.
+              excluir: listaDeExclusion({
+                capa: capa.name,
+                otras: visibles.map((c) => c.name),
+                extra: capa.ai?.exclude,
+                esFondo: i === 0,
+              }),
               estilo: esc.scene.style, escena: esc.scene.description,
               esFondo: i === 0, formato, corregirCroma: intento > 0,
             }),

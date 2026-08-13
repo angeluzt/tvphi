@@ -40,7 +40,11 @@ export function aCapaVfx(e: EfectoEscena): VfxLayer {
     id: e.id,
     kind: e.kind,
     shape: e.shape,
-    espacio: "imagen",
+    // Lo que cae sobre todo el cuadro se mide en el ENCUADRE: la lluvia moja
+    // lo que se ve, no un trozo concreto de la foto. Lo demás va en «imagen»,
+    // que es donde la IA sitúa —«la plancha está al 17% del ancho»— sin saber
+    // cómo se va a encuadrar la toma.
+    espacio: e.shape === "arriba" ? "encuadre" : "imagen",
     nodes: [{
       x: acotar(e.x),
       y: acotar(e.y),
