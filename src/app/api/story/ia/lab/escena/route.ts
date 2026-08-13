@@ -11,6 +11,7 @@ import { referenciaAnimacion } from "@/lib/lab/referencia-camara";
 import { movimientosCapaParaIA, reglasMovimientoCapa } from "@/lib/lab/movimiento-capa";
 import { rutasSpriteParaIA } from "@/lib/lab/sprite-capa";
 import { leerSpritesPlaneados } from "@/lib/lab/plan-escena-viva";
+import { normalizarEfectos, anclarEfectos, anclasDeEscena } from "@/lib/lab/efectos-escena";
 import type { SpriteMeta } from "@/lib/lab/biblioteca";
 
 // De una frase a un mapa de la escena por capas.
@@ -31,6 +32,15 @@ const cuerpo = z.object({
   capas: z.number().int().min(3).max(6).default(4),
   /** Activa al director que además elige/genera actores y escribe sus rutas. */
   viva: z.boolean().default(false),
+  /**
+   * Si la IA añade efectos de partículas o no.
+   *
+   * Apagado NO es «que los devuelva vacíos»: la parte de la instrucción que los
+   * explica ni se manda. Son unas 900 palabras de catálogo y reglas que se
+   * pagan en cada generación, y para una escena donde no se quieren efectos es
+   * dinero tirado y ruido que empeora el resto de la respuesta.
+   */
+  efectos: z.boolean().default(true),
   modelo: z.string().max(80).optional(),
 });
 
@@ -40,7 +50,7 @@ const TAM: Record<string, [number, number]> = {
   "1:1": [1024, 1024],
 };
 
-const INSTRUCCION = `Eres un director de arte que prepara escenas por capas para animarlas con paralaje.
+const TRONCO = `Eres un director de arte que prepara escenas por capas para animarlas con paralaje.
 
 Devuelves SOLO un objeto JSON, sin explicaciones y sin markdown.
 
@@ -51,8 +61,7 @@ Estructura:
    "mov":{"tipo":"trayectoria","espacio":"capa","referenciaCapaId":"id-via","desdeX":-0.4,"desdeY":0,"x":0.7,"y":0,"segundos":6,"suavizado":"lineal","bucle":false},
    "objects":[{"id":"x","shape":"rect","semantic":"sky","x":0,"y":0,"w":1,"h":1,"label":"CIELO"}]}],
  "navegacion":{"superficies":[{"id":"pasarela","tipo":"suelo","puntos":[[-0.05,0.82],[0.45,0.78],[1.05,0.86]],"acciones":["caminar","correr"],"depth":0.62,"despuesDe":"id-capa"}]},
- "animacion":{"pasos":[{"mov":"acercar","segundos":3,"intensidad":45,"nota":"para qué es este tramo"}]},
- "efectos":[{"id":"humo","espacio":"imagen","x":0.5,"y":0.7,"escala":0.4}]}
+ "animacion":{"pasos":[{"mov":"acercar","segundos":3,"intensidad":45,"nota":"para qué es este tramo"}]}__EFECTOS_JSON__}
 
 CAPAS QUE SE MUEVEN SOLAS (por defecto casi NADA se mueve)
 - «mov» es OPT-IN. Si dudas, NO lo pongas: la capa queda quieta y solo responde al paralaje de cámara.
@@ -64,8 +73,8 @@ CAPAS QUE SE MUEVEN SOLAS (por defecto casi NADA se mueve)
 - Usa espacio "capa" para objetos integrados al decorado. "pantalla" ignora la cámara y solo sirve para una sobreimpresión absoluta.
 - El fondo y el suelo NUNCA llevan «mov»: si se despegan se ve el borde.
 
-LA ANIMACIÓN Y LOS EFECTOS
-- Además del mapa, escribes la ANIMACIÓN de cámara en «animacion.pasos» y los EFECTOS del motor en «efectos».
+LA ANIMACIÓN
+- Además del mapa, escribes la ANIMACIÓN de cámara en «animacion.pasos».
 - Los movimientos válidos, con qué hace cada uno y con cuáles se combinan, van en la referencia que se te pasa aparte. NO inventes ninguno.
 - Tú dices QUÉ pasa —«acércate», «cruza el arco»—; los números de cámara los pone la aplicación. No escribas coordenadas de cámara.
 - La animación tiene que aprovechar las capas que acabas de crear: si haces una puerta en primer plano, atraviésala.
@@ -107,6 +116,36 @@ shape y lo que lleva cada una:
 "label" en MAYÚSCULAS y corto: es lo que leerá el modelo de imagen.
 Usa "repeat" cuando algo se repite (ventanas, columnas, farolas, árboles):
 escribir doce objetos iguales ensucia el mapa.`;
+
+/**
+ * La parte de efectos, aparte a propósito.
+ *
+ * Apagar los efectos no es pedirle que devuelva la lista vacía: es NO MANDAR
+ * esto.
+ *
+ * MEDIDO: son 1.327 letras de las 32.778 que van en total, o sea un 4%. El
+ * ahorro en dinero es pequeño —lo que pesa de verdad son las referencias de
+ * cámara y de sprites—, y no es la razón principal: lo que se gana es que en
+ * una escena sin efectos no se le pongan delante mil letras de reglas sobre
+ * algo que no va a hacer. Cuanta menos instrucción irrelevante, más atención le
+ * queda a las capas, que es lo que de verdad importa.
+ */
+const BLOQUE_EFECTOS = `DÓNDE VA CADA EFECTO (esto es lo que más se falla)
+- CADA efecto lleva «ancla»: el id de un objeto que TÚ acabas de poner en layers[].objects. No escribas x/y: las coordenadas exactas las saca la aplicación de la caja de ese objeto, y así el efecto queda encima de la cosa y hereda su profundidad.
+- Si no hay un objeto donde anclarlo, CRÉALO en la capa que corresponda con semantic "vfx_zone" o "light_anchor" y del tamaño que deba ocupar el efecto. Un efecto sin ancla acaba en mitad del cuadro, atravesándolo, y se ve como un fallo.
+- «forma» decide cómo se reparte sobre esa caja, y cambia por completo el resultado:
+  · "punto"  = sale de un sitio concreto. Hoguera, farola, portal, orbe, chispazo.
+  · "linea"  = recorre el borde de arriba de la caja, de lado a lado. Niebla sobre el agua, neón en una fachada, guirnalda en un alero, burbujas en el fondo de un estanque.
+  · "arriba" = cae o flota por TODO el cuadro y no se ancla a nada. Lluvia, nieve, ceniza, hojas, estrellas de fondo.
+- Elige la forma por lo que quieres que pase, no por costumbre: una niebla "punto" sale de un agujero; una niebla "linea" tumbada sobre el agua es lo que da la escena.
+- El fuego, el humo y las burbujas salen del SUELO de su ancla, no de su centro: ánclalos al objeto que arde o borbotea, no al aire de encima.
+`;
+
+const INSTRUCCION = (conEfectos: boolean) =>
+  TRONCO.replace(
+    "__EFECTOS_JSON__",
+    conEfectos ? ',\n "efectos":[{"id":"humo","forma":"punto","ancla":"id-del-objeto","escala":0.4}]' : "",
+  ) + (conEfectos ? `\n\n${BLOQUE_EFECTOS}` : "\n\nESTA ESCENA VA SIN EFECTOS: no devuelvas la clave «efectos».");
 
 const INSTRUCCION_VIVA = `MODO DIRECTOR DE ESCENA VIVA
 Además de scene, layers, animacion y efectos, devuelve "sprites": una lista de actores animados.
@@ -201,7 +240,7 @@ export async function POST(req: Request) {
         model: modelo,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: INSTRUCCION },
+          { role: "system", content: INSTRUCCION(parsed.data.efectos) },
           ...(parsed.data.viva ? [{ role: "system", content: INSTRUCCION_VIVA }] : []),
           // La referencia se genera desde las mismas listas que usa el motor:
           // sin ella el modelo inventa movimientos y efectos que la aplicación
@@ -283,6 +322,12 @@ export async function POST(req: Request) {
     // La animación se traduce AQUÍ a la cola del motor: el modelo escribe
     // intenciones y los números de cámara los pone quien los sabe.
     const anim = leerAnimacion(d, revisado.escena);
+    const efectosPuestos = (() => {
+      if (!parsed.data.efectos || !Array.isArray(d?.efectos)) return { efectos: [], avisos: [] };
+      const n = normalizarEfectos(d.efectos);
+      const a = anclarEfectos(n.efectos, anclasDeEscena(revisado.escena));
+      return { efectos: a.efectos, avisos: [...n.avisos, ...a.avisos] };
+    })();
     const planSprites = parsed.data.viva
       ? leerSpritesPlaneados(d, revisado.escena, catalogo)
       : { sprites: [], avisos: [] };
@@ -292,8 +337,10 @@ export async function POST(req: Request) {
       animacion: anim.pasos,
       notas: anim.notas,
       // Lo que se ha tenido que enderezar se dice, no se hace a escondidas.
-      avisos: [...anim.avisos, ...planSprites.avisos],
-      efectos: Array.isArray(d?.efectos) ? d.efectos : [],
+      avisos: [...anim.avisos, ...planSprites.avisos, ...efectosPuestos.avisos],
+      // Los efectos se COLOCAN aquí, no en el navegador: es donde está la
+      // escena ya validada y por tanto las cajas de verdad de cada objeto.
+      efectos: efectosPuestos.efectos,
       sprites: planSprites.sprites,
     });
   } catch (e: any) {

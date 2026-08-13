@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import {
   Upload, Play, Pause, Crosshair, Download, Trash2, ChevronUp, ChevronDown, Eye, EyeOff,
   Package, FolderOpen, Loader2, ListPlus, ListOrdered,
@@ -30,6 +30,8 @@ import { RangoPreciso } from "./rango-preciso";
 import { EditorCromaCapa, type CromaCorregido } from "./editor-croma-capa";
 import { HerramientasCapa } from "./herramientas-capa";
 import { BarraTransporte } from "./barra-transporte";
+import { LineaTiempo } from "./linea-tiempo";
+import { duracionCamara, type SpriteLT } from "@/lib/lab/linea-tiempo";
 import { PestanasMontaje, PanelMontajeCaja, type PanelMontaje } from "./paneles-montaje";
 import {
   aEntradaVfx, claveEfectos, nombreEfecto, normalizarEfectos, type EfectoEscena,
@@ -316,6 +318,30 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   repetirRef.current = repetirCola;
 
   const indiceActivo = capas.findIndex((c) => c.id === capaActivaId);
+
+  // Lo que come la línea de tiempo, sacado del estado que ya hay.
+  //
+  // Solo entran las capas que SON un sprite y tienen ruta: una capa de decorado
+  // no tiene nada que contar en un eje de tiempo, y meterla añadiría una fila
+  // vacía por cada árbol de la escena.
+  const spritesDeLaLinea: SpriteLT[] = useMemo(
+    () => capas
+      .filter((c) => c.spr?.ruta?.pasos?.length)
+      .map((c) => ({
+        capaId: c.id,
+        nombre: c.nombre,
+        bucle: !!c.spr!.ruta!.bucle,
+        pasos: c.spr!.ruta!.pasos.map((p) => ({
+          tipo: p.tipo, segundos: p.segundos, x: p.x, y: p.y, anim: p.anim,
+        })),
+      })),
+    [capas],
+  );
+  /** El largo de la escena, que lo manda la cámara. */
+  const totalLineaMs = useMemo(
+    () => Math.max(1, duracionCamara(cola.map((p) => ({ id: p.id, durMs: p.durMs, mov: p.mov })))),
+    [cola],
+  );
   const capaActiva = indiceActivo >= 0 ? capas[indiceActivo] : null;
   const capaEditandoCroma = editandoCromaId
     ? capas.find((c) => c.id === editandoCromaId) ?? null
@@ -2160,6 +2186,31 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                 los mandos: para darle al play había que bajar hasta abajo, y
                 desde ahí ya no se veía lo que estabas reproduciendo. */}
             <BarraTransporte
+              encima={capas.length ? (
+                <LineaTiempo
+                cola={cola.map((p) => ({
+                  id: p.id, durMs: p.durMs, mov: p.mov, mov2: p.mov2,
+                  distancia: p.distancia,
+                  fade: p.fade && p.fade !== "nada"
+                    ? { accion: p.fade, capa: String(p.fadeCapa ?? "") }
+                    : undefined,
+                }))}
+                sprites={spritesDeLaLinea}
+                efectos={efectos.map((e) => ({ id: e.id, nombre: nombreEfecto(e.kind) }))}
+                ms={progresoUi * totalLineaMs}
+                reproduciendo={enSecuencia}
+                onSeek={(ms) => seekCola(Math.max(0, Math.min(1, ms / totalLineaMs)))}
+                onAbrirBloque={(pista, b) => {
+                  // Cámara → abre los ajustes de ESE paso. Sprite → selecciona
+                  // su capa. Es lo que convierte la línea en un mando y no en
+                  // un dibujo bonito.
+                  if (pista.clase === "camara") {
+                    setAbierto(cola[b.indice]?.id ?? null);
+                    setPasoActivo(b.indice);
+                  } else if (pista.refId) setCapaActivaId(pista.refId);
+                }}
+              />
+              ) : null}
               reproduciendo={enSecuencia || (moviendo && !retenerPoseRef.current && anim !== "quieto")}
               progreso={progresoUi}
               disabled={!capas.length}
