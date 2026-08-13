@@ -2663,7 +2663,20 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               }}
               onDragOver={(e) => e.preventDefault()}
             >
-              <canvas ref={canvas} className="block h-auto w-full" />
+              {/* El alto va TOPADO. Una escena vertical (1024×1536) a todo lo
+                  ancho ocupaba 1.500 px de alto: los mandos empezaban fuera de
+                  la pantalla, y para tocar una profundidad había que bajar,
+                  perder de vista el lienzo, tocar y volver a subir a mirar. Con
+                  el tope, la escena y lo que la controla caben a la vez.
+
+                  Sin `w-full`: con un ancho impuesto, el tope de alto aplasta
+                  la imagen en vez de encogerla (medido: una escena vertical
+                  salía a 816×580, relación 1.4 en vez de 0.67). Dejando que el
+                  ancho lo ponga la propia imagen, el tope reduce los dos lados
+                  a la vez y el rectángulo del canvas sigue siendo el de la
+                  imagen — que es lo que mide `coordsEnLienzo`, y por eso
+                  colocar y recortar siguen cayendo donde toca. */}
+              <canvas ref={canvas} className="mx-auto block max-h-[58vh] max-w-full" />
             </div>
             {/* El transporte, PEGADO a la vista. Antes vivía al final de todos
                 los mandos: para darle al play había que bajar hasta abajo, y
