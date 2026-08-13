@@ -4,7 +4,7 @@ import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crop, Loader2, RotateCcw, RotateCw, Scissors,
 } from "lucide-react";
 import { Barra, Flecha } from "./controles-basicos";
-import { esAjusteNeutro, type AjusteCapa } from "@/lib/lab/ajuste-capa";
+import { estaColocadaAMano, type AjusteCapa } from "@/lib/lab/ajuste-capa";
 
 /**
  * Acomodar una pieza: moverla, girarla, encogerla — y partir la capa si lo que
@@ -47,7 +47,7 @@ export function MandosPiezas({
   const paso = 0.01;
   const empujar = (dx: number, dy: number) =>
     onAjuste({ dx: (a?.dx ?? 0) + dx, dy: (a?.dy ?? 0) + dy });
-  const puesta = !esAjusteNeutro(a);
+  const puesta = estaColocadaAMano(a);
 
   return (
     <div className="space-y-2 rounded-lg border border-border bg-surface-2/40 p-2">

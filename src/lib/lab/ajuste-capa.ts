@@ -64,6 +64,20 @@ export function esAjusteNeutro(a: AjusteCapa | undefined | null): boolean {
     && a.pivoteX === 0.5 && a.pivoteY === 0.5;
 }
 
+/**
+ * ¿La ha tocado alguien, o solo lleva su pivote?
+ *
+ * NO es lo contrario de `esAjusteNeutro`. Una pieza recién separada trae ya un
+ * ajuste —su centro, para poder girar por donde debe— sin que nadie la haya
+ * movido todavía: preguntando por lo neutro, las seis piezas salían marcadas
+ * como «movida» nada más partir la capa y el aviso dejaba de significar nada.
+ * Aquí se pregunta por lo que el usuario ha hecho, que es lo que se le enseña.
+ */
+export function estaColocadaAMano(a: AjusteCapa | undefined | null): boolean {
+  if (!a) return false;
+  return a.dx !== 0 || a.dy !== 0 || a.giro !== 0 || a.escala !== 1;
+}
+
 export function normalizarAjuste(a: unknown): AjusteCapa | undefined {
   if (!a || typeof a !== "object") return undefined;
   const o = a as Partial<Record<keyof AjusteCapa, unknown>>;

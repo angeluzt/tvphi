@@ -14,7 +14,7 @@ import { CROMA, prepararCapa } from "@/lib/lab/quitar-fondo";
 import { desplazamientoCapa, normalizarMov, MOVS_CAPA, type MovCapa } from "@/lib/lab/movimiento-capa";
 import { copiarPlanoBucle, moverPlano, planoCentrado, type PlanoMovimiento } from "@/lib/lab/plano-movimiento";
 import {
-  conAjuste, desplazarAjuste, esAjusteNeutro, normalizarAjuste, type AjusteCapa,
+  conAjuste, desplazarAjuste, estaColocadaAMano, normalizarAjuste, type AjusteCapa,
 } from "@/lib/lab/ajuste-capa";
 import { extraerZona, partirEnPiezas, type ZonaRecorte } from "@/lib/lab/piezas-capa";
 import {
@@ -2283,7 +2283,7 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                   title={c.nombre}>
                   <span className={c.visible ? "" : "text-muted line-through"}>{c.nombre}</span>
                   {c.spr && <span className="ml-1 text-[8px] text-accent">sprite</span>}
-                  {!esAjusteNeutro(c.ajuste) && !c.spr && (
+                  {estaColocadaAMano(c.ajuste) && !c.spr && (
                     <span className="ml-1 text-[8px] text-accent" title="Colocada a mano">·movida</span>
                   )}
                 </button>

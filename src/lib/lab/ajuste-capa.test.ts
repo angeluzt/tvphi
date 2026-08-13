@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ajusteNeutro, anclaAjuste, conAjuste, desplazarAjuste, esAjusteNeutro,
+  ajusteNeutro, anclaAjuste, conAjuste, desplazarAjuste, esAjusteNeutro, estaColocadaAMano,
   holguraDelAjuste, necesitaTransformar, normalizarAjuste, planoAjustado,
 } from "./ajuste-capa";
 import { planoCentrado } from "./plano-movimiento";
@@ -88,5 +88,21 @@ describe("colocar una capa a mano", () => {
     const p = plano();
     expect(planoAjustado(p, undefined)).toBe(p);
     expect(planoAjustado(p, conAjuste(undefined, { giro: 20 }))).toBe(p);
+  });
+});
+
+describe("distinguir una pieza colocada de una recién separada", () => {
+  it("no da por movida una pieza que solo trae su pivote", () => {
+    // Al separar una capa, cada trozo nace con su centro apuntado y sin tocar.
+    const recienSeparada = conAjuste(undefined, { pivoteX: 0.75, pivoteY: 0.55 });
+    expect(estaColocadaAMano(recienSeparada)).toBe(false);
+    expect(esAjusteNeutro(recienSeparada)).toBe(false);
+  });
+
+  it("da por movida la que se ha empujado, girado o encogido", () => {
+    expect(estaColocadaAMano(undefined)).toBe(false);
+    expect(estaColocadaAMano(conAjuste(undefined, { dx: 0.02 }))).toBe(true);
+    expect(estaColocadaAMano(conAjuste(undefined, { giro: -5 }))).toBe(true);
+    expect(estaColocadaAMano(conAjuste(undefined, { escala: 0.9 }))).toBe(true);
   });
 });
