@@ -245,3 +245,39 @@ describe("duplicar, borrar y cambiar de capa", () => {
     expect(r.layers[0].objects[0].label).toBeUndefined();
   });
 });
+
+describe("acertar la forma cuando el paralaje está corriendo", () => {
+  // Con paralaje cada capa se dibuja corrida «offset × profundidad», así que la
+  // forma NO está donde se ve. Antes esto hacía imposible coger nada sin
+  // congelar el paralaje; ahora se deshace el corrimiento al buscar.
+  const conProf = {
+    scene: { id: "e", title: "E", width: 100, height: 100, description: "", style: "" },
+    layers: [
+      { id: "lejos", name: "L", depth: 0.1, ai: { prompt: "", exclude: "" },
+        objects: [{ id: "a", shape: "rect", semantic: "sky", x: 0.0, y: 0.0, w: 0.2, h: 0.2, label: "A" }] },
+      { id: "cerca", name: "C", depth: 0.9, ai: { prompt: "", exclude: "" },
+        objects: [{ id: "b", shape: "rect", semantic: "prop", x: 0.6, y: 0.6, w: 0.2, h: 0.2, label: "B" }] },
+    ],
+  } as unknown as Escena;
+
+  it("sin desfase, se acierta donde está la forma", () => {
+    expect(objetoEn(conProf, 0.7, 0.7)?.objetoId).toBe("b");
+  });
+
+  it("con el paralaje corrido, el punto de pantalla también se corre", () => {
+    // La capa cercana (0.9) se dibuja corrida 0,05 × 0,9 = 0,045.
+    const desfase = { x: 0.05, y: 0 };
+    expect(objetoEn(conProf, 0.7, 0.7, undefined, desfase)?.objetoId).toBe("b");
+    // Justo en el borde de lo que se ve: sin deshacer el corrimiento, falla.
+    expect(objetoEn(conProf, 0.84, 0.7, undefined, desfase)?.objetoId).toBe("b");
+    expect(objetoEn(conProf, 0.84, 0.7)).toBeNull();
+  });
+
+  it("cada capa se corre lo suyo, no todas igual", () => {
+    const desfase = { x: 0.1, y: 0 };
+    // La lejana (0.1) apenas se mueve: 0,01.
+    expect(objetoEn(conProf, 0.205, 0.1, undefined, desfase)?.objetoId).toBe("a");
+    // La cercana (0.9) se mueve diez veces más: 0,09.
+    expect(objetoEn(conProf, 0.75, 0.7, undefined, desfase)?.objetoId).toBe("b");
+  });
+});

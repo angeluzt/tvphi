@@ -5,7 +5,7 @@ import { Map, Layers3, FlaskConical, Clapperboard, Bird } from "lucide-react";
 import { MapaEditor } from "./mapa-editor";
 import { Compositor, type Semilla } from "./compositor";
 import { revisar } from "@/lib/lab/escena";
-import { GenerarIa } from "./generar-ia";
+import { GenerarIa, type CapaGenerada } from "./generar-ia";
 import { GenerarSprite, type GenerarSpriteHandle } from "./generar-sprite";
 import { BibliotecaSprites } from "./biblioteca-sprites";
 import { lienzoDeCapas } from "@/lib/lab/exportar";
@@ -23,6 +23,14 @@ function pestanaInicial(): "mapa" | "compositor" | "sprites" {
 export function LabApp({ hayIa }: { hayIa: boolean }) {
   const [pestana, setPestana] = useState<"mapa" | "compositor" | "sprites">("mapa");
   const [semilla, setSemilla] = useState<Semilla[] | undefined>();
+  /**
+   * Las capas que la IA ya dibujó, aquí y no dentro del generador.
+   *
+   * Dentro morían al cambiar de pestaña, y al montar se cambia sola: volver al
+   * mapa ofrecía repintar las cinco y pagarlas otra vez. Cada imagen cuesta, y
+   * una ya pagada no se tira.
+   */
+  const [capasHechas, setCapasHechas] = useState<CapaGenerada[]>([]);
   // El mapa que hay ahora mismo, para que el panel de IA pueda dibujarlo.
   const [escena, setEscena] = useState<Escena | null>(null);
   // La cámara que escribió la IA, esperando a que se monte el compositor.
@@ -171,10 +179,12 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
       {hayIa && pestana === "mapa" && (
         <GenerarIa
           escena={escena}
+          hechas={capasHechas}
+          onHechas={setCapasHechas}
           onEscena={(e) => { setImpuesta(e); setEscena(e); }}
           onAnimacion={(pasos) => setColaIa(pasos)}
           onEfectos={(fx) => setEfectosIa(fx)}
-          onCapas={(cs, resumen, actores) => {
+          onCapas={(cs, resumen, actores, completo) => {
             const porCapa = new globalThis.Map<string, typeof actores>();
             for (const actor of actores) {
               const grupo = porCapa.get(actor.despuesDe) ?? [];
@@ -217,12 +227,17 @@ export function LabApp({ hayIa }: { hayIa: boolean }) {
             setSemilla(montaje);
             if (actores.some((a) => a.fuente === "generado")) setTandaSprites((v) => v + 1);
             setResumen(resumen);
-            setPestana("compositor");
+            // Solo se salta al compositor si NO quedó nada pendiente. Con una
+            // capa fallida, saltar destruía la tarjeta del generador y con ella
+            // el registro de lo ya dibujado: la única salida era rehacerlo todo
+            // y pagarlo otra vez. Quedándose, el botón dice «faltan 2 de 5» y
+            // solo se paga eso.
+            if (completo) setPestana("compositor");
           }}
         />
       )}
 
-      {resumen && pestana === "compositor" && (
+      {resumen && (
         <p className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-[11px] text-accent">
           {resumen}
         </p>
