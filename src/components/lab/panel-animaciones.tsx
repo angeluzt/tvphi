@@ -1,6 +1,8 @@
 "use client";
 
-import { ChevronDown, ChevronRight, ChevronUp, Clapperboard, Eye, Layers, Trash2 } from "lucide-react";
+import {
+  ChevronDown, ChevronRight, ChevronUp, Clapperboard, Eye, Layers, Sparkles, Trash2,
+} from "lucide-react";
 
 /**
  * TODO lo que se mueve en la escena, en una sola lista.
@@ -32,9 +34,16 @@ export interface FilaCapa {
   esSprite: boolean;
 }
 
+export interface FilaEfecto {
+  id: string;
+  nombre: string;
+  resumen: string;
+}
+
 export function PanelAnimaciones({
   camara,
   capas,
+  efectos,
   enSecuencia,
   abierto,
   onAlternar,
@@ -44,9 +53,12 @@ export function PanelAnimaciones({
   onQuitarMovCapa,
   onIrACapa,
   onVaciarCamara,
+  onQuitarEfecto,
 }: {
   camara: FilaCamara[];
   capas: FilaCapa[];
+  /** Faltaban: se veían en el lienzo y en la línea de tiempo, pero no aquí. */
+  efectos: FilaEfecto[];
   enSecuencia: boolean;
   abierto: boolean;
   onAlternar: () => void;
@@ -56,8 +68,9 @@ export function PanelAnimaciones({
   onQuitarMovCapa: (id: string) => void;
   onIrACapa: (id: string) => void;
   onVaciarCamara: () => void;
+  onQuitarEfecto: (id: string) => void;
 }) {
-  const total = camara.length + capas.length;
+  const total = camara.length + capas.length + efectos.length;
 
   return (
     <div className="rounded-lg border border-border bg-surface-2/40">
@@ -77,9 +90,11 @@ export function PanelAnimaciones({
           </span>
           {!abierto && !!total && (
             <span className="min-w-0 flex-1 truncate text-[10px] text-muted">
-              {camara.length ? `${camara.length} de cámara` : ""}
-              {camara.length && capas.length ? " · " : ""}
-              {capas.length ? `${capas.length} de capa` : ""}
+              {[
+                camara.length ? `${camara.length} de cámara` : "",
+                capas.length ? `${capas.length} de capa` : "",
+                efectos.length ? `${efectos.length} efecto${efectos.length === 1 ? "" : "s"}` : "",
+              ].filter(Boolean).join(" · ")}
             </span>
           )}
         </button>
@@ -88,8 +103,8 @@ export function PanelAnimaciones({
       <div className={abierto ? "space-y-2 px-2 pb-2" : "hidden"}>
         {!total && (
           <p className="text-[10px] text-muted">
-            Todavía no se mueve nada. Dale movimiento a una capa en «Animar selección», o
-            añade un paso de cámara desde la pestaña «Cámara».
+            Todavía no se mueve nada. Dale movimiento a una capa en «Animar selección»,
+            añade un paso de cámara desde la pestaña «Cámara», o planta un efecto.
           </p>
         )}
 
@@ -177,6 +192,33 @@ export function PanelAnimaciones({
                   <button type="button" onClick={() => onQuitarMovCapa(c.id)}
                     className="shrink-0 text-muted hover:text-danger"
                     aria-label={`Quitar la animación de ${c.nombre}`} title="Dejarla quieta">
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {!!efectos.length && (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-ok" />
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-muted">
+                Efectos · {efectos.length}
+              </span>
+            </div>
+            <ul className="space-y-1">
+              {efectos.map((e) => (
+                <li key={e.id}
+                  className="flex items-center gap-1.5 rounded-md bg-surface/60 px-1.5 py-1 text-[10px]">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-ok/70" aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-fg">{e.nombre}</span>
+                    <span className="block truncate text-[9px] text-muted">{e.resumen}</span>
+                  </span>
+                  <button type="button" onClick={() => onQuitarEfecto(e.id)}
+                    className="shrink-0 text-muted hover:text-danger"
+                    aria-label={`Quitar ${e.nombre}`} title="Quitar este efecto">
                     <Trash2 className="h-3 w-3" />
                   </button>
                 </li>

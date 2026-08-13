@@ -38,7 +38,8 @@ import { LineaTiempo } from "./linea-tiempo";
 import { duracionCamara, type SpriteLT } from "@/lib/lab/linea-tiempo";
 import { PestanasMontaje, PanelMontajeCaja, type PanelMontaje } from "./paneles-montaje";
 import {
-  aEntradaVfx, claveEfectos, nombreEfecto, normalizarEfectos, type EfectoEscena,
+  aEntradaVfx, claveEfectos, efectoActivo, nombreEfecto, normalizarEfectos,
+  type EfectoEscena,
 } from "@/lib/lab/efectos-escena";
 import { VfxScene } from "@/lib/story/vfx";
 import { PanelEfectos } from "./panel-efectos";
@@ -49,6 +50,7 @@ import { MandosMovimientoCapa, movimientoInicial } from "./mandos-movimiento";
 import { MandosPiezas } from "./mandos-piezas";
 import { usePlegados } from "./plegable";
 import { PanelAnimaciones } from "./panel-animaciones";
+import { InspectorBloque, type SeleccionBloque } from "./inspector-bloque";
 import {
   cajaContenido, colorDeGuia, pintarGuiaAnimacion, resumenDeMov, type CapaGuia,
 } from "@/lib/lab/guia-animacion";
@@ -233,6 +235,8 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
   // toque en la escena lo planta ahí en vez de mover la cámara.
   const [efectoPendiente, setEfectoPendiente] = useState<string | null>(null);
   const [modoEdicion, setModoEdicion] = useState<ModoEdicionCanvas>(null);
+  /** La barra de la línea de tiempo que se está tocando. */
+  const [bloqueSel, setBloqueSel] = useState<SeleccionBloque | null>(null);
   /** Señalar en el lienzo lo marcado y los caminos. Se puede apagar para ver la escena limpia. */
   const [verGuias, setVerGuias] = useState(true);
   /** Qué secciones dejó abiertas el usuario. Sobrevive a la recarga. */
@@ -1198,7 +1202,9 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
      */
     propia?: VfxScene,
   ) {
-    const lista = efectosRef.current;
+    // Solo los que suenan en este instante. Antes entraban todos siempre, que
+    // es lo que hacía imposible decir «el humo empieza cuando llega el gato».
+    const lista = efectosRef.current.filter((e) => efectoActivo(e, reloj));
     if (!lista.length) return;
     if (!propia && !vfxRef.current) vfxRef.current = new VfxScene();
     const escenaVfx = propia ?? vfxRef.current!;
@@ -1280,6 +1286,51 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
 
     const b = await new Promise<Blob | null>((r) => out.toBlob(r, "image/png"));
     if (b) bajar(b, "montaje.png");
+  }
+
+  /**
+   * Añadir una pista nueva desde la propia línea de tiempo.
+   *
+   * Cada «añadir» lleva a donde se elige eso, en vez de inventarse un valor: un
+   * efecto hay que escogerlo del catálogo y plantarlo en un sitio, y un actor
+   * sale de la biblioteca. Lo único que se puede dar hecho es el paso de
+   * cámara, que ya tiene su borrador preparado.
+   */
+  function anadirDesdeLinea(que: "camara" | "efecto" | "actor") {
+    if (que === "camara") {
+      anadirACola();
+      setPanel("camara");
+      return;
+    }
+    if (que === "efecto") {
+      setPanel("camara");
+      setAviso("Elige un efecto abajo y toca el lienzo para plantarlo.");
+      return;
+    }
+    // Un actor más: se duplica el que esté abierto —«que haga otra cosa a la
+    // vez» es dos actores, no uno— y si no hay ninguno, se manda a la
+    // biblioteca, que es de donde salen.
+    const base = capasRef.current.find((c) => c.id === capaActivaId && c.spr)
+      ?? [...capasRef.current].reverse().find((c) => c.spr);
+    if (!base?.spr) {
+      setAviso("Los actores salen de la biblioteca de sprites: elige uno y se añade a la escena.");
+      return;
+    }
+    const copia: CapaImg = {
+      ...base,
+      ...hacerCapa(`${base.nombre} · 2`, base.img),
+      depth: base.depth,
+      escala: base.escala,
+      opacidad: base.opacidad,
+      visible: true,
+      // Sin ruta: es otro actor, no el mismo repetido. Empieza quieto y a un
+      // lado, para que se vea que son dos y no uno encima del otro.
+      spr: { ...base.spr, x: Math.min(0.95, base.spr.x + 0.12), ruta: undefined },
+    };
+    relojesSpriteRef.current.set(copia.id, { inicio: performance.now() });
+    setCapas((cs) => [...cs, copia]);
+    setCapaActivaId(copia.id);
+    setAviso(`«${copia.nombre}» añadido: dale su propia ruta para que haga otra cosa.`);
   }
 
   function anadirACola() {
@@ -2109,6 +2160,61 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
     );
   }
 
+  /**
+   * Cuándo suena un efecto.
+   *
+   * Un final por delante del principio se acota en vez de rechazarse: al
+   * teclear «2» en un campo que iba a 8 se pasa por valores imposibles, y
+   * negarse a mitad de escritura es lo que hace que un campo pelee contigo.
+   */
+  function tiempoDeEfecto(id: string, patch: { desde?: number; hasta?: number }) {
+    setEfectos((fx) => fx.map((e) => {
+      if (e.id !== id) return e;
+      const total = Math.max(0.5, totalLineaMs / 1000);
+      const quitar = patch.desde === undefined && patch.hasta === undefined
+        && "desde" in patch && "hasta" in patch;
+      if (quitar) {
+        const { desde: _d, hasta: _h, ...resto } = e;
+        return resto;
+      }
+      const desde = patch.desde !== undefined
+        ? Math.max(0, Math.min(total, patch.desde))
+        : e.desde;
+      const hasta = patch.hasta !== undefined
+        ? Math.max(0, Math.min(total, patch.hasta))
+        : e.hasta;
+      return {
+        ...e,
+        desde,
+        hasta: hasta !== undefined && desde !== undefined && hasta <= desde
+          ? Math.min(total, desde + 0.5)
+          : hasta,
+      };
+    }));
+  }
+
+  /**
+   * Meter un «cambia a esta animación» en un punto de la ruta.
+   *
+   * Va JUSTO ANTES del paso pulsado, no después: lo que uno quiere decir al
+   * pulsar un tramo es «a partir de aquí, con esta otra», y el cambio tiene que
+   * estar puesto cuando ese tramo empieza.
+   */
+  function cambiarAnimEnRuta(capaId: string, indice: number, clave: string) {
+    const capa = capasRef.current.find((c) => c.id === capaId);
+    const pasos = capa?.spr?.ruta?.pasos;
+    if (!capa?.spr || !pasos) return;
+    const corte = Math.max(0, Math.min(pasos.length, indice));
+    const nuevos = [
+      ...pasos.slice(0, corte),
+      { tipo: "cambiar" as const, segundos: 0, anim: clave },
+      ...pasos.slice(corte),
+    ];
+    upd(capaId, { spr: { ...capa.spr, ruta: { ...capa.spr.ruta!, pasos: nuevos } } });
+    reiniciarSprite(capaId);
+    setAviso(`«${capa.nombre}» cambia a «${clave}» en ese punto.`);
+  }
+
   function quitarEfecto(id: string) {
     setEfectos((prev) => prev.filter((e) => e.id !== id));
   }
@@ -2692,20 +2798,90 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
                     : undefined,
                 }))}
                 sprites={spritesDeLaLinea}
-                efectos={efectos.map((e) => ({ id: e.id, nombre: nombreEfecto(e.kind) }))}
+                efectos={efectos.map((e) => ({
+                  id: e.id, nombre: nombreEfecto(e.kind), desde: e.desde, hasta: e.hasta,
+                }))}
                 ms={progresoUi * totalLineaMs}
                 reproduciendo={enSecuencia}
                 onSeek={(ms) => seekCola(Math.max(0, Math.min(1, ms / totalLineaMs)))}
+                seleccionId={bloqueSel?.bloque.id ?? null}
                 onAbrirBloque={(pista, b) => {
-                  // Cámara → abre los ajustes de ESE paso. Sprite → selecciona
-                  // su capa. Es lo que convierte la línea en un mando y no en
-                  // un dibujo bonito.
+                  // Se abre AQUÍ, pegado a la barra. Antes esto mandaba a otra
+                  // pestaña —al final de la página— y perdías de vista el punto
+                  // que estabas mirando.
+                  setBloqueSel({ pista, bloque: b });
+                  if (pista.clase === "camara") setPasoActivo(b.indice);
+                  else if (pista.clase === "sprite" && pista.refId) setCapaActivaId(pista.refId);
+                }}
+                onAnadir={anadirDesdeLinea}
+                onEstirar={(pista, b, desdeMs, hastaMs) => {
+                  if (pista.clase === "efectos") {
+                    tiempoDeEfecto(b.id, {
+                      desde: Math.round(desdeMs) / 1000,
+                      hasta: Math.round(hastaMs) / 1000,
+                    });
+                    return;
+                  }
                   if (pista.clase === "camara") {
-                    setAbierto(cola[b.indice]?.id ?? null);
-                    setPasoActivo(b.indice);
-                  } else if (pista.refId) setCapaActivaId(pista.refId);
+                    // De un paso de cámara solo se estira lo DURA: dónde empieza
+                    // lo decide el paso anterior, así que moverlo sería
+                    // reordenar la cola, y eso ya se hace con las flechas.
+                    const paso = colaRef.current[b.indice];
+                    if (paso) updPaso(paso.id, { durMs: Math.max(800, Math.round(hastaMs - b.desde)) });
+                  }
                 }}
               />
+              ) : null}
+              debajo={bloqueSel ? (
+                <InspectorBloque
+                  seleccion={bloqueSel}
+                  onCerrar={() => setBloqueSel(null)}
+                  paso={bloqueSel.pista.clase === "camara"
+                    ? (() => {
+                      const p = cola[bloqueSel.bloque.indice];
+                      return p ? { id: p.id, mov: p.mov, distancia: p.distancia, durMs: p.durMs } : null;
+                    })()
+                    : null}
+                  onPaso={(id, patch) => updPaso(id, patch)}
+                  onQuitarPaso={(id) => {
+                    setCola((cs) => cs.filter((x) => x.id !== id));
+                    setBloqueSel(null);
+                  }}
+                  efecto={bloqueSel.pista.clase === "efectos"
+                    ? (() => {
+                      const e = efectos.find((x) => x.id === bloqueSel.bloque.id);
+                      return e
+                        ? {
+                          id: e.id,
+                          nombre: nombreEfecto(e.kind),
+                          sitio: e.shape === "arriba"
+                            ? "Cae sobre toda la escena"
+                            : `En ${Math.round(e.x * 100)}% · ${Math.round(e.y * 100)}%`,
+                          desde: e.desde,
+                          hasta: e.hasta,
+                          totalSeg: Math.round(totalLineaMs / 100) / 10,
+                        }
+                        : null;
+                    })()
+                    : null}
+                  onQuitarEfecto={(id) => { quitarEfecto(id); setBloqueSel(null); }}
+                  onTiempoEfecto={tiempoDeEfecto}
+                  actor={bloqueSel.pista.clase === "sprite" && bloqueSel.pista.refId
+                    ? {
+                      capaId: bloqueSel.pista.refId,
+                      nombre: bloqueSel.pista.nombre,
+                      anims: (capas.find((c) => c.id === bloqueSel.pista.refId)?.spr?.anims ?? [])
+                        .map((a) => a.clave),
+                    }
+                    : null}
+                  onIrAlActor={(id) => {
+                    setCapaActivaId(id);
+                    setPanel("elemento");
+                    setSubPanel("animar");
+                  }}
+                  onQuitarActor={(id) => { eliminarCapa(id); setBloqueSel(null); }}
+                  onCambiarAnim={cambiarAnimEnRuta}
+                />
               ) : null}
               reproduciendo={enSecuencia || (moviendo && !retenerPoseRef.current && anim !== "quieto")}
               progreso={progresoUi}
@@ -2754,6 +2930,19 @@ export function Compositor({ semilla, sprite, colaInicial, efectosIniciales, esc
               onQuitarPaso={(id) => setCola((cs) => cs.filter((x) => x.id !== id))}
               onMoverPaso={moverPasoCola}
               onAbrirPaso={(id) => { setPanel("camara"); setAbierto(id); }}
+              efectos={efectos.map((e) => ({
+                id: e.id,
+                nombre: nombreEfecto(e.kind),
+                resumen: [
+                  e.shape === "arriba"
+                    ? "Cae sobre toda la escena"
+                    : `En ${Math.round(e.x * 100)}% · ${Math.round(e.y * 100)}%`,
+                  e.desde !== undefined || e.hasta !== undefined
+                    ? `${(e.desde ?? 0).toFixed(1)}s → ${(e.hasta ?? totalLineaMs / 1000).toFixed(1)}s`
+                    : "",
+                ].filter(Boolean).join(" · "),
+              }))}
+              onQuitarEfecto={quitarEfecto}
               onQuitarMovCapa={quitarMovDeCapa}
               onIrACapa={(id) => { setCapaActivaId(id); setPanel("elemento"); setSubPanel("animar"); }}
               onVaciarCamara={() => {

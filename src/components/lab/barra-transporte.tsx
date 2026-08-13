@@ -19,6 +19,7 @@ import {
  */
 export function BarraTransporte({
   encima,
+  debajo,
   reproduciendo,
   progreso,
   onPlayPause,
@@ -31,6 +32,12 @@ export function BarraTransporte({
   onPlegar,
 }: {
   encima?: React.ReactNode;
+  /**
+   * Lo que sale JUSTO debajo de la línea de tiempo: los ajustes de la barra que
+   * se acaba de pulsar. Va aquí y no al final de la página porque si no, para
+   * tocar lo que has seleccionado hay que perder de vista dónde lo pulsaste.
+   */
+  debajo?: React.ReactNode;
   reproduciendo: boolean;
   progreso: number;
   onPlayPause: () => void;
@@ -73,6 +80,7 @@ export function BarraTransporte({
       {!plegado && (
         <>
           {encima}
+          {debajo}
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

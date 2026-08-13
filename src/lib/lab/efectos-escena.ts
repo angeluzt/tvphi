@@ -43,6 +43,17 @@ export interface EfectoEscena {
   colorHex: string;
   params: Record<string, number>;
   /**
+   * Cuándo suena, en segundos desde que arranca la escena.
+   *
+   * Sin esto los efectos eran continuos: el motor los encendía en 0 y no los
+   * apagaba nunca, así que una explosión duraba tanto como el capítulo y no
+   * había forma de decir «el humo empieza cuando llega el gato». Ausentes =
+   * toda la escena, que es como se comportaba antes y como siguen los que ya
+   * están guardados.
+   */
+  desde?: number;
+  hasta?: number;
+  /**
    * Id de la forma del mapa sobre la que va, si el modelo la nombró.
    *
    * Se guarda además de x/y para poder RECOLOCARLO: si luego se arrastra el
@@ -98,6 +109,21 @@ function formaDe(kind: VfxKind, pedida: unknown): VfxShape {
  * en mitad del cuadro. El sitio que diga el modelo aquí no aporta nada: la
  * franja es siempre la misma.
  */
+/**
+ * ¿Está sonando este efecto en el segundo `t`?
+ *
+ * Un efecto sin tiempo suena siempre. Y `hasta` sin `desde` —o al revés— vale:
+ * son «hasta el segundo 4» y «a partir del 4», que es como lo diría cualquiera.
+ */
+export function efectoActivo(
+  e: { desde?: number; hasta?: number },
+  t: number,
+): boolean {
+  if (e.desde !== undefined && t < e.desde) return false;
+  if (e.hasta !== undefined && t >= e.hasta) return false;
+  return true;
+}
+
 export function franjaDeArriba() {
   return { x: 0, y: -0.02, x2: 1, y2: -0.02 };
 }
@@ -168,9 +194,23 @@ export function normalizarEfectos(crudo: unknown): {
       : shape === "arriba" ? "encuadre"
         : "imagen";
 
+    const seg = (v: unknown) => {
+      const n = num(v, Number.NaN);
+      return Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : undefined;
+    };
+    const desde = seg(o.desde);
+    const hastaCrudo = seg(o.hasta);
+    // Un final antes del principio no se corrige a medias: se tira, porque un
+    // efecto que acaba antes de empezar no suena nunca y nadie lo pidió así.
+    const hasta = hastaCrudo !== undefined && desde !== undefined && hastaCrudo <= desde
+      ? undefined
+      : hastaCrudo;
+
     efectos.push({
       id: typeof o.instanciaId === "string" && o.instanciaId ? o.instanciaId : `fx${i + 1}-${kind}`,
       kind, shape, espacio, x, y, x2, y2,
+      ...(desde !== undefined ? { desde } : {}),
+      ...(hasta !== undefined ? { hasta } : {}),
       depth: acotar(num(o.depth, 0.35), 0, 1),
       colorHex: colorDe(kind, o.colorHex ?? o.color),
       params,
