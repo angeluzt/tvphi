@@ -56,6 +56,19 @@ export function referencias(p: StoryProject): RefArchivo[] {
   const out: RefArchivo[] = [];
   p.scenes.forEach((sc, si) => {
     if (sc.imageId) out.push({ id: sc.imageId, tipo: "escena", donde: `Escena ${si + 1}`, sceneId: sc.id });
+    (sc.loop?.imageIds ?? []).forEach((id, fi) => {
+      if (id && id !== sc.imageId) {
+        out.push({ id, tipo: "escena", donde: `Escena ${si + 1} · fotograma ${fi + 1}`, sceneId: sc.id });
+      }
+    });
+    (sc.capas ?? []).forEach((c, ci) => {
+      if (c.imageId) out.push({ id: c.imageId, tipo: "escena", donde: `Escena ${si + 1} · lámina ${c.nombre || ci + 1}`, sceneId: sc.id });
+      (c.loop?.imageIds ?? []).forEach((id, fi) => {
+        if (id && id !== c.imageId) {
+          out.push({ id, tipo: "escena", donde: `Escena ${si + 1} · ${c.nombre || "lámina"} · fotograma ${fi + 1}`, sceneId: sc.id });
+        }
+      });
+    });
     sc.shots.forEach((sh, hi) => {
       const sitio = `Escena ${si + 1} · toma ${hi + 1}`;
       for (const d of sh.dialogues) if (d.audioId) out.push({ id: d.audioId, tipo: "voz", donde: sitio });

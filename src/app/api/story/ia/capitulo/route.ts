@@ -9,6 +9,7 @@ import { VOCES } from "@/lib/story/modelos";
 import { estadoCupoHistorias, reservarUsoIa, liberarUsoIa, esAdminHistorias } from "@/lib/story/cupo";
 import { AVISO_SIN_VERIFICAR } from "@/lib/email-verify";
 import { fijarConsistencia, leerReparto, leerEstilo } from "@/lib/story/consistencia";
+import { instruccionesPaleta, medioPermitido, normalizarPaleta, PALETA_VACIA } from "@/lib/story/paleta";
 
 // Si la IA no rellenó project.voices, se asigna una voz distinta por hablante
 // para que Nora y Tomás no suenen iguales al narrar.
@@ -51,6 +52,17 @@ const cuerpo = z.object({
    * salía siempre apaisado, así que para TikTok no había manera.
    */
   formato: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+  /**
+   * Qué puede inventar la IA. Solo el admin lo manda (página experimental).
+   * Sin esto, el capítulo es el de siempre: still + vfx + música.
+   */
+  paleta: z.object({
+    paralaje: z.boolean().optional(),
+    apng: z.boolean().optional(),
+    sprites: z.boolean().optional(),
+    vfx: z.boolean().optional(),
+    musica: z.boolean().optional(),
+  }).optional(),
 });
 
 /** El tamaño real con el que se van a generar las imágenes de cada escena. */
@@ -66,7 +78,7 @@ Devuelve SOLO un objeto JSON con esta forma:
 {"name": "título", "project": {"aspect":"16:9","narrationVolume":1,"audioLayers":[],"intro":null,"outro":null,"voices":{"":"onyx"},"reparto":{...},"estilo":"...","scenes":[...]}}
 
 Cada escena es UNA imagen:
-{"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen",
+{"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen","medio":"still",
  "vfx":[/* anclas de la FOTO: portal, fuego, humo… */],"shots":[...]}
 
 Cada toma es un encuadre sobre esa imagen:
@@ -148,6 +160,10 @@ export async function POST(req: Request) {
 
   const formato = parsed.data.formato;
   const medida = MEDIDAS[formato];
+  const admin = esAdminHistorias(user.email);
+  const paleta = admin && parsed.data.paleta
+    ? normalizarPaleta(parsed.data.paleta)
+    : PALETA_VACIA;
 
   // Sin el correo confirmado no se escribe nada: es la puerta por la que
   // entraría quien se apunta con direcciones de usar y tirar a gastar la clave.
@@ -193,6 +209,7 @@ export async function POST(req: Request) {
                   ? "Es CUADRADO: encuadra centrado, sin depender de los lados."
                   : "Es APAISADO, para pantalla ancha.") },
             { role: "system", content: `Catálogo de efectos y reglas del montaje:\n${JSON.stringify(ref)}` },
+            { role: "system", content: instruccionesPaleta(paleta) },
             { role: "user", content: `Haz un capítulo de ${escenas} escenas sobre esto:\n\n${prompt}` },
           ],
         }),
@@ -229,12 +246,19 @@ export async function POST(req: Request) {
     // otro el usuario acabaría con un vídeo de otra forma sin enterarse, y los
     // encuadres ya vendrían hechos para la equivocada.
     project.aspect = formato;
+    project.paleta = paleta;
     for (const sc of project.scenes) {
       if (!(sc.imgW > 0) || !(sc.imgH > 0) || (sc.imgW > sc.imgH) !== (medida.w > medida.h)) {
         sc.imgW = medida.w;
         sc.imgH = medida.h;
       }
+      sc.medio = medioPermitido(sc.medio, paleta);
+      if (!paleta.vfx) {
+        sc.vfx = [];
+        for (const sh of sc.shots) sh.vfx = [];
+      }
     }
+    if (!paleta.musica) project.audioLayers = [];
     if (!project.scenes.length) {
       return NextResponse.json({ error: "La IA no devolvió ninguna escena" }, { status: 502 });
     }

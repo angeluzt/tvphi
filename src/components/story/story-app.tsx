@@ -30,6 +30,11 @@ import { MoverEfectos, desplazar } from "./mover-efectos";
 import type { PestanaToma } from "./pestanas-toma";
 import { CapasEscena } from "@/components/lab/capas-escena";
 import { VentanaCapas } from "@/components/story/ventana-capas";
+import { MediosEscena } from "@/components/story/medios-escena";
+import { ParcheIa } from "@/components/story/parche-ia";
+import { generarLoopDesdeStill, pedirFotograma, blobAPngDataUrl } from "@/lib/story/generar-loop";
+import { blobDeUrlDeImagen } from "@/lib/lab/png-base64";
+import { FPS_LOOP_DEFECTO } from "@/lib/story/medio";
 import { capasVfxDeLaIa } from "@/lib/story/efectos-a-escena";
 import { MandoEdicion } from "./mando-edicion";
 import { Slider } from "./slider";
@@ -318,6 +323,9 @@ export function StoryApp({
   const [section, setSection] = useState<{ start: number; end: number; label: string; shotId?: string; sceneId?: string } | null>(null);
   /** Qué escena tiene abierto el editor de paralaje, si alguna. */
   const [capasAbiertas, setCapasAbiertas] = useState<string | null>(null);
+  const [ocupadoMedio, setOcupadoMedio] = useState<string | null>(null);
+  const [regenerandoCuadro, setRegenerandoCuadro] = useState<number | null>(null);
+  const [animandoCapa, setAnimandoCapa] = useState<string | null>(null);
   // Escena cuya posición se está cambiando escribiendo el número.
   const [movingScene, setMovingScene] = useState<{ id: string; value: string } | null>(null);
   // Al crear un proyecto se elige primero la forma del video.
@@ -1456,6 +1464,164 @@ export function StoryApp({
     }
   }
 
+  async function guardarBlobEscena(blob: Blob, nombre: string): Promise<string> {
+    const id = `${nombre}-${nanoid(8)}`;
+    await putAsset(id, blob);
+    await assetUrl(id);
+    engineRef.current?.invalidateAsset(id);
+    return id;
+  }
+
+  function formatoDeProyecto(): "16:9" | "9:16" | "1:1" {
+    const a = projRef.current.aspect;
+    return a === "9:16" ? "9:16" : a === "1:1" ? "1:1" : "16:9";
+  }
+
+  async function aplanarEscena(sceneId: string) {
+    mut((p) => ({
+      ...p,
+      scenes: p.scenes.map((s) => s.id === sceneId
+        ? { ...s, medio: "still" as const, capas: undefined, camara: undefined, loop: undefined }
+        : s),
+    }));
+    engineRef.current?.update(projRef.current);
+    setStatus("Escena en foto regular.");
+  }
+
+  async function convertirApng(sceneId: string) {
+    const sc = projRef.current.scenes.find((s) => s.id === sceneId);
+    if (!sc?.imageId) { setStatus("Dibuja primero la imagen de la escena."); return; }
+    const still = await getAsset(sc.imageId);
+    if (!still) { setStatus("Falta la imagen de la escena en este navegador."); return; }
+    setOcupadoMedio(sceneId);
+    try {
+      const loop = await generarLoopDesdeStill({
+        stillId: sc.imageId,
+        still,
+        prompt: sc.prompt || "the same scene, tiny natural motion",
+        formato: formatoDeProyecto(),
+        n: 6,
+        fps: FPS_LOOP_DEFECTO,
+        calidad: calidadImg,
+        onPaso: (s) => setStatus(s),
+        guardar: guardarBlobEscena,
+      });
+      mut((p) => ({
+        ...p,
+        scenes: p.scenes.map((s) => s.id === sceneId
+          ? { ...s, medio: "apng" as const, loop, capas: undefined, camara: undefined }
+          : s),
+      }));
+      engineRef.current?.update(projRef.current);
+      setStatus(`Foto viva lista · ${loop.imageIds.length} fotogramas.`);
+    } catch (e: any) {
+      setStatus("No se pudo crear la foto viva: " + (e?.message ?? ""));
+    } finally {
+      setOcupadoMedio(null);
+    }
+  }
+
+  async function regenerarCuadro(sceneId: string, indice: number) {
+    const sc = projRef.current.scenes.find((s) => s.id === sceneId);
+    const loop = sc?.loop;
+    if (!sc || !loop || !loop.imageIds[indice]) return;
+    const refId = loop.imageIds[0] || sc.imageId;
+    const still = await getAsset(refId);
+    if (!still) { setStatus("Falta el fotograma de referencia."); return; }
+    setRegenerandoCuadro(indice);
+    try {
+      const blob = await pedirFotograma({
+        prompt: sc.prompt || "the same scene, tiny natural motion",
+        imagen: await blobAPngDataUrl(still),
+        formato: formatoDeProyecto(),
+        calidad: calidadImg,
+      });
+      const id = loop.imageIds[indice];
+      await putAsset(id, blob);
+      engineRef.current?.invalidateAsset(id);
+      engineRef.current?.update(projRef.current);
+      setStatus(`Fotograma ${indice + 1} regenerado.`);
+    } catch (e: any) {
+      setStatus("No se pudo regenerar el fotograma: " + (e?.message ?? ""));
+    } finally {
+      setRegenerandoCuadro(null);
+    }
+  }
+
+  async function animarCapa(sceneId: string, capaId: string) {
+    const sc = projRef.current.scenes.find((s) => s.id === sceneId);
+    const capa = sc?.capas?.find((c) => c.id === capaId);
+    if (!sc || !capa) return;
+    const still = await getAsset(capa.imageId);
+    if (!still) { setStatus("Falta la imagen de esa lámina."); return; }
+    setAnimandoCapa(capaId);
+    try {
+      const loop = await generarLoopDesdeStill({
+        stillId: capa.imageId,
+        still,
+        prompt: `${sc.prompt || capa.nombre}. Layer: ${capa.nombre}. Tiny motion in this layer only.`,
+        formato: formatoDeProyecto(),
+        n: 6,
+        fps: FPS_LOOP_DEFECTO,
+        calidad: calidadImg,
+        onPaso: (s) => setStatus(`${capa.nombre}: ${s}`),
+        guardar: guardarBlobEscena,
+      });
+      mut((p) => ({
+        ...p,
+        scenes: p.scenes.map((s) => s.id !== sceneId ? s : {
+          ...s,
+          capas: (s.capas ?? []).map((c) => c.id === capaId ? { ...c, loop } : c),
+        }),
+      }));
+      engineRef.current?.update(projRef.current);
+      setStatus(`${capa.nombre}: lámina animada · ${loop.imageIds.length} fotogramas.`);
+    } catch (e: any) {
+      setStatus("No se pudo animar la lámina: " + (e?.message ?? ""));
+    } finally {
+      setAnimandoCapa(null);
+    }
+  }
+
+  async function parchePieza(
+    grano: "capitulo" | "escena",
+    instruccion: string,
+    base: unknown,
+    sceneId?: string,
+  ) {
+    setOcupadoMedio(sceneId ?? "capitulo");
+    try {
+      const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/parche", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grano, instruccion, base }),
+      });
+      if (!r.ok) throw new Error(j.error || "Error");
+      if (grano === "capitulo") {
+        const data = migrateProject(j.pieza);
+        setProject(data);
+        engineRef.current?.update(data);
+      } else if (sceneId) {
+        const envuelto = migrateProject({
+          ...projRef.current,
+          scenes: [j.pieza],
+        });
+        const nueva = envuelto.scenes[0];
+        if (!nueva) throw new Error("El parche no devolvió una escena.");
+        mut((p) => ({
+          ...p,
+          scenes: p.scenes.map((s) => s.id === sceneId ? { ...nueva, id: sceneId } : s),
+        }));
+        engineRef.current?.update(projRef.current);
+      }
+      setStatus("Parche aplicado ✓ · revísalo en el reproductor");
+    } catch (e: any) {
+      setStatus("No se pudo parchear: " + (e?.message ?? ""));
+    } finally {
+      setOcupadoMedio(null);
+    }
+  }
+
   // ---------- rehacer un trozo que no convence ----------
   //
   // Regenerar el capítulo entero porque una frase no gusta es tirar el resto
@@ -2089,6 +2255,7 @@ export function StoryApp({
         onBorrar={(id, nom) => deleteProject({ id, name: nom, updatedAt: "" })}
         onImportarZip={importPaquete}
         onCupo={setCupo}
+        lab={lab}
         onMoverSerie={async (capId, nuevaSerieId) => {
           setBusy("load");
           try {
@@ -2537,6 +2704,15 @@ export function StoryApp({
               <input type="file" accept="image/*" multiple className="hidden" onChange={addImages} />
             </label>
           </div>
+          {lab && (
+            <div className="mt-2">
+              <ParcheIa
+                etiqueta="todo el capítulo"
+                ocupado={ocupadoMedio === "capitulo"}
+                onParche={(t) => void parchePieza("capitulo", t, projRef.current)}
+              />
+            </div>
+          )}
 
           {/* Soltar en cualquier sitio suelta también el asa: si no, un clic en
               el asa que no acaba en arrastre dejaría la escena "agarrada". */}
@@ -2758,6 +2934,35 @@ export function StoryApp({
                           />
                         </label>
                       </div>
+                      {lab && (
+                        <MediosEscena
+                          escena={sc}
+                          indice={si}
+                          ocupado={ocupadoMedio === sc.id || !!reponiendo}
+                          onRegenerar={() => setDibujo({
+                            falta: {
+                              id: sc.imageId,
+                              tipo: "escena",
+                              donde: [`Escena ${si + 1}`],
+                              sceneIds: [sc.id],
+                            },
+                            texto: sc.prompt ?? "",
+                            ancla: sc.id,
+                          })}
+                          onAplanar={() => void aplanarEscena(sc.id)}
+                          onApng={() => void convertirApng(sc.id)}
+                          onParalaje={() => setCapasAbiertas(sc.id)}
+                          onFps={(fps) => mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => s.id === sc.id && s.loop
+                              ? { ...s, loop: { ...s.loop, fps } }
+                              : s),
+                          }))}
+                          onRegenerarCuadro={(i) => void regenerarCuadro(sc.id, i)}
+                          regenerandoCuadro={regenerandoCuadro}
+                          onParche={(t) => void parchePieza("escena", t, sc, sc.id)}
+                        />
+                      )}
                       {/* Paralaje 2.5D: partir la escena en láminas con
                           profundidad. Sale en el laboratorio siempre, y en el
                           editor normal solo si un admin lo ha encendido.
@@ -2800,9 +3005,7 @@ export function StoryApp({
                                 ? {
                                   ...s,
                                   capas: capas.length ? capas : undefined,
-                                  // Sin láminas no hay escena viva que animar:
-                                  // dejar la cola sería guardar una cámara que
-                                  // no encuadra nada.
+                                  medio: capas.length ? "paralaje" as const : (s.loop ? "apng" as const : "still" as const),
                                   ...(capas.length ? {} : { camara: undefined }),
                                 }
                                 : s)),
@@ -2823,12 +3026,14 @@ export function StoryApp({
                               }),
                             }))}
                             onGuardarImagen={async (dataUrl, nombre) => {
-                              const blob = await (await fetch(dataUrl)).blob();
+                              const blob = await blobDeUrlDeImagen(dataUrl);
                               const id = `capa-${nanoid(8)}`;
                               await putAsset(id, blob);
                               await assetUrl(id);
                               return id;
                             }}
+                            onAnimarCapa={(capaId) => void animarCapa(sc.id, capaId)}
+                            animandoCapa={animandoCapa}
                           />
                         </VentanaCapas>
                       )}

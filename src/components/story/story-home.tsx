@@ -25,7 +25,7 @@ export interface CapMeta { id: string; name: string; updatedAt: string; seriesId
 export function StoryHome({
   series, proyectos, cupo, busy,
   onAbrir, onNuevoCapitulo, onNuevaSerie, onBorrar, onGenerado, onImportarZip, onCupo,
-  onMoverSerie, serieInicial, onSerieVista,
+  onMoverSerie, serieInicial, onSerieVista, lab = false,
 }: {
   series: SerieMeta[];
   proyectos: CapMeta[];
@@ -44,6 +44,7 @@ export function StoryHome({
   serieInicial?: string | null;
   /** Avisa al padre qué carpeta de serie se está viendo (para la URL). */
   onSerieVista?: (seriesId: string | null) => void;
+  lab?: boolean;
 }) {
   // null = viendo las series; una cadena = dentro de esa serie.
   const [dentro, setDentro] = useState<string | null>(serieInicial ?? null);
@@ -57,7 +58,7 @@ export function StoryHome({
   if (dentro === null) {
     return (
       <div className="tool-ui space-y-4">
-        <IaPanel onGenerado={onGenerado} cupo={cupo} onCupo={onCupo} />
+        <IaPanel onGenerado={onGenerado} cupo={cupo} onCupo={onCupo} lab={lab} />
         <ComoFunciona />
 
         <div className="card p-4">

@@ -14,6 +14,8 @@
 
 import { nanoid } from "nanoid";
 import { type VfxKind, type VfxShape, vfxSpec, vfxDefaults } from "./vfx";
+import { type PaletaIa, type MedioEscena, normalizarPaleta } from "./paleta";
+import { type LoopImagen, normalizarLoop } from "./medio";
 
 export type TransitionKind = "cut" | "fade" | "slide";
 // Los stickers pueden seguir la transición de entrada de la toma o llevar la suya.
@@ -338,6 +340,13 @@ export interface EscenaCapa {
   ajuste?: unknown;
   /** Si la lámina es un actor: cómo leer su tira de fotogramas. */
   spr?: unknown;
+  /**
+   * Esta lámina, viva: N fotogramas con cambios mínimos, en loop.
+   *
+   * Distinto de `spr` (un actor pequeño con tira). Aquí la lámina ENTERA
+   * respira —agua, fuego, cielo— y sigue ocupando el plano.
+   */
+  loop?: LoopImagen;
 }
 
 export interface StoryScene {
@@ -367,6 +376,14 @@ export interface StoryScene {
    * resultado como recorta una foto. Cada una hace lo suyo y no se mezclan.
    */
   camara?: unknown[];
+  /**
+   * Cómo se materializa esta escena. still = una foto; apng = loop de
+   * fotogramas; paralaje = láminas con profundidad. Lo que HAY montado manda
+   * sobre lo declarado: si hay capas, es paralaje aunque ponga still.
+   */
+  medio?: MedioEscena;
+  /** Fotogramas de la escena cuando medio es apng. imageId sigue siendo el primero. */
+  loop?: LoopImagen;
 }
 
 export interface AudioLayer {
@@ -398,6 +415,11 @@ export interface StoryProject {
   // de personaje. Se guarda en el proyecto y no en cada frase para poder
   // cambiar de golpe cómo suena alguien en todo el capítulo.
   voices?: Record<string, string>;
+  /**
+   * Qué puede gastar la IA en ESTE capítulo. Vive en el proyecto para que
+   * un retoque posterior respete lo que se encendió al crearlo.
+   */
+  paleta?: PaletaIa;
 }
 
 // El narrador no tiene nombre: es el que habla cuando nadie más lo hace.
@@ -991,6 +1013,11 @@ export function projectAssets(p: StoryProject): string[] {
   const ids = new Set<string>();
   for (const sc of p.scenes) {
     ids.add(sc.imageId);
+    if (sc.loop) for (const id of sc.loop.imageIds) ids.add(id);
+    for (const capa of sc.capas ?? []) {
+      ids.add(capa.imageId);
+      if (capa.loop) for (const id of capa.loop.imageIds) ids.add(id);
+    }
     for (const sh of sc.shots) {
       for (const d of sh.dialogues) if (d.audioId) ids.add(d.audioId);
       for (const s of sh.sfx) if (s.audioId) ids.add(s.audioId);
@@ -1300,6 +1327,7 @@ export function migrateProject(raw: any): StoryProject {
         const imgW = sc.imgW || 16, imgH = sc.imgH || 9;
         const shotsRaw = (sc.shots ?? []).map((s: any) => normalizeShot(s, imgW, imgH));
         const { vfx, shots } = promoteSceneVfx(shotsRaw, sc.vfx);
+        const loopEscena = normalizarLoop(sc.loop);
         return {
           id: sc.id ?? nanoid(6),
           imageId: sc.imageId,
@@ -1311,20 +1339,33 @@ export function migrateProject(raw: any): StoryProject {
           // campo, así que lo que no se copie se pierde al abrir el capítulo:
           // se guardaba bien y desaparecía al recargar.
           ...(Array.isArray(sc.capas) && sc.capas.length
-            ? { capas: sc.capas.map((c: any) => ({
-                id: String(c.id ?? nanoid(6)),
-                imageId: String(c.imageId ?? ""),
-                nombre: String(c.nombre ?? "Capa"),
-                depth: num01(c.depth, 0),
-                escala: Math.max(1, Math.min(2, Number(c.escala) || 1)),
-                opacidad: num01(c.opacidad, 1),
-              })).filter((c: EscenaCapa) => c.imageId) }
+            ? { capas: sc.capas.map((c: any) => {
+                const loop = normalizarLoop(c.loop);
+                return {
+                  id: String(c.id ?? nanoid(6)),
+                  imageId: String(c.imageId ?? ""),
+                  nombre: String(c.nombre ?? "Capa"),
+                  depth: num01(c.depth, 0),
+                  escala: Math.max(1, Math.min(2, Number(c.escala) || 1)),
+                  opacidad: num01(c.opacidad, 1),
+                  ...(c.mov != null ? { mov: c.mov } : {}),
+                  ...(c.ajuste != null ? { ajuste: c.ajuste } : {}),
+                  ...(c.spr != null ? { spr: c.spr } : {}),
+                  ...(loop ? { loop } : {}),
+                };
+              }).filter((c: EscenaCapa) => c.imageId) }
             : {}),
+          ...(Array.isArray(sc.camara) && sc.camara.length ? { camara: sc.camara } : {}),
+          ...(sc.medio === "apng" || sc.medio === "paralaje" || sc.medio === "still"
+            ? { medio: sc.medio as MedioEscena }
+            : {}),
+          ...(loopEscena ? { loop: loopEscena } : {}),
         };
       }),
       audioLayers: raw.audioLayers ?? [],
       narrationVolume: typeof raw.narrationVolume === "number" ? raw.narrationVolume : 1,
       ...(raw.voices && typeof raw.voices === "object" ? { voices: raw.voices as Record<string, string> } : {}),
+      ...(raw.paleta != null ? { paleta: normalizarPaleta(raw.paleta) } : {}),
       intro: normalizeClip(raw.intro),
       outro: normalizeClip(raw.outro),
     };

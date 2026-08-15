@@ -1,13 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Layers3, Trash2, Upload, Wand2, Loader2, AlertTriangle, ChevronUp, ChevronDown } from "lucide-react";
+import { Layers3, Trash2, Upload, Wand2, Loader2, AlertTriangle, ChevronUp, ChevronDown, Repeat } from "lucide-react";
 import { nanoid } from "nanoid";
 import type { EscenaCapa } from "@/lib/story/model";
-import { revisar, esGuia, type Escena } from "@/lib/lab/escena";
-import { lienzoDeCapas } from "@/lib/lab/exportar";
-import { prepararCapa } from "@/lib/lab/quitar-fondo";
-import { listaDeExclusion } from "@/lib/lab/prompt-capa";
+import { generarLaminasEscena } from "@/lib/lab/generar-laminas";
 import { RangoPreciso } from "./rango-preciso";
 
 // Convertir una escena del guion en varias láminas con profundidad.
@@ -27,6 +24,8 @@ export function CapasEscena({
   onCambio,
   onEscenaViva,
   onGuardarImagen,
+  onAnimarCapa,
+  animandoCapa,
 }: {
   capas: EscenaCapa[];
   /** La descripción de la escena, que es de donde sale el mapa. */
@@ -43,6 +42,9 @@ export function CapasEscena({
   onEscenaViva?: (v: { camara?: unknown[]; efectos?: unknown[] }) => void;
   /** Guarda el PNG donde vivan las imágenes y devuelve su id. */
   onGuardarImagen: (dataUrl: string, nombre: string) => Promise<string>;
+  /** Pedir N fotogramas de ESTA lámina, con la PNG como referencia. */
+  onAnimarCapa?: (capaId: string) => void;
+  animandoCapa?: string | null;
 }) {
   const [paso, setPaso] = useState<string | null>(null);
   // Aparte de «paso» a propósito: mientras «paso» tenga texto los botones están
@@ -60,91 +62,21 @@ export function CapasEscena({
     }
     setError(null); setNota(null);
     try {
-      setPaso("Escribiendo el mapa de la escena…");
-      const rm = await fetch("/api/story/ia/lab/escena", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea: prompt, formato, capas: nCapas }),
+      const hecho = await generarLaminasEscena({
+        prompt, formato, nCapas,
+        onPaso: setPaso,
+        onGuardarImagen,
       });
-      const jm = await rm.json();
-      if (!rm.ok) throw new Error(jm.error ?? "No se pudo escribir el mapa");
-      const rev = revisar(jm.escena);
-      if ("error" in rev) throw new Error(rev.error);
-      const esc: Escena = rev.escena;
-
-      const nuevas: EscenaCapa[] = [];
-      // Una capa que falle no tumba el lote: se sigue y se cuenta al final.
-      const fallos: string[] = [];
-      // Sin las de reserva: son guías de dónde va el personaje y los efectos, y
-      // mandarlas a dibujar es pagar un PNG vacío.
-      const visibles = esc.layers.filter((c) => c.visible !== false && !esGuia(c));
-      const guias = esc.layers.filter((c) => c.visible !== false && esGuia(c)).length;
-      for (let i = 0; i < visibles.length; i++) {
-        const capa = visibles[i];
-        setPaso(`Dibujando ${i + 1} de ${visibles.length}: ${capa.name}…`);
-        const mapa = lienzoDeCapas(
-          esc, [capa.id], i > 0, true, i === 0 ? "#101820" : undefined,
-        ).toDataURL("image/png");
-        let rec: Awaited<ReturnType<typeof prepararCapa>> | null = null;
-        let falloCapa = "";
-        for (let intento = 0; intento < 2; intento++) {
-          if (intento) setPaso(`Corrigiendo croma en ${i + 1} de ${visibles.length}: ${capa.name}…`);
-          const rc = await fetch("/api/story/ia/lab/capa", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              mapa, prompt: capa.ai?.prompt ?? capa.name,
-              // Nombrar las OTRAS capas es lo que impide que esta las pinte
-              // también. El mapa ya sabe cuáles son; el modelo, no.
-              excluir: listaDeExclusion({
-                capa: capa.name,
-                otras: visibles.map((c) => c.name),
-                extra: capa.ai?.exclude,
-                esFondo: i === 0,
-              }),
-              estilo: esc.scene.style, escena: esc.scene.description,
-              esFondo: i === 0, formato, corregirCroma: intento > 0,
-            }),
-          });
-          const jc = await rc.json();
-          if (!rc.ok) { falloCapa = jc.error ?? "no se pudo"; break; }
-          rec = await prepararCapa(
-            `data:image/png;base64,${jc.imagen}`,
-            i === 0,
-            i === 0 || jc.porCroma ? (jc.croma ?? undefined) : undefined,
-          );
-          if (!rec.problema) break;
-          falloCapa = rec.problema === "croma-en-fondo"
-            ? "la IA dejó el magenta técnico dentro del fondo"
-            : "quedaron residuos de magenta después del recorte";
-        }
-        if (!rec || rec.problema) {
-          fallos.push(`${capa.name}: ${falloCapa || "no se pudo limpiar el fondo"}`);
-          continue;
-        }
-        const id = await onGuardarImagen(rec.url, capa.name);
-        // La profundidad viene del mapa, que es quien sabe qué está lejos.
-        nuevas.push({
-          id: nanoid(6), imageId: id, nombre: capa.name,
-          depth: Math.max(0, Math.min(1, capa.depth)),
-          escala: 1 + Math.max(0, Math.min(1, capa.depth)) * 0.12,
-          opacidad: 1,
-        });
-      }
-      if (nuevas.length) {
-        onCambio(nuevas);
-        // La cámara y los efectos vienen del MISMO mapa que las láminas, así
-        // que se guardan a la vez o no se guardan: una cola de cámara escrita
-        // para otras capas no encuadraría nada.
-        onEscenaViva?.({
-          camara: Array.isArray(jm.animacion) ? jm.animacion : undefined,
-          efectos: Array.isArray(jm.efectos) ? jm.efectos : undefined,
-        });
+      if (hecho.capas.length) {
+        onCambio(hecho.capas);
+        onEscenaViva?.({ camara: hecho.camara, efectos: hecho.efectos });
       }
       setPaso(null);
-      setNota(guias
-        ? `${nuevas.length} capas listas. ${guias} de reserva no se mandó a dibujar: es una guía y no se ha pagado.`
+      setNota(hecho.guias
+        ? `${hecho.capas.length} capas listas. ${hecho.guias} de reserva no se mandó a dibujar: es una guía y no se ha pagado.`
         : null);
-      if (fallos.length) {
-        setError(`Salieron ${nuevas.length} de ${visibles.length}. No salieron: ${fallos.join(" · ")}`);
+      if (hecho.fallos.length) {
+        setError(`Salieron ${hecho.capas.length} de ${hecho.capas.length + hecho.fallos.length}. No salieron: ${hecho.fallos.join(" · ")}`);
       }
     } catch (e) { setError((e as Error).message); setPaso(null); }
   }
@@ -223,6 +155,23 @@ export function CapasEscena({
           <div className="flex items-center gap-1.5">
             <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{c.nombre}</span>
             {i === 0 && <span className="chip shrink-0 bg-surface-2 text-muted">fondo</span>}
+            {c.loop && c.loop.imageIds.length > 1 && (
+              <span className="chip shrink-0 bg-accent/15 text-accent">{c.loop.imageIds.length} fotogramas</span>
+            )}
+            {onAnimarCapa && (
+              <button
+                type="button"
+                onClick={() => onAnimarCapa(c.id)}
+                disabled={trabajando || animandoCapa === c.id}
+                className="btn-ghost px-1.5 py-0.5 text-[10px] disabled:opacity-40"
+                title="Pedir fotogramas de esta lámina, con la PNG como referencia"
+              >
+                {animandoCapa === c.id
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Repeat className="h-3 w-3 text-accent" />}
+                {c.loop ? "Regenerar loop" : "Animar lámina"}
+              </button>
+            )}
             <button onClick={() => mover(i, -1)} disabled={i === 0} className="text-muted hover:text-fg disabled:opacity-30" title="Atrás"><ChevronUp className="h-3.5 w-3.5" /></button>
             <button onClick={() => mover(i, 1)} disabled={i === capas.length - 1} className="text-muted hover:text-fg disabled:opacity-30" title="Adelante"><ChevronDown className="h-3.5 w-3.5" /></button>
             <button onClick={() => onCambio(capas.filter((x) => x.id !== c.id))} className="text-muted hover:text-danger"><Trash2 className="h-3.5 w-3.5" /></button>
