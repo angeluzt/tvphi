@@ -4,7 +4,7 @@ import type { PaletaIa } from "@/lib/story/paleta";
 
 const INTERRUPTORES: { id: keyof Omit<PaletaIa, "still">; label: string; ayuda: string }[] = [
   { id: "paralaje", label: "2.5D / paralaje", ayuda: "Láminas con profundidad. Caro: una escena son varias imágenes." },
-  { id: "apng", label: "Foto viva (APNG)", ayuda: "N fotogramas con cambios mínimos, en loop. Mesa de luz." },
+  { id: "apng", label: "Foto viva (APNG)", ayuda: "N fotos enteras en loop, cada una a partir de la anterior. No es una hoja partida." },
   { id: "sprites", label: "Sprites / actores", ayuda: "Tiras de la biblioteca. La IA puede proponerlos." },
   { id: "vfx", label: "Efectos", ayuda: "Fuego, lluvia, portal… del catálogo." },
   { id: "musica", label: "Música", ayuda: "Pistas de fondo en el capítulo." },

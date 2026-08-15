@@ -5,8 +5,9 @@ import { MAX_FOTOS_LOOP, MIN_FOTOS_LOOP, type LoopImagen } from "./medio";
 
 // Pedir fotogramas de un loop (escena o lámina) uno a uno.
 //
-// Siempre se usa la PRIMERA imagen como referencia: encadenar cada cuadro
-// al anterior acumula deriva y al quinto ya no es la misma cara.
+// Cada cuadro es una foto ENTERA, no una celda de una hoja. La referencia
+// de cada uno es el ANTERIOR: así el movimiento se encadena (el agua sigue
+// a la ola de antes) en vez de volver siempre al still.
 
 export async function blobADataUrl(blob: Blob): Promise<string> {
   return new Promise((res, rej) => {
@@ -71,7 +72,7 @@ export async function generarLoopDesdeStill(opts: {
   guardar: (blob: Blob, nombre: string) => Promise<string>;
 }): Promise<LoopImagen> {
   const n = Math.max(MIN_FOTOS_LOOP, Math.min(MAX_FOTOS_LOOP, Math.round(opts.n)));
-  const ref = await blobAPngDataUrl(opts.still);
+  let ref = await blobAPngDataUrl(opts.still);
   const ids = [opts.stillId];
   for (let i = 1; i < n; i++) {
     opts.onPaso?.(`Fotograma ${i + 1} de ${n}…`);
@@ -84,6 +85,9 @@ export async function generarLoopDesdeStill(opts: {
     });
     const id = await opts.guardar(blob, `loop-${nanoid(6)}`);
     ids.push(id);
+    // El siguiente ve ESTE, no el still: si no, no hay animación, hay N
+    // variaciones sueltas del primero.
+    ref = await blobAPngDataUrl(blob);
   }
   return { imageIds: ids, fps: opts.fps };
 }

@@ -76,6 +76,6 @@ export function instruccionesPaleta(p: PaletaIa): string {
     "Por defecto still. Usa apng SOLO si el movimiento es inherente (agua, fuego, viento, respirar) y está permitido.",
     "Usa paralaje SOLO si la profundidad ayuda a un movimiento de cámara y está permitido.",
     "No marques apng ni paralaje en todas las escenas: dos o tres como mucho, el resto still.",
-    "Marcar un medio NO dibuja nada: solo dice qué se materializará después. El prompt de la imagen se escribe igual.",
+    "Marcar un medio NO dibuja nada: solo dice qué se materializará después. El prompt de la imagen se escribe igual: UNA foto entera, nunca una rejilla, storyboard ni hoja de sprites.",
   ].join("\n");
 }

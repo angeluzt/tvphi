@@ -8,6 +8,7 @@ import {
   reservarUsoIa, liberarUsoIa,
 } from "@/lib/story/cupo";
 import { leerAjustes, calidadEfectiva } from "@/lib/story/ajustes";
+import { promptFotograma } from "@/lib/story/prompt-fotograma";
 
 // Un fotograma más, a partir de una imagen que ya existe.
 //
@@ -56,18 +57,6 @@ function pngBytes(value: string): Buffer | null {
   } catch {
     return null;
   }
-}
-
-function promptMovimiento(escena: string, movimiento?: string) {
-  const que = (movimiento ?? "").trim()
-    || "a very small, natural motion already present in the scene (water, cloth, leaves, fire flicker, breathing)";
-  return [
-    escena.trim(),
-    "This is frame N of a short looping animation. Keep the SAME scene, composition, characters, camera, lighting and identity.",
-    `Make only a tiny change that suggests: ${que}.`,
-    "Do not add objects, do not change faces, do not move the camera, do not write text.",
-    "The result must still work as a loop with the original: same framing, same palette.",
-  ].join("\n\n");
 }
 
 async function leerImagen(json: any): Promise<string | null> {
@@ -127,7 +116,10 @@ export async function POST(req: Request) {
   try {
     const form = new FormData();
     form.set("model", modelo);
-    form.set("prompt", promptMovimiento(parsed.data.prompt, parsed.data.movimiento));
+    form.set("prompt", promptFotograma({
+      escena: parsed.data.prompt,
+      movimiento: parsed.data.movimiento,
+    }));
     form.set("size", size);
     form.set("n", "1");
     form.set("quality", calidad);
