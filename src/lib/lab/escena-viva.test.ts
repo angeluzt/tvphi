@@ -28,6 +28,7 @@ describe("cuándo una escena necesita el dibujante del laboratorio", () => {
   it("lo necesita si alguna lámina se mueve o es un actor", () => {
     expect(escenaEstaViva([{}, { mov: { tipo: "deriva" } }], undefined)).toBe(true);
     expect(escenaEstaViva([{ spr: { fotogramas: 4 } }], undefined)).toBe(true);
+    expect(escenaEstaViva([{ loop: { imageIds: ["a", "b"], fps: 6 } }], undefined)).toBe(true);
   });
 });
 

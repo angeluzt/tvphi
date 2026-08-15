@@ -48,6 +48,11 @@ export interface CapaPintable {
    * quieto que verlo desaparecer a mitad de escena.
    */
   tiras?: Record<string, HTMLImageElement>;
+  /**
+   * Lámina a pantalla completa que respira: N PNG, no una tira de sprite.
+   * Quien pinta elige el cuadro ANTES de llamar a pintarCapas y lo deja en `img`.
+   */
+  loop?: { imgs: HTMLImageElement[]; fps: number };
 }
 
 export interface OpcionesPintado {

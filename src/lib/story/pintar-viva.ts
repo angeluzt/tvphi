@@ -4,6 +4,7 @@ import { normalizarSprite } from "@/lib/lab/sprite-capa";
 import { normalizarAjuste } from "@/lib/lab/ajuste-capa";
 import { planDeEscena, vistaEnTiempo, vistaQuieta } from "@/lib/lab/escena-viva";
 import { pasoPorDefecto, type PasoSecuencia, type Tramo } from "@/lib/lab/anim-paralaje";
+import { indiceLoop, type LoopImagen } from "@/lib/story/medio";
 import type { EscenaCapa, StoryScene } from "@/lib/story/model";
 
 // Pintar una escena VIVA para el motor de historias.
@@ -38,9 +39,32 @@ export function laminasPintables(
       mov: normalizarMov(c.mov),
       ajuste: normalizarAjuste(c.ajuste),
       spr: normalizarSprite(c.spr),
+      loop: loopPintable(c.loop, imagen),
     });
   }
   return fuera;
+}
+
+function loopPintable(
+  loop: LoopImagen | undefined,
+  imagen: (id: string) => HTMLImageElement | undefined,
+): CapaPintable["loop"] {
+  if (!loop || loop.imageIds.length < 2) return undefined;
+  const imgs = loop.imageIds
+    .map((id) => imagen(id))
+    .filter((im): im is HTMLImageElement => !!im && im.complete && im.naturalWidth > 0);
+  if (imgs.length < 2) return undefined;
+  return { imgs, fps: loop.fps };
+}
+
+function capaEnTiempo(c: CapaPintable, segundos: number): CapaPintable {
+  if (!c.loop || c.loop.imgs.length < 2) return c;
+  const i = indiceLoop(
+    { imageIds: c.loop.imgs.map((_, n) => String(n)), fps: c.loop.fps },
+    segundos,
+  );
+  const img = c.loop.imgs[i];
+  return img && img.complete && img.naturalWidth ? { ...c, img } : c;
 }
 
 /** La cola guardada, saneada. Un paso corrupto no debe tumbar el capítulo. */
@@ -116,7 +140,7 @@ export class PintorEscenaViva {
       : vistaQuieta();
 
     pintarCapas(c, {
-      capas,
+      capas: capas.map((x) => capaEnTiempo(x, segundos)),
       vista,
       w: ancho,
       h: alto,

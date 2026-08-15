@@ -8,6 +8,7 @@ import {
 import { VfxScene, type VfxInput } from "./vfx";
 import { escenaEstaViva } from "@/lib/lab/escena-viva";
 import { PintorEscenaViva, laminasPintables } from "./pintar-viva";
+import { idLoopEn } from "./medio";
 import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
 import { esDeBiblioteca, esDeBibliotecaSonido, esRitmico } from "./musica";
@@ -205,8 +206,12 @@ export class StoryEngine {
     const audioIds = new Set<string>();
     for (const sc of p.scenes) {
       imgIds.add(sc.imageId);
+      if (sc.loop) for (const id of sc.loop.imageIds) imgIds.add(id);
       // Las láminas del paralaje también son imágenes que hay que traer.
-      for (const capa of sc.capas ?? []) imgIds.add(capa.imageId);
+      for (const capa of sc.capas ?? []) {
+        imgIds.add(capa.imageId);
+        if (capa.loop) for (const id of capa.loop.imageIds) imgIds.add(id);
+      }
       for (const sh of sc.shots) {
         for (const d of sh.dialogues) if (d.audioId) audioIds.add(d.audioId);
         for (const s of sh.sfx) audioIds.add(s.audioId);
@@ -923,7 +928,8 @@ export class StoryEngine {
     // La velocidad la marca la duración de la toma; la pausa final deja la
     // imagen quieta en el punto 2.
     const p = moveProgress(f.shot, lt);
-    const img = this.images.get(f.scene.imageId);
+    const imgId = idLoopEn(f.scene.loop, lt, f.scene.imageId);
+    const img = this.images.get(imgId) ?? this.images.get(f.scene.imageId);
     const iw = img?.naturalWidth || f.scene.imgW || 16;
     const ih = img?.naturalHeight || f.scene.imgH || 9;
     const frames = f.frames;
@@ -957,7 +963,8 @@ export class StoryEngine {
       // queda clavada en el encuadre inicial y no se entera de que la cámara se
       // ha movido. Lo de en medio es lo que da la sensación de fondo.
       for (const capa of capas) {
-        const im = this.images.get(capa.imageId);
+        const imId = idLoopEn(capa.loop, lt, capa.imageId);
+        const im = this.images.get(imId) ?? this.images.get(capa.imageId);
         if (!im || !im.complete || !im.naturalWidth) continue;
         const frC = lerpFrame(frames.from, fr, Math.max(0, Math.min(1, capa.depth)));
         // El zoom de la lámina se aplica estrechando el recorte: así se agranda

@@ -62,11 +62,9 @@ export default async function LabHistoriasPage({
               que hagas aquí se guarda ahí.
             </p>
             <p className="mt-2 text-[11px] text-muted">
-              Ahora mismo lo nuevo es <b className="text-fg">Capas con paralaje</b>: en cada escena
-              puedes partir la imagen en láminas con profundidad, y al mover la cámara el fondo y el
-              primer plano dejan de ir a la misma velocidad. Sale en el vídeo exportado. Una escena
-              con capas se ve igual desde el editor normal —el motor es el mismo—; lo que solo está
-              aquí es poder crearlas.
+              Lo nuevo: paleta al crear (2.5D, foto viva APNG, sprites), convertir cada
+              escena, retocar con un prompt y animar una lámina. Son{" "}
+              <b className="text-fg">tus capítulos de verdad</b>, los mismos que en Historias.
             </p>
           </div>
         </div>

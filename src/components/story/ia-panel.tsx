@@ -6,6 +6,8 @@ import { ModelosIa } from "./modelos-ia";
 import { pedirJsonCrudo } from "@/lib/pedir-json";
 import { ASPECTS, type Aspect } from "@/lib/story/model";
 import type { CupoHistorias } from "./story-app";
+import { PaletaIaMandos } from "./paleta-ia";
+import { PALETA_VACIA, type PaletaIa } from "@/lib/story/paleta";
 
 // Crear una historia con IA.
 //
@@ -20,10 +22,13 @@ export function IaPanel({
   onGenerado,
   cupo,
   onCupo,
+  lab = false,
 }: {
   onGenerado: (name: string, project: unknown) => void;
   cupo?: CupoHistorias;
   onCupo?: (c: CupoHistorias) => void;
+  /** Página experimental: paleta de medios. */
+  lab?: boolean;
 }) {
   const [estado, setEstado] = useState<{ configurada: boolean; admin?: boolean; models?: any } | null>(null);
   const [mods, setMods] = useState({ texto: "", imagen: "", voz: "", vozNombre: "alloy" });
@@ -33,6 +38,7 @@ export function IaPanel({
   // apaisado, así que para TikTok o Reels no había manera: había que sacar una
   // copia después y rehacer todos los encuadres.
   const [formato, setFormato] = useState<Aspect>("16:9");
+  const [paleta, setPaleta] = useState<PaletaIa>(PALETA_VACIA);
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [abierto, setAbierto] = useState(true);
@@ -75,6 +81,7 @@ export function IaPanel({
           formato,
           // Solo el admin manda modelo; el servidor ignora el del resto.
           modelo: esAdmin ? (mods.texto.trim() || undefined) : undefined,
+          paleta: lab ? paleta : undefined,
         }),
       });
       if (j.cupo) onCupo?.(j.cupo);
@@ -108,7 +115,9 @@ export function IaPanel({
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-semibold text-fg">Crear historia con IA</span>
           <span className="block text-[11px] text-muted">
-            Cuéntale la idea y monta las escenas, la narración y los efectos.
+            {lab
+              ? "Cuéntale la idea. Enciende 2.5D, foto viva o sprites si los quieres en este capítulo."
+              : "Cuéntale la idea y monta las escenas, la narración y los efectos."}
           </span>
         </span>
         {estado?.configurada
@@ -170,6 +179,8 @@ export function IaPanel({
               Se decide ahora: los encuadres se hacen para esta forma.
             </p>
           </div>
+
+          {lab && <PaletaIaMandos valor={paleta} onCambio={setPaleta} />}
 
           <label className="block">
             <span className="text-xs text-muted">Escenas: {escenas}</span>

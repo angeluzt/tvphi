@@ -46,11 +46,11 @@ export interface LaminaViva {
  * movería escenas que hoy se ven bien.
  */
 export function escenaEstaViva(
-  capas: { mov?: unknown; spr?: unknown }[] | undefined,
+  capas: { mov?: unknown; spr?: unknown; loop?: unknown }[] | undefined,
   camara: unknown[] | undefined,
 ): boolean {
   if (Array.isArray(camara) && camara.length > 0) return true;
-  return (capas ?? []).some((c) => !!c.mov || !!c.spr);
+  return (capas ?? []).some((c) => !!c.mov || !!c.spr || !!c.loop);
 }
 
 /** Cuánto dura la cola entera, en milisegundos. */
