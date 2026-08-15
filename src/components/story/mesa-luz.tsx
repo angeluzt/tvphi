@@ -41,9 +41,9 @@ export function MesaLuz({
     <div className="mt-2 rounded-lg border border-border p-2">
       <div className="flex items-center gap-2">
         <span className="text-[11px] font-medium">Mesa de luz</span>
-        <span className="text-[10px] text-muted">
-          {urls.length} fotogramas · {loop.fps} fps
-        </span>
+          <span className="text-[10px] text-muted">
+            {urls.length} fotos enteras · {loop.fps} fps
+          </span>
       </div>
       <div className="mt-1.5 overflow-hidden rounded-md border border-border bg-black">
         {/* eslint-disable-next-line @next/next/no-img-element */}

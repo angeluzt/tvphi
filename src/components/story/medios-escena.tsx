@@ -65,13 +65,14 @@ export function MediosEscena({
             <ImageIcon className="h-3.5 w-3.5" /> Foto regular
           </button>
         )}
-        {medio !== "apng" && (
-          <button type="button" className="btn-ghost px-2 py-1 text-[11px] disabled:opacity-40"
-            disabled={ocupado || !escena.imageId} onClick={onApng}
-            title="N fotogramas con cambios mínimos a partir de esta imagen">
-            <Repeat className="h-3.5 w-3.5" /> {escena.medio === "apng" ? "Materializar foto viva" : "Foto viva"}
-          </button>
-        )}
+        <button type="button" className="btn-ghost px-2 py-1 text-[11px] disabled:opacity-40"
+          disabled={ocupado || !escena.imageId} onClick={onApng}
+          title="N fotos enteras, cada una a partir de la anterior">
+          <Repeat className="h-3.5 w-3.5" />
+          {medio === "apng"
+            ? "Regenerar loop"
+            : escena.medio === "apng" ? "Materializar foto viva" : "Foto viva"}
+        </button>
         {medio !== "paralaje" && (
           <button type="button" className="btn-ghost px-2 py-1 text-[11px] disabled:opacity-40"
             disabled={ocupado} onClick={onParalaje}>

@@ -1525,7 +1525,7 @@ export function StoryApp({
     const sc = projRef.current.scenes.find((s) => s.id === sceneId);
     const loop = sc?.loop;
     if (!sc || !loop || !loop.imageIds[indice]) return;
-    const refId = loop.imageIds[0] || sc.imageId;
+    const refId = (indice > 0 ? loop.imageIds[indice - 1] : loop.imageIds[0]) || sc.imageId;
     const still = await getAsset(refId);
     if (!still) { setStatus("Falta el fotograma de referencia."); return; }
     setRegenerandoCuadro(indice);

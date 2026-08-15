@@ -33,5 +33,6 @@ describe("instruccionesPaleta", () => {
     expect(t).toMatch(/PROHIBIDO inventar:.*paralaje/);
     expect(t).toMatch(/apng/);
     expect(t).toMatch(/Permitido:.*still/);
+    expect(t).toMatch(/UNA foto entera/);
   });
 });
