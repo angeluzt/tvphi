@@ -12,6 +12,7 @@ import { idLoopEn } from "./medio";
 import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
 import { esDeBiblioteca, esDeBibliotecaSonido, esRitmico } from "./musica";
+import { esPistaDeMusica, topeSfx } from "./volumen-sfx";
 import { Recorder } from "@/lib/studio/recorder";
 
 
@@ -536,7 +537,11 @@ export class StoryEngine {
         const v = ventanas[k];
         events.push({
           key: `ovl:${o.id}`, t: f.start + overlaySoundStart(o, v), audioId: o.soundId,
-          gain: o.soundVolume ?? 0.9, loop: !!o.soundLoop, duracion: 0,
+          // El respaldo también pasa por el tope: un `?? 0.9` suelto era la
+          // rendija por la que un sticker sin volumen guardado sonaba al 90% y
+          // tapaba la frase, justo lo que el tope viene a impedir.
+          gain: topeSfx(o.soundVolume, !!o.soundLoop, esPistaDeMusica(o.soundId)),
+          loop: !!o.soundLoop, duracion: 0,
           until: o.soundLoop ? f.start + v.end : Infinity,
         });
       });

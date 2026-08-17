@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, Pause, Play, RefreshCw, Repeat } from "lucide-react";
 import type { LoopImagen } from "@/lib/story/medio";
 
@@ -16,16 +16,18 @@ export function MesaLuz({
   regenerando,
 }: {
   loop: LoopImagen;
-  /** Object URLs, mismo orden que loop.imageIds. */
-  urls: string[];
+  /**
+   * Una URL por fotograma, EN EL MISMO ORDEN que `loop.imageIds`. `null` es un
+   * cuadro que no está en este navegador: su hueco se conserva porque el índice
+   * de la miniatura es lo que viaja al regenerar.
+   */
+  urls: (string | null)[];
   onFps: (fps: number) => void;
   onRegenerar?: (indice: number) => void;
   regenerando?: number | null;
 }) {
   const [i, setI] = useState(0);
   const [play, setPlay] = useState(true);
-  const iRef = useRef(0);
-  iRef.current = i;
 
   useEffect(() => {
     if (!play || urls.length < 2) return;
@@ -35,7 +37,12 @@ export function MesaLuz({
     return () => window.clearInterval(id);
   }, [play, urls.length, loop.fps]);
 
+  // Si el loop se acorta —se regenera con menos cuadros— el índice de antes
+  // puede caer fuera. Se recoloca en vez de dejar el visor en blanco.
+  useEffect(() => { setI((n) => (n < urls.length ? n : 0)); }, [urls.length]);
+
   if (!urls.length) return null;
+  const actual = urls[Math.min(i, urls.length - 1)];
 
   return (
     <div className="mt-2 rounded-lg border border-border p-2">
@@ -45,9 +52,11 @@ export function MesaLuz({
             {urls.length} fotos enteras · {loop.fps} fps
           </span>
       </div>
-      <div className="mt-1.5 overflow-hidden rounded-md border border-border bg-black">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={urls[Math.min(i, urls.length - 1)]} alt="" className="mx-auto max-h-48 w-auto" />
+      <div className="mt-1.5 grid min-h-[3rem] place-items-center overflow-hidden rounded-md border border-border bg-black">
+        {actual
+          // eslint-disable-next-line @next/next/no-img-element
+          ? <img src={actual} alt="" className="mx-auto max-h-48 w-auto" />
+          : <span className="p-4 text-[10px] text-muted">Este fotograma no está en este navegador.</span>}
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <button type="button" className="btn-ghost px-2 py-1 text-[11px]" onClick={() => setPlay((v) => !v)}>
@@ -72,8 +81,10 @@ export function MesaLuz({
             onClick={() => { setPlay(false); setI(n); }}
             className={`relative shrink-0 overflow-hidden rounded border ${n === i ? "border-accent" : "border-border"}`}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={u} alt="" className="h-12 w-16 object-cover" />
+            {u
+              // eslint-disable-next-line @next/next/no-img-element
+              ? <img src={u} alt="" className="h-12 w-16 object-cover" />
+              : <span className="grid h-12 w-16 place-items-center bg-surface-2 text-[9px] text-muted">falta</span>}
             {onRegenerar && (
               <span
                 role="button"

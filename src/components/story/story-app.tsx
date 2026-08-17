@@ -1478,6 +1478,11 @@ export function StoryApp({
   }
 
   async function aplanarEscena(sceneId: string) {
+    // Los fotogramas se sueltan ANTES de quitarlos del proyecto, porque después
+    // ya no hay quien los nombre: `projectAssets` deja de listarlos y se quedan
+    // ocupando el almacén del navegador para siempre. Un loop de seis fotos son
+    // varios megas por cada vez que alguien lo prueba y lo deshace.
+    const antes = projRef.current.scenes.find((s) => s.id === sceneId);
     mut((p) => ({
       ...p,
       scenes: p.scenes.map((s) => s.id === sceneId
@@ -1485,6 +1490,7 @@ export function StoryApp({
         : s),
     }));
     engineRef.current?.update(projRef.current);
+    await tirarLoop(antes);
     setStatus("Escena en foto regular.");
   }
 
@@ -1513,6 +1519,9 @@ export function StoryApp({
           : s),
       }));
       engineRef.current?.update(projRef.current);
+      // «Regenerar loop» sobre una escena que ya tenía uno dejaba los seis
+      // fotogramas viejos sueltos en el almacén, sin nada que los nombrara.
+      await tirarLoop(sc);
       setStatus(`Foto viva lista · ${loop.imageIds.length} fotogramas.`);
     } catch (e: any) {
       setStatus("No se pudo crear la foto viva: " + (e?.message ?? ""));
@@ -1521,31 +1530,72 @@ export function StoryApp({
     }
   }
 
+  /**
+   * Rehacer UN fotograma del loop.
+   *
+   * EL NUEVO VA A UN ID NUEVO, y esto no es un detalle de limpieza:
+   *
+   *   · El fotograma 0 del loop ES la imagen de la escena (`sc.imageId`).
+   *     Escribiendo encima de su id, rehacer el primer cuadro machacaba la foto
+   *     original de la escena, sin vuelta atrás: «Foto regular» ya no devolvía
+   *     la imagen que se había aprobado, sino la variación que la IA acababa de
+   *     inventar. Con un id nuevo, el loop apunta a otro sitio y la foto de la
+   *     escena se queda intacta.
+   *
+   *   · Las object URL se guardan POR ID (ver `assetUrl`), así que reescribir
+   *     el mismo id dejaba la URL vieja en la caché: la mesa de luz y las
+   *     miniaturas seguían enseñando el fotograma de antes y parecía que el
+   *     botón no hacía nada. Un id nuevo no tiene caché que invalidar.
+   *
+   * El cuadro que se sustituye se borra, salvo que sea la foto de la escena.
+   */
   async function regenerarCuadro(sceneId: string, indice: number) {
     const sc = projRef.current.scenes.find((s) => s.id === sceneId);
     const loop = sc?.loop;
-    if (!sc || !loop || !loop.imageIds[indice]) return;
-    const refId = (indice > 0 ? loop.imageIds[indice - 1] : loop.imageIds[0]) || sc.imageId;
-    const still = await getAsset(refId);
-    if (!still) { setStatus("Falta el fotograma de referencia."); return; }
+    const viejo = loop?.imageIds[indice];
+    if (!sc || !loop || !viejo) return;
+    // La referencia es el cuadro ANTERIOR, igual que al generar el loop: así el
+    // movimiento se encadena. El primero no tiene anterior, así que parte de la
+    // foto de la escena.
+    const refId = (indice > 0 ? loop.imageIds[indice - 1] : sc.imageId) || sc.imageId;
+    const base = await getAsset(refId);
+    if (!base) { setStatus("Falta el fotograma de referencia."); return; }
     setRegenerandoCuadro(indice);
     try {
       const blob = await pedirFotograma({
         prompt: sc.prompt || "the same scene, tiny natural motion",
-        imagen: await blobAPngDataUrl(still),
+        imagen: await blobAPngDataUrl(base),
         formato: formatoDeProyecto(),
         calidad: calidadImg,
       });
-      const id = loop.imageIds[indice];
-      await putAsset(id, blob);
-      engineRef.current?.invalidateAsset(id);
+      const id = await guardarBlobEscena(blob, "loop");
+      mut((p) => ({
+        ...p,
+        scenes: p.scenes.map((s) => (s.id !== sceneId || !s.loop ? s : {
+          ...s,
+          loop: { ...s.loop, imageIds: s.loop.imageIds.map((x, n) => (n === indice ? id : x)) },
+        })),
+      }));
       engineRef.current?.update(projRef.current);
+      if (viejo !== sc.imageId) await deleteAsset(viejo).catch(() => {});
       setStatus(`Fotograma ${indice + 1} regenerado.`);
     } catch (e: any) {
       setStatus("No se pudo regenerar el fotograma: " + (e?.message ?? ""));
     } finally {
       setRegenerandoCuadro(null);
     }
+  }
+
+  /**
+   * Los fotogramas de un loop que ya no va a usar nadie.
+   *
+   * La foto de la escena NUNCA entra aquí: es el cuadro 0 del loop y a la vez
+   * la imagen de la escena, así que borrarla al quitar la animación dejaba la
+   * escena sin imagen.
+   */
+  async function tirarLoop(sc: StoryScene | undefined) {
+    const ids = (sc?.loop?.imageIds ?? []).filter((id) => id && id !== sc?.imageId);
+    await Promise.all(ids.map((id) => deleteAsset(id).catch(() => {})));
   }
 
   async function animarCapa(sceneId: string, capaId: string) {

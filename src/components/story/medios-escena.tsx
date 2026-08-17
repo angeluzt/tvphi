@@ -34,16 +34,27 @@ export function MediosEscena({
   onParche: (instruccion: string) => void;
 }) {
   const medio = medioDe(escena);
-  const [urls, setUrls] = useState<string[]>([]);
+  /**
+   * Una URL por fotograma, EN SU SITIO. `null` = ese cuadro no está en este
+   * navegador.
+   *
+   * Antes se filtraban los que faltaban, y eso corría los índices: si el
+   * segundo cuadro no estaba, el tercero pasaba a ocupar su hueco y darle a
+   * «regenerar» en una miniatura rehacía un fotograma distinto del que se
+   * estaba mirando. Las posiciones tienen que coincidir con `loop.imageIds`
+   * porque el índice es lo que se manda al regenerar.
+   */
+  const [urls, setUrls] = useState<(string | null)[]>([]);
+  const claves = (escena.loop?.imageIds ?? []).join("|");
 
   useEffect(() => {
     let vivo = true;
-    const ids = escena.loop?.imageIds ?? [];
+    const ids = claves ? claves.split("|") : [];
     void Promise.all(ids.map((id) => assetUrl(id))).then((u) => {
-      if (vivo) setUrls(u.filter((x): x is string => !!x));
+      if (vivo) setUrls(u);
     });
     return () => { vivo = false; };
-  }, [escena.loop?.imageIds?.join("|")]);
+  }, [claves]);
 
   return (
     <div className="mt-2 space-y-2 rounded-lg border border-accent/30 bg-accent/5 p-2">
@@ -80,7 +91,7 @@ export function MediosEscena({
           </button>
         )}
       </div>
-      {medio === "apng" && escena.loop && urls.length >= 2 && (
+      {medio === "apng" && escena.loop && urls.filter(Boolean).length >= 2 && (
         <MesaLuz
           loop={escena.loop}
           urls={urls}
