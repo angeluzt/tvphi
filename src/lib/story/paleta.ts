@@ -58,6 +58,30 @@ export function medioPermitido(pedido: unknown, paleta: PaletaIa): MedioEscena {
   return m;
 }
 
+/**
+ * Lo que hay que decirle si puede usar foto viva.
+ *
+ * ESTO ES LO QUE FALTABA. Antes bastaba con marcar `"medio":"apng"` y el
+ * servidor generaba seis cuadros con un texto genérico —«algún movimiento
+ * pequeño»—, así que cada fotograma elegía mover una cosa distinta: en uno
+ * temblaba el agua, en el siguiente cambiaba una nube, en el tercero se movía
+ * una persona. El resultado no era una animación, era una imagen inquieta que
+ * además parpadeaba. Ahora la escena que se marca como apng tiene que decir QUÉ
+ * se mueve, con CUÁNTOS dibujos y a qué VELOCIDAD, que son las tres cosas que
+ * no se pueden adivinar mirando solo el prompt.
+ */
+const INSTRUCCIONES_APNG = [
+  "",
+  "SI MARCAS UNA ESCENA COMO \"apng\", ES OBLIGATORIO SU OBJETO \"animacion\":",
+  '  "animacion": {"movimiento":"...", "fotogramas":5, "fps":6}',
+  "- \"movimiento\" EN INGLÉS y en UNA frase: solo lo que se mueve, nombrando la parte concreta de la imagen. Bien: \"the campfire flames flicker and the smoke drifts right\", \"the rain falls and the puddle ripples\", \"her hair and scarf sway in the wind\". Mal: \"small motion\", \"the scene moves\", \"ambiance\".",
+  "- Elige SOLO cosas que cambian de forma por sí solas: fuego, humo, agua, vapor, tela, pelo, hojas, chispas, una luz que late. NUNCA muevas la cámara, ni desplaces objetos o personas por la escena, ni hagas entrar o salir a nadie: eso no es este efecto y sale mal.",
+  "- Nada de cambiar la composición, el encuadre, la ropa, la hora del día ni el estilo.",
+  "- \"fotogramas\": 2 a 12, contando la foto que ya existe. Cada uno cuesta una imagen, así que 3-4 para algo lento (humo, nubes, tela) y 6-8 para algo rápido y que cambia mucho (fuego, agua agitada).",
+  "- \"fps\": 1 a 30. Fuego 8-12; agua o tela 5-7; humo o una luz que respira 2-4. Poner fps alto con pocos fotogramas hace que el bucle vaya a tirones.",
+  "- Si no sabes qué parte concreta se mueve en esa imagen, NO la marques como apng: déjala en still.",
+].join("\n");
+
 /** Texto para el modelo: qué puede y qué no. */
 export function instruccionesPaleta(p: PaletaIa): string {
   const si: string[] = ["still (foto plana: SIEMPRE permitido, es el suelo)"];
@@ -77,5 +101,6 @@ export function instruccionesPaleta(p: PaletaIa): string {
     "Usa paralaje SOLO si la profundidad ayuda a un movimiento de cámara y está permitido.",
     "No marques apng ni paralaje en todas las escenas: dos o tres como mucho, el resto still.",
     "Marcar un medio NO dibuja nada: solo dice qué se materializará después. El prompt de la imagen se escribe igual: UNA foto entera, nunca una rejilla, storyboard ni hoja de sprites.",
+    ...(p.apng ? [INSTRUCCIONES_APNG] : []),
   ].join("\n");
 }

@@ -23,6 +23,7 @@ import {
   type Shot, type Dialogue, type ShotSfx, type PngOverlay, type InheritedLoop, type Frame,
   type TransitionKind, type OverlayTransition, type OverlayMotion, type VoiceEffect, type VfxLayer,
 } from "@/lib/story/model";
+import { esPistaDeMusica, techoSfx, topeOverride, topeSfx } from "@/lib/story/volumen-sfx";
 import { vfxSpec } from "@/lib/story/vfx";
 import { VOCES_INFO } from "@/lib/story/modelos";
 
@@ -146,7 +147,15 @@ export function ShotEditor({
     const next = {
       sfxId,
       stop: patch.stop ?? prev?.stop ?? false,
-      volume: patch.volume !== undefined ? patch.volume : (prev?.volume ?? null),
+      // Lo que se hereda es siempre un bucle, así que la excepción se acota con
+      // el techo bajo: si no, «volumen aquí» era la puerta de atrás para subir
+      // un ambiente por encima de lo que su propia barra permite. El sonido al
+      // que apunta está en `inherited`, así que aquí sí se sabe si es música.
+      volume: topeOverride(
+        patch.volume !== undefined ? patch.volume : (prev?.volume ?? null),
+        true,
+        esPistaDeMusica(inherited.find((l) => l.sfx.id === sfxId)?.sfx.audioId),
+      ),
     };
     onChange({
       ...shot,
@@ -156,10 +165,28 @@ export function ShotEditor({
 
   const updDialogue = (id: string, patch: Partial<Dialogue>) =>
     onChange({ ...shot, dialogues: shot.dialogues.map((d) => (d.id === id ? { ...d, ...patch } : d)) });
+  // Pasar un golpe «a bucle» le baja el techo del 12% al 5%, así que el
+  // volumen se reajusta en el mismo gesto. Sin esto, un sonido puntual al 12%
+  // se convertía en un ambiente al 12% que suena bajo la voz toda la escena, y
+  // la barra ni siquiera podía llegar hasta ahí para enseñar el problema.
   const updSfx = (id: string, patch: Partial<ShotSfx>) =>
-    onChange({ ...shot, sfx: shot.sfx.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
+    onChange({
+      ...shot,
+      sfx: shot.sfx.map((s) => {
+        if (s.id !== id) return s;
+        const n = { ...s, ...patch };
+        return { ...n, volume: topeSfx(n.volume, n.loop, esPistaDeMusica(n.audioId)) };
+      }),
+    });
   const updOverlay = (id: string, patch: Partial<PngOverlay>) =>
-    onChange({ ...shot, overlays: shot.overlays.map((o) => (o.id === id ? { ...o, ...patch } : o)) });
+    onChange({
+      ...shot,
+      overlays: shot.overlays.map((o) => {
+        if (o.id !== id) return o;
+        const n = { ...o, ...patch };
+        return { ...n, soundVolume: topeSfx(n.soundVolume, n.soundLoop, esPistaDeMusica(n.soundId)) };
+      }),
+    });
 
   // Duplicar: la copia va justo detrás y, si el original tenía su propio rato,
   // se encadena a él — que es para lo que se suele duplicar (una explosión
@@ -509,14 +536,11 @@ export function ShotEditor({
             onCerrar={() => setVerSonidos(false)}
             onElegir={(s) => {
               // Referencia, no archivo: lo sirve la app (ver getAsset).
-              const nuevo = newSfx(refSonido(s), s.titulo, s.segundos);
-              // Un ambiente entra ya en bucle y bajo: suena todo el rato
-              // debajo de la voz. Al 35% seguía siendo demasiado —una lluvia
-              // así tapa la narración—, y además ahora se aparta sola cuando
-              // se habla, igual que la música, así que 0.12 es el nivel de los
-              // silencios. Un golpe puntual se queda al 80%: para eso es un
-              // golpe, y dura dos segundos.
-              if (s.bucle) { nuevo.loop = true; nuevo.volume = 0.12; }
+              // El nivel lo pone `newSfx` según sea bucle o golpe, y no se
+              // retoca aquí: un ambiente entra al 5% porque suena bajo la voz
+              // durante la escena entera, y un golpe al 12% porque dura dos
+              // segundos y tiene que pegar. Ver `volumen-sfx.ts`.
+              const nuevo = newSfx(refSonido(s), s.titulo, s.segundos, s.bucle);
               onChange({ ...shot, sfx: [...shot.sfx, nuevo] });
               setVerSonidos(false);
             }}
@@ -531,7 +555,7 @@ export function ShotEditor({
               <span className="min-w-0 flex-1 truncate">{s.name}</span>
               <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Pausa antes" />
               <span className="text-[11px] text-muted">en {sStarts[i].toFixed(1)}s</span>
-              <VolumeInput value={s.volume} onChange={(v) => updSfx(s.id, { volume: v })} />
+              <VolumeInput musica={esPistaDeMusica(s.audioId)} value={s.volume} onChange={(v) => updSfx(s.id, { volume: v })} />
               <button
                 onClick={() => updSfx(s.id, { loop: true })}
                 className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2"
@@ -562,7 +586,7 @@ export function ShotEditor({
                   <EscucharAudio audioId={s.audioId} volumen={s.volume} titulo={s.name} />
                   <span className="min-w-0 flex-1 truncate">{s.name}</span>
                   <GapInput value={s.gapSec} onChange={(v) => updSfx(s.id, { gapSec: v })} label="Empieza tras" />
-                  <VolumeInput value={s.volume} onChange={(v) => updSfx(s.id, { volume: v })} />
+                  <VolumeInput bucle musica={esPistaDeMusica(s.audioId)} value={s.volume} onChange={(v) => updSfx(s.id, { volume: v })} />
                   <button
                     onClick={() => updSfx(s.id, { loop: false })}
                     className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:bg-surface-2"
@@ -598,7 +622,9 @@ export function ShotEditor({
                     </span>
                     <label className="flex items-center gap-1 text-[11px] text-muted">
                       Volumen aquí
-                      <VolumeInput value={l.volume} onChange={(v) => setOverride(l.sfx.id, { volume: v })} />
+                      {/* Lo heredado es siempre un bucle: `inheritedLoops` no
+                          recoge lo puntual. Su techo es el bajo. */}
+                      <VolumeInput bucle musica={esPistaDeMusica(l.sfx.audioId)} value={l.volume} onChange={(v) => setOverride(l.sfx.id, { volume: v })} />
                     </label>
                     {ov && typeof ov.volume === "number" && (
                       <button
@@ -822,7 +848,7 @@ export function ShotEditor({
                         </div>
                         <label className="mt-1.5 flex items-center gap-2 text-[11px] text-muted">
                           Volumen
-                          <VolumeInput value={o.soundVolume} onChange={(v) => updOverlay(o.id, { soundVolume: v })} />
+                          <VolumeInput bucle={o.soundLoop} musica={esPistaDeMusica(o.soundId)} value={o.soundVolume} onChange={(v) => updOverlay(o.id, { soundVolume: v })} />
                         </label>
                         <p className="mt-1 text-[10px] text-muted/80">
                           Suena a los {overlaySoundStart(o, ventanas[oi]).toFixed(1)}s de la toma
@@ -1046,7 +1072,13 @@ export function ShotEditor({
   );
 }
 
-const pct = (v: number) => `${Math.round(v * 100)}%`;
+// Con medios puntos de paso, redondear a entero enseñaba «1%» tanto para 0,005
+// como para 0,01: el número dejaba de decir dónde estabas. El decimal solo sale
+// cuando lo hay, para no llenar de «5,0%» lo que es un 5% redondo.
+const pct = (v: number) => {
+  const n = v * 100;
+  return `${Number.isInteger(n) ? n : n.toFixed(1)}%`;
+};
 
 // La voz IA (MMS-TTS) trae UNA sola voz por idioma: no hay hombre/mujer que
 // elegir dentro del modelo. Estos atajos son esa misma voz con el tono movido,
@@ -1072,15 +1104,29 @@ const vozPreset = (p: number) => {
 // barra no se quede en un palmo y siga habiendo sitio donde moverlo.
 const fuera = (tam: number) => -Math.max(1, tam);
 
-// Volumen con pasos finos (1 %) y el valor a la vista, para poder afinar.
 // El volumen de un sonido, con − y + al lado.
 //
 // Sin ellos la barra es inservible para lo que de verdad se usa: la diferencia
-// entre un ambiente al 8% y al 12% es un píxel de barra, y ese píxel decide si
-// se oye la narración. Cada toque mueve un punto exacto.
-function VolumeInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+// entre un ambiente al 3% y al 5% es un píxel de barra, y ese píxel decide si
+// se oye la narración. Cada toque mueve medio punto exacto.
+//
+// LA BARRA ACABA EN EL TECHO, no en el 100%. Antes llegaba hasta 1 y todo el
+// recorrido útil —de 0 a 0,12— cabía en la octava parte izquierda: era
+// imposible afinar ahí, y el resto de la barra solo servía para tapar la voz.
+// Ahora el extremo derecho ES el máximo que se permite, así que arrastrar a
+// tope da lo más alto que puede sonar, y ese sitio ya es un sitio razonable.
+function VolumeInput({ value, onChange, bucle = false, musica = false }: {
+  value: number;
+  onChange: (v: number) => void;
+  /** Un bucle suena bajo toda la escena, así que su techo es más bajo. */
+  bucle?: boolean;
+  /** Una pista de música puesta por escena conserva su techo de música. */
+  musica?: boolean;
+}) {
+  const techo = techoSfx(bucle, musica);
+  const paso = 0.005;
   const mover = (dir: -1 | 1) =>
-    onChange(Number(Math.max(0, Math.min(1, value + dir * 0.01)).toFixed(2)));
+    onChange(Number(Math.max(0, Math.min(techo, value + dir * paso)).toFixed(3)));
   const btn = "grid h-5 w-5 shrink-0 place-items-center rounded border border-border " +
     "text-muted hover:bg-surface-2 disabled:opacity-40";
   return (
@@ -1089,11 +1135,13 @@ function VolumeInput({ value, onChange }: { value: number; onChange: (v: number)
         <Minus className="h-3 w-3" />
       </button>
       <input
-        type="range" min={0} max={1} step={0.01} value={value}
+        type="range" min={0} max={techo} step={paso} value={Math.min(value, techo)}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-20" title="Volumen" aria-label="Volumen"
+        className="w-20"
+        title={`Volumen · el máximo de ${musica ? "una pista de música" : bucle ? "un ambiente en bucle" : "un golpe"} es ${pct(techo)}`}
+        aria-label="Volumen"
       />
-      <button onClick={() => mover(1)} disabled={value >= 1} className={btn} aria-label="Subir volumen">
+      <button onClick={() => mover(1)} disabled={value >= techo} className={btn} aria-label="Subir volumen">
         <Plus className="h-3 w-3" />
       </button>
       <span className="w-9 text-right text-[11px] tabular-nums text-muted">{pct(value)}</span>

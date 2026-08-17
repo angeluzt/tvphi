@@ -81,6 +81,9 @@ Cada escena es UNA imagen:
 {"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen","medio":"still",
  "vfx":[/* anclas de la FOTO: portal, fuego, humo… */],"shots":[...]}
 
+Y si esa escena lleva "medio":"apng", además:
+ "animacion":{"movimiento":"the water ripples along the shore and the reeds sway","fotogramas":5,"fps":6}
+
 Cada toma es un encuadre sobre esa imagen:
 {"id":"s1a","autoDuration":true,"durationSec":6,"holdSec":0,"motionMode":"preset",
  "preset":{"kind":"in","cx":0.5,"cy":0.5,"w":1,"distance":0.25},
@@ -136,7 +139,13 @@ MÚSICA:
 - Elige UNA pista de la biblioteca y ponla en "audioLayers": {"id":"m1","kind":"music","audioId":"lib:<id>","name":"<título>","volume":0.12,"startSec":0,"loop":true}.
 - volume entre 0.08 y 0.15. NUNCA 0.3 ni más: la biblioteca está masterizada alta y a 0.3 tapa la narración.
 - UNA sola capa de música en todo el capítulo. Dos suenan sumadas (+3 dB) y se comen la voz: si la historia cambia de tono, cambia de pista por escena (abajo), no añadas otra global.
-- Si una escena pide su propia música, va como sonido en bucle de su PRIMERA toma —{"audioId":"lib:<id>","loop":true,"volume":0.12}— y se corta al empezar la escena siguiente con audioOverrides:[{"sfxId":"<id>","stop":true,"volume":null}]. Eso es mejor que una cama global: cambia con la historia.
+- Si una escena pide su propia música, va como sonido en bucle de su PRIMERA toma —{"audioId":"lib:<id>","loop":true,"volume":0.05}— y se corta al empezar la escena siguiente con audioOverrides:[{"sfxId":"<id>","stop":true,"volume":null}]. Eso es mejor que una cama global: cambia con la historia.
+
+EFECTOS DE SONIDO (el campo "sfx" de cada toma):
+- Un efecto NUNCA pasa de "volume": 0.12. Los archivos están masterizados alto y la narración es una voz sintética, bastante más baja: por encima de ahí la frase deja de entenderse.
+- Un GOLPE puntual ("loop": false) —una explosión, un portazo, un rugido— va a 0.12. Dura dos segundos y tiene que pegar.
+- Un AMBIENTE en bucle ("loop": true) —lluvia, taberna, latido, viento— va a 0.05. Suena por debajo de la voz durante la escena entera, no dos segundos, y a 0.12 ya la tapa.
+- Lo mismo vale para el sonido de un sticker ("soundVolume"): 0.12 si es un golpe, 0.05 si va en bucle.
 
 Devuelve el JSON y nada más: sin explicaciones ni vallas de código.`;
 

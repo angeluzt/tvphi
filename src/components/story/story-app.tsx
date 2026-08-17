@@ -32,9 +32,14 @@ import { CapasEscena } from "@/components/lab/capas-escena";
 import { VentanaCapas } from "@/components/story/ventana-capas";
 import { MediosEscena } from "@/components/story/medios-escena";
 import { ParcheIa } from "@/components/story/parche-ia";
-import { generarLoopDesdeStill, pedirFotograma, blobAPngDataUrl } from "@/lib/story/generar-loop";
+import {
+  generarLoopDesdeStill, pedirFotograma, blobAPngDataUrl,
+  ajustarFotograma, medirFoto, type InformeLoop,
+} from "@/lib/story/generar-loop";
 import { blobDeUrlDeImagen } from "@/lib/lab/png-base64";
-import { FPS_LOOP_DEFECTO } from "@/lib/story/medio";
+import {
+  FOTOGRAMAS_DEFECTO, FPS_LOOP_DEFECTO, type PlanAnimacion,
+} from "@/lib/story/medio";
 import { capasVfxDeLaIa } from "@/lib/story/efectos-a-escena";
 import { MandoEdicion } from "./mando-edicion";
 import { Slider } from "./slider";
@@ -325,6 +330,17 @@ export function StoryApp({
   const [capasAbiertas, setCapasAbiertas] = useState<string | null>(null);
   const [ocupadoMedio, setOcupadoMedio] = useState<string | null>(null);
   const [regenerandoCuadro, setRegenerandoCuadro] = useState<number | null>(null);
+  /**
+   * Cómo fue la última foto viva, en números.
+   *
+   * Es el botón de prueba que se pidió: sin esto, «parpadea» es una impresión y
+   * no se puede saber si el parpadeo es de brillo, de encuadre o del cierre del
+   * bucle. Aquí se ve la deriva de luz cuadro a cuadro, lo que hubo que
+   * corregir y lo que tardó cada llamada. Solo admin.
+   */
+  const [informeLoop, setInformeLoop] = useState<
+    (InformeLoop & { sceneId: string; plan: PlanAnimacion }) | null
+  >(null);
   const [animandoCapa, setAnimandoCapa] = useState<string | null>(null);
   // Escena cuya posición se está cambiando escribiendo el número.
   const [movingScene, setMovingScene] = useState<{ id: string; value: string } | null>(null);
@@ -1478,6 +1494,11 @@ export function StoryApp({
   }
 
   async function aplanarEscena(sceneId: string) {
+    // Los fotogramas se sueltan ANTES de quitarlos del proyecto, porque después
+    // ya no hay quien los nombre: `projectAssets` deja de listarlos y se quedan
+    // ocupando el almacén del navegador para siempre. Un loop de seis fotos son
+    // varios megas por cada vez que alguien lo prueba y lo deshace.
+    const antes = projRef.current.scenes.find((s) => s.id === sceneId);
     mut((p) => ({
       ...p,
       scenes: p.scenes.map((s) => s.id === sceneId
@@ -1485,35 +1506,87 @@ export function StoryApp({
         : s),
     }));
     engineRef.current?.update(projRef.current);
+    await tirarLoop(antes);
     setStatus("Escena en foto regular.");
   }
 
-  async function convertirApng(sceneId: string) {
+  /**
+   * QUÉ animar en esta escena, con cuántos cuadros y a qué velocidad.
+   *
+   * Por orden: lo que ya está guardado, lo que escribió la IA con el capítulo,
+   * y si no hay nada, se le PREGUNTA mirando la foto. Ese último paso es una
+   * llamada de texto —céntimos— y evita el fallo que se veía en las pruebas:
+   * sin una frase concreta, cada cuadro movía una cosa distinta y el resultado
+   * era una imagen inquieta, no una animación.
+   */
+  async function planDeAnimacion(
+    sc: StoryScene, still: Blob, pista?: string,
+  ): Promise<PlanAnimacion> {
+    if (sc.animacion && !pista) return sc.animacion;
+    setStatus("Mirando la foto para ver qué se puede animar…");
+    try {
+      const { datos: j, respuesta: r } = await pedirJsonCrudo("/api/story/ia/lab/que-animar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imagen: await blobAPngDataUrl(still),
+          escena: sc.prompt,
+          ...(pista ? { pista } : {}),
+        }),
+      });
+      if (!r.ok) throw new Error(j?.error || "no supo");
+      if (j.motivo) setStatus(`Va a animar: ${j.motivo}`);
+      return j.plan as PlanAnimacion;
+    } catch {
+      // Preguntar es un extra, no un requisito: si el modelo de texto no sabe
+      // mirar imágenes, se sigue con lo que haya en vez de dejar a la persona
+      // sin poder generar nada.
+      return sc.animacion ?? {
+        movimiento: "", fotogramas: FOTOGRAMAS_DEFECTO, fps: FPS_LOOP_DEFECTO,
+      };
+    }
+  }
+
+  async function convertirApng(sceneId: string, pista?: string) {
     const sc = projRef.current.scenes.find((s) => s.id === sceneId);
     if (!sc?.imageId) { setStatus("Dibuja primero la imagen de la escena."); return; }
     const still = await getAsset(sc.imageId);
     if (!still) { setStatus("Falta la imagen de la escena en este navegador."); return; }
     setOcupadoMedio(sceneId);
     try {
+      const plan = await planDeAnimacion(sc, still, pista);
       const loop = await generarLoopDesdeStill({
         stillId: sc.imageId,
         still,
         prompt: sc.prompt || "the same scene, tiny natural motion",
+        // LO QUE SE MUEVE, que es lo que faltaba: sin esta frase el servidor
+        // caía en un genérico y cada cuadro elegía animar otra cosa.
+        movimiento: plan.movimiento || undefined,
         formato: formatoDeProyecto(),
-        n: 6,
-        fps: FPS_LOOP_DEFECTO,
+        n: plan.fotogramas,
+        fps: plan.fps,
         calidad: calidadImg,
         onPaso: (s) => setStatus(s),
         guardar: guardarBlobEscena,
+        onInforme: (i) => setInformeLoop({ sceneId, plan, ...i }),
       });
       mut((p) => ({
         ...p,
         scenes: p.scenes.map((s) => s.id === sceneId
-          ? { ...s, medio: "apng" as const, loop, capas: undefined, camara: undefined }
+          // El plan se guarda con el loop: así «regenerar» repite lo mismo en
+          // vez de volver a preguntar, y se puede retocar la frase sin
+          // escribirla entera otra vez.
+          ? { ...s, medio: "apng" as const, loop, animacion: plan, capas: undefined, camara: undefined }
           : s),
       }));
       engineRef.current?.update(projRef.current);
-      setStatus(`Foto viva lista · ${loop.imageIds.length} fotogramas.`);
+      // «Regenerar loop» sobre una escena que ya tenía uno dejaba los seis
+      // fotogramas viejos sueltos en el almacén, sin nada que los nombrara.
+      await tirarLoop(sc);
+      setStatus(
+        `Foto viva lista · ${loop.imageIds.length} fotos a ${plan.fps} fps`
+        + (plan.movimiento ? ` · ${plan.movimiento}` : ""),
+      );
     } catch (e: any) {
       setStatus("No se pudo crear la foto viva: " + (e?.message ?? ""));
     } finally {
@@ -1521,31 +1594,84 @@ export function StoryApp({
     }
   }
 
+  /**
+   * Rehacer UN fotograma del loop.
+   *
+   * EL NUEVO VA A UN ID NUEVO, y esto no es un detalle de limpieza:
+   *
+   *   · El fotograma 0 del loop ES la imagen de la escena (`sc.imageId`).
+   *     Escribiendo encima de su id, rehacer el primer cuadro machacaba la foto
+   *     original de la escena, sin vuelta atrás: «Foto regular» ya no devolvía
+   *     la imagen que se había aprobado, sino la variación que la IA acababa de
+   *     inventar. Con un id nuevo, el loop apunta a otro sitio y la foto de la
+   *     escena se queda intacta.
+   *
+   *   · Las object URL se guardan POR ID (ver `assetUrl`), así que reescribir
+   *     el mismo id dejaba la URL vieja en la caché: la mesa de luz y las
+   *     miniaturas seguían enseñando el fotograma de antes y parecía que el
+   *     botón no hacía nada. Un id nuevo no tiene caché que invalidar.
+   *
+   * El cuadro que se sustituye se borra, salvo que sea la foto de la escena.
+   */
   async function regenerarCuadro(sceneId: string, indice: number) {
     const sc = projRef.current.scenes.find((s) => s.id === sceneId);
     const loop = sc?.loop;
-    if (!sc || !loop || !loop.imageIds[indice]) return;
-    const refId = (indice > 0 ? loop.imageIds[indice - 1] : loop.imageIds[0]) || sc.imageId;
-    const still = await getAsset(refId);
-    if (!still) { setStatus("Falta el fotograma de referencia."); return; }
+    const viejo = loop?.imageIds[indice];
+    if (!sc || !loop || !viejo) return;
+    // La referencia es el cuadro ANTERIOR, igual que al generar el loop: así el
+    // movimiento se encadena. El primero no tiene anterior, así que parte de la
+    // foto de la escena.
+    const refId = (indice > 0 ? loop.imageIds[indice - 1] : sc.imageId) || sc.imageId;
+    const base = await getAsset(refId);
+    if (!base) { setStatus("Falta el fotograma de referencia."); return; }
     setRegenerandoCuadro(indice);
     try {
-      const blob = await pedirFotograma({
+      const still = indice > 0 ? await getAsset(sc.imageId) : null;
+      const bruto = await pedirFotograma({
         prompt: sc.prompt || "the same scene, tiny natural motion",
-        imagen: await blobAPngDataUrl(still),
+        imagen: await blobAPngDataUrl(base),
+        // Las MISMAS tres cosas que al generar el loop entero: qué se mueve,
+        // en qué punto del recorrido va y cuál es la foto original. Sin ellas,
+        // el cuadro rehecho salía con otro movimiento y otra luz que sus
+        // vecinos, y quedaba peor que el que venía a sustituir.
+        movimiento: sc.animacion?.movimiento || undefined,
+        indice: Math.max(1, indice),
+        total: loop.imageIds.length,
+        ...(still ? { ancla: await blobAPngDataUrl(still) } : {}),
         formato: formatoDeProyecto(),
         calidad: calidadImg,
       });
-      const id = loop.imageIds[indice];
-      await putAsset(id, blob);
-      engineRef.current?.invalidateAsset(id);
+      // Y se iguala al original igual que los demás, o el cuadro nuevo mete un
+      // parpadeo él solo justo donde antes no lo había.
+      const patron = await medirFoto(await getAsset(sc.imageId) ?? base);
+      const id = await guardarBlobEscena(await ajustarFotograma(bruto, patron), "loop");
+      mut((p) => ({
+        ...p,
+        scenes: p.scenes.map((s) => (s.id !== sceneId || !s.loop ? s : {
+          ...s,
+          loop: { ...s.loop, imageIds: s.loop.imageIds.map((x, n) => (n === indice ? id : x)) },
+        })),
+      }));
       engineRef.current?.update(projRef.current);
+      if (viejo !== sc.imageId) await deleteAsset(viejo).catch(() => {});
       setStatus(`Fotograma ${indice + 1} regenerado.`);
     } catch (e: any) {
       setStatus("No se pudo regenerar el fotograma: " + (e?.message ?? ""));
     } finally {
       setRegenerandoCuadro(null);
     }
+  }
+
+  /**
+   * Los fotogramas de un loop que ya no va a usar nadie.
+   *
+   * La foto de la escena NUNCA entra aquí: es el cuadro 0 del loop y a la vez
+   * la imagen de la escena, así que borrarla al quitar la animación dejaba la
+   * escena sin imagen.
+   */
+  async function tirarLoop(sc: StoryScene | undefined) {
+    const ids = (sc?.loop?.imageIds ?? []).filter((id) => id && id !== sc?.imageId);
+    await Promise.all(ids.map((id) => deleteAsset(id).catch(() => {})));
   }
 
   async function animarCapa(sceneId: string, capaId: string) {
@@ -2952,11 +3078,27 @@ export function StoryApp({
                           onAplanar={() => void aplanarEscena(sc.id)}
                           onApng={() => void convertirApng(sc.id)}
                           onParalaje={() => setCapasAbiertas(sc.id)}
+                          esAdmin={esAdminIa}
+                          informe={informeLoop?.sceneId === sc.id ? informeLoop : null}
                           onFps={(fps) => mut((p) => ({
                             ...p,
                             scenes: p.scenes.map((s) => s.id === sc.id && s.loop
                               ? { ...s, loop: { ...s.loop, fps } }
                               : s),
+                          }))}
+                          onVaiven={(v) => mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => s.id === sc.id && s.loop
+                              ? { ...s, loop: { ...s.loop, vaiven: v } }
+                              : s),
+                          }))}
+                          onPlan={(plan) => mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => (s.id === sc.id
+                              // Sin frase no se guarda un plan a medias: es la
+                              // señal de «que lo decida la IA mirando la foto».
+                              ? { ...s, animacion: plan?.movimiento.trim() ? plan : undefined }
+                              : s)),
                           }))}
                           onRegenerarCuadro={(i) => void regenerarCuadro(sc.id, i)}
                           regenerandoCuadro={regenerandoCuadro}

@@ -12,6 +12,7 @@ import { idLoopEn } from "./medio";
 import { stretchBuffer } from "./stretch";
 import { getAsset, assetUrl } from "./store";
 import { esDeBiblioteca, esDeBibliotecaSonido, esRitmico } from "./musica";
+import { esPistaDeMusica, topeSfx } from "./volumen-sfx";
 import { Recorder } from "@/lib/studio/recorder";
 
 
@@ -509,7 +510,7 @@ export class StoryEngine {
         if (s.loop) {
           // Sigue sonando en las tomas siguientes hasta que alguna lo corte,
           // aplicando por el camino los cambios de volumen que le pongan.
-          const span = loopSpan(this.flat, i, s.id, total);
+          const span = loopSpan(this.flat, i, s.id, total, s.audioId);
           events.push({
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
             gain: s.volume, loop: true, until: span.end, changes: span.changes,
@@ -536,7 +537,11 @@ export class StoryEngine {
         const v = ventanas[k];
         events.push({
           key: `ovl:${o.id}`, t: f.start + overlaySoundStart(o, v), audioId: o.soundId,
-          gain: o.soundVolume ?? 0.9, loop: !!o.soundLoop, duracion: 0,
+          // El respaldo también pasa por el tope: un `?? 0.9` suelto era la
+          // rendija por la que un sticker sin volumen guardado sonaba al 90% y
+          // tapaba la frase, justo lo que el tope viene a impedir.
+          gain: topeSfx(o.soundVolume, !!o.soundLoop, esPistaDeMusica(o.soundId)),
+          loop: !!o.soundLoop, duracion: 0,
           until: o.soundLoop ? f.start + v.end : Infinity,
         });
       });
@@ -930,8 +935,15 @@ export class StoryEngine {
     const p = moveProgress(f.shot, lt);
     const imgId = idLoopEn(f.scene.loop, lt, f.scene.imageId);
     const img = this.images.get(imgId) ?? this.images.get(f.scene.imageId);
-    const iw = img?.naturalWidth || f.scene.imgW || 16;
-    const ih = img?.naturalHeight || f.scene.imgH || 9;
+    // EL RECORTE SE MIDE SIEMPRE CON LA FOTO DE LA ESCENA, no con el fotograma
+    // que toca. Un loop puede traer cuadros de otro tamaño que el original —el
+    // modelo devuelve el que le toca por formato—, y midiendo con cada uno el
+    // encuadre cambiaba al cambiar de cuadro: la imagen daba un tirón de zoom
+    // en cada fotograma, que a 6 por segundo se ve como un temblor constante.
+    // Con un tamaño fijo, lo único que cambia entre cuadros es el dibujo.
+    const base = this.images.get(f.scene.imageId) ?? img;
+    const iw = base?.naturalWidth || f.scene.imgW || 16;
+    const ih = base?.naturalHeight || f.scene.imgH || 9;
     const frames = f.frames;
 
     ctx.save();
@@ -970,7 +982,14 @@ export class StoryEngine {
         // El zoom de la lámina se aplica estrechando el recorte: así se agranda
         // sobre el cuadro y al desplazarse no asoma el borde.
         const e = Math.max(1, capa.escala || 1);
-        const { sx, sy, sw, sh } = framePx({ ...frC, w: frC.w / e }, im.naturalWidth, im.naturalHeight);
+        // Mismo motivo que arriba: el recorte lo marca la lámina original, no
+        // el fotograma que toca, o la lámina pega un tirón en cada cuadro.
+        const baseCapa = this.images.get(capa.imageId) ?? im;
+        const { sx, sy, sw, sh } = framePx(
+          { ...frC, w: frC.w / e },
+          baseCapa.naturalWidth || im.naturalWidth,
+          baseCapa.naturalHeight || im.naturalHeight,
+        );
         ctx.save();
         ctx.globalAlpha = alpha * Math.max(0, Math.min(1, capa.opacidad ?? 1));
         ctx.drawImage(im, sx, sy, sw, sh, 0, 0, this.w, this.h);

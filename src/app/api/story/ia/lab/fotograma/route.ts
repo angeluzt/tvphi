@@ -34,6 +34,19 @@ const cuerpo = z.object({
    * «el agua de la orilla», «el fuego de la hoguera».
    */
   movimiento: z.string().max(400).optional(),
+  /**
+   * La foto ORIGINAL de la escena, cuando `imagen` es el cuadro anterior.
+   *
+   * Con las dos, el modelo tiene a quién obedecer en cada cosa: la original
+   * manda en la identidad —caras, colores, encuadre— y el cuadro anterior en
+   * dónde va el movimiento. Encadenando a secas, cada edición reescribe la foto
+   * entera y al quinto cuadro la escena ha derivado; anclando a secas, salen N
+   * variaciones sueltas en vez de un movimiento.
+   */
+  ancla: z.string().min(100).max(6_000_000).optional(),
+  /** En qué punto del ciclo va este cuadro, para que el gesto progrese. */
+  indice: z.number().int().min(1).max(32).optional(),
+  total: z.number().int().min(2).max(32).optional(),
 });
 
 const TAMANOS: Record<string, string> = {
@@ -85,6 +98,9 @@ export async function POST(req: Request) {
   if (!bytes) {
     return NextResponse.json({ error: "La imagen de referencia no es un PNG válido." }, { status: 400 });
   }
+  // El ancla es opcional y NO es motivo para fallar: si viene ilegible se sigue
+  // con una sola referencia, que es lo que había antes y funciona.
+  const anclaBytes = parsed.data.ancla ? pngBytes(parsed.data.ancla) : null;
 
   const key = claveOpenAi();
   if (!key) return NextResponse.json({ error: IA_NO_DISPONIBLE }, { status: 503 });
@@ -119,16 +135,30 @@ export async function POST(req: Request) {
     form.set("prompt", promptFotograma({
       escena: parsed.data.prompt,
       movimiento: parsed.data.movimiento,
+      indice: parsed.data.indice,
+      total: parsed.data.total,
+      conAncla: !!anclaBytes,
     }));
     form.set("size", size);
     form.set("n", "1");
     form.set("quality", calidad);
     form.set("output_format", "png");
     form.set("background", "opaque");
+    // EL ORDEN IMPORTA: el prompt habla de «IMAGE 1» y «IMAGE 2», así que la
+    // original va primero y el cuadro anterior después. Al revés, el modelo
+    // toma como identidad el cuadro que ya venía derivado y la deriva se
+    // convierte en la referencia.
+    if (anclaBytes) {
+      form.append(
+        "image[]",
+        new Blob([new Uint8Array(anclaBytes)], { type: "image/png" }),
+        "original.png",
+      );
+    }
     form.append(
       "image[]",
       new Blob([new Uint8Array(bytes)], { type: "image/png" }),
-      "ref.png",
+      anclaBytes ? "anterior.png" : "ref.png",
     );
     const r = await fetch(OPENAI("/v1/images/edits"), {
       signal: espera("imagen"),

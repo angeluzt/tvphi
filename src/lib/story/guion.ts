@@ -1,3 +1,5 @@
+import { topeSfx } from "./volumen-sfx";
+
 // Quitar de la narración lo que no es la historia.
 //
 // Esto existe por un fallo real: se generó un capítulo y las voces acababan
@@ -212,7 +214,9 @@ export function ajustarMusicaCapitulo(project: any) {
     if (!toma) continue;
     toma.sfx = [...(toma.sfx ?? []), {
       id: l.id, audioId: l.audioId, name: l.name,
-      volume: Math.min(l.volume, VOL_MUSICA), dur: 0, gapSec: 0, loop: true,
+      // `topeSfx` con `esMusica` para que quede claro que esto NO baja al 5%:
+      // es una pista de música puesta por escena, no un ambiente.
+      volume: topeSfx(l.volume, true, true), dur: 0, gapSec: 0, loop: true,
     }];
   }
   return { bajadas, movidas: sobran.length };
