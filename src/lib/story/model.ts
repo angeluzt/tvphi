@@ -16,6 +16,7 @@ import { nanoid } from "nanoid";
 import { type VfxKind, type VfxShape, vfxSpec, vfxDefaults } from "./vfx";
 import { type PaletaIa, type MedioEscena, normalizarPaleta } from "./paleta";
 import { type LoopImagen, normalizarLoop } from "./medio";
+import { esPistaDeMusica, topeSfx, volumenInicialSfx } from "./volumen-sfx";
 
 export type TransitionKind = "cut" | "fade" | "slide";
 // Los stickers pueden seguir la transición de entrada de la toma o llevar la suya.
@@ -818,6 +819,10 @@ export function inheritedLoops(flat: FlatShot[], index: number): InheritedLoop[]
         if (ov.stop) { stopped = true; break; }
         if (typeof ov.volume === "number") volume = ov.volume;
       }
+      // Aquí SÍ se sabe a qué sonido apunta la excepción, así que es donde se
+      // acota: un ambiente heredado no puede subir del 5% por mucho que una
+      // toma posterior pida más.
+      volume = topeSfx(volume, true, esPistaDeMusica(s.audioId));
       if (!stopped) out.push({ sfx: s, volume, fromSceneIndex: flat[j].sceneIndex, fromShotIndex: flat[j].shotIndex });
     }
   }
@@ -826,14 +831,22 @@ export function inheritedLoops(flat: FlatShot[], index: number): InheritedLoop[]
 
 // Cuándo deja de sonar un bucle: en la primera toma posterior que lo corte, o al
 // final del video. Devuelve también los cambios de volumen por el camino.
-export function loopSpan(flat: FlatShot[], fromIndex: number, sfxId: string, total: number) {
+//
+// `audioId` es opcional solo por no romper a quien ya llamaba sin él; pasándolo
+// se acotan los cambios de volumen con el techo que le toca a ESE sonido, que
+// es lo que impide que una toma de más adelante suba un ambiente por encima de
+// lo que su propia barra permite.
+export function loopSpan(
+  flat: FlatShot[], fromIndex: number, sfxId: string, total: number, audioId?: string,
+) {
   const changes: { at: number; volume: number }[] = [];
   let end = total;
+  const acotar = (v: number) => topeSfx(v, true, esPistaDeMusica(audioId));
   for (let k = fromIndex + 1; k < flat.length; k++) {
     const ov = flat[k].shot.audioOverrides?.find((o) => o.sfxId === sfxId);
     if (!ov) continue;
     if (ov.stop) { end = flat[k].start; break; }
-    if (typeof ov.volume === "number") changes.push({ at: flat[k].start, volume: ov.volume });
+    if (typeof ov.volume === "number") changes.push({ at: flat[k].start, volume: acotar(ov.volume) });
   }
   return { end, changes };
 }
@@ -929,8 +942,20 @@ export function newDialogue(gapSec = 0): Dialogue {
   return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none", speed: 1, pitch: 1, stale: false };
 }
 
-export function newSfx(audioId: string, name: string, dur: number): ShotSfx {
-  return { id: nanoid(6), audioId, name, volume: 0.8, dur, gapSec: 0, loop: false };
+/**
+ * Un efecto recién puesto.
+ *
+ * `bucle` decide el volumen, no lo decide quien llama: un ambiente que suena
+ * bajo toda la escena entra al 5% y un golpe puntual al 12%. Antes entraban
+ * todos al 80% y la narración desaparecía debajo del primer sonido que se
+ * añadiera (ver `volumen-sfx.ts`).
+ */
+export function newSfx(audioId: string, name: string, dur: number, bucle = false): ShotSfx {
+  return {
+    id: nanoid(6), audioId, name,
+    volume: volumenInicialSfx(bucle, esPistaDeMusica(audioId)),
+    dur, gapSec: 0, loop: bucle,
+  };
 }
 
 export function newOverlay(imageId: string): PngOverlay {
@@ -941,7 +966,7 @@ export function newOverlay(imageId: string): PngOverlay {
     toX: 0.35, toY: 0.35, toW: 0.3, toH: 0.3,
     transition: "inherit",
     timing: "all", startSec: 0, endSec: 1, durSec: 1,
-    soundVolume: 0.9, soundDelay: 0, soundLoop: false,
+    soundVolume: volumenInicialSfx(false), soundDelay: 0, soundLoop: false,
   };
 }
 
@@ -1178,7 +1203,9 @@ function normalizeOverlay(o: any): PngOverlay {
     durSec: Number(o.durSec) || 1,
     soundId: o.soundId || undefined,
     soundName: o.soundName || undefined,
-    soundVolume: typeof o.soundVolume === "number" ? o.soundVolume : 0.9,
+    // El sonido de un sticker es un efecto como cualquier otro: entraba al 90%
+    // y tapaba la frase igual que los demás.
+    soundVolume: topeSfx(o.soundVolume, !!o.soundLoop, esPistaDeMusica(o.soundId)),
     soundDelay: Number(o.soundDelay) || 0,
     soundLoop: !!o.soundLoop,
   };
@@ -1252,6 +1279,10 @@ function normalizeSfxYOverrides(s: any): { sfx: ShotSfx[]; audioOverrides: Audio
     overrides.push({
       sfxId,
       stop: !!stop,
+      // Aquí NO se acota: una excepción apunta a un sonido de OTRA toma, así
+      // que desde este punto no se sabe si es un ambiente (5%) o una pista de
+      // música por escena (12%). Se acota al resolverla, en `inheritedLoops` y
+      // `loopSpan`, que sí tienen delante el sonido al que apunta.
       volume: volume == null || volume === "" ? null : Number(volume),
     });
   };
@@ -1272,7 +1303,10 @@ function normalizeSfxYOverrides(s: any): { sfx: ShotSfx[]; audioOverrides: Audio
       id: typeof x.id === "string" && x.id ? x.id : nanoid(6),
       audioId: x.audioId.trim(),
       name: String(x.name || "Sonido").slice(0, 120),
-      volume: typeof x.volume === "number" && Number.isFinite(x.volume) ? x.volume : 0.8,
+      // Se acota AL CARGAR, no solo al crear: por aquí pasan tanto lo que
+      // escribe la IA como los capítulos que ya estaban guardados con efectos
+      // al 80%. Un capítulo viejo se arregla solo al abrirlo.
+      volume: topeSfx(x.volume, !!x.loop, esPistaDeMusica(x.audioId)),
       dur: Number(x.dur) || 0,
       gapSec: Number(x.gapSec) || 0,
       loop: !!x.loop,

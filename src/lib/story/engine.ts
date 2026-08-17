@@ -509,7 +509,7 @@ export class StoryEngine {
         if (s.loop) {
           // Sigue sonando en las tomas siguientes hasta que alguna lo corte,
           // aplicando por el camino los cambios de volumen que le pongan.
-          const span = loopSpan(this.flat, i, s.id, total);
+          const span = loopSpan(this.flat, i, s.id, total, s.audioId);
           events.push({
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
             gain: s.volume, loop: true, until: span.end, changes: span.changes,
