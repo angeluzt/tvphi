@@ -81,6 +81,9 @@ Cada escena es UNA imagen:
 {"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen","medio":"still",
  "vfx":[/* anclas de la FOTO: portal, fuego, humo… */],"shots":[...]}
 
+Y si esa escena lleva "medio":"apng", además:
+ "animacion":{"movimiento":"the water ripples along the shore and the reeds sway","fotogramas":5,"fps":6}
+
 Cada toma es un encuadre sobre esa imagen:
 {"id":"s1a","autoDuration":true,"durationSec":6,"holdSec":0,"motionMode":"preset",
  "preset":{"kind":"in","cx":0.5,"cy":0.5,"w":1,"distance":0.25},

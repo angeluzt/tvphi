@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { estadoCupoHistorias, esAdminHistorias } from "@/lib/story/cupo";
 import { StoryApp } from "@/components/story/story-app";
+import { BancoFotoViva } from "@/components/story/banco-foto-viva";
 
 export const dynamic = "force-dynamic";
 
@@ -63,12 +64,16 @@ export default async function LabHistoriasPage({
             </p>
             <p className="mt-2 text-[11px] text-muted">
               Lo nuevo: paleta al crear (2.5D, foto viva APNG, sprites), convertir cada
-              escena, retocar con un prompt y animar una lámina. Son{" "}
-              <b className="text-fg">tus capítulos de verdad</b>, los mismos que en Historias.
+              escena, retocar con un prompt y animar una lámina. Y un{" "}
+              <b className="text-fg">banco de pruebas</b> aquí abajo para tantear la foto
+              viva con cualquier imagen, sin montar un capítulo.
             </p>
           </div>
         </div>
       </div>
+      {/* El banco de pruebas va ANTES del editor: es lo que se usa para afinar
+          la foto viva sin tener que montar un capítulo entero cada vez. */}
+      <BancoFotoViva />
       <StoryApp
         initialProjects={projects}
         initialCupo={cupo}

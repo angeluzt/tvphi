@@ -15,7 +15,9 @@
 import { nanoid } from "nanoid";
 import { type VfxKind, type VfxShape, vfxSpec, vfxDefaults } from "./vfx";
 import { type PaletaIa, type MedioEscena, normalizarPaleta } from "./paleta";
-import { type LoopImagen, normalizarLoop } from "./medio";
+import {
+  type LoopImagen, type PlanAnimacion, normalizarLoop, normalizarPlanAnimacion,
+} from "./medio";
 import { esPistaDeMusica, topeSfx, volumenInicialSfx } from "./volumen-sfx";
 
 export type TransitionKind = "cut" | "fade" | "slide";
@@ -385,6 +387,15 @@ export interface StoryScene {
   medio?: MedioEscena;
   /** Fotogramas de la escena cuando medio es apng. imageId sigue siendo el primero. */
   loop?: LoopImagen;
+  /**
+   * QUÉ animar y con cuántos dibujos, antes de gastarlos.
+   *
+   * Lo escribe la IA con el capítulo. Es lo que faltaba: sin esto se pedían
+   * seis cuadros sin decirle al modelo qué se mueve, y cada uno movía una cosa
+   * distinta. Sobrevive a la materialización para poder rehacer el loop igual,
+   * o cambiar la frase y volver a intentarlo sin escribirlo todo otra vez.
+   */
+  animacion?: PlanAnimacion;
 }
 
 export interface AudioLayer {
@@ -1362,6 +1373,7 @@ export function migrateProject(raw: any): StoryProject {
         const shotsRaw = (sc.shots ?? []).map((s: any) => normalizeShot(s, imgW, imgH));
         const { vfx, shots } = promoteSceneVfx(shotsRaw, sc.vfx);
         const loopEscena = normalizarLoop(sc.loop);
+        const plan = normalizarPlanAnimacion(sc.animacion);
         return {
           id: sc.id ?? nanoid(6),
           imageId: sc.imageId,
@@ -1394,6 +1406,7 @@ export function migrateProject(raw: any): StoryProject {
             ? { medio: sc.medio as MedioEscena }
             : {}),
           ...(loopEscena ? { loop: loopEscena } : {}),
+          ...(plan ? { animacion: plan } : {}),
         };
       }),
       audioLayers: raw.audioLayers ?? [],

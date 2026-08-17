@@ -935,8 +935,15 @@ export class StoryEngine {
     const p = moveProgress(f.shot, lt);
     const imgId = idLoopEn(f.scene.loop, lt, f.scene.imageId);
     const img = this.images.get(imgId) ?? this.images.get(f.scene.imageId);
-    const iw = img?.naturalWidth || f.scene.imgW || 16;
-    const ih = img?.naturalHeight || f.scene.imgH || 9;
+    // EL RECORTE SE MIDE SIEMPRE CON LA FOTO DE LA ESCENA, no con el fotograma
+    // que toca. Un loop puede traer cuadros de otro tamaño que el original —el
+    // modelo devuelve el que le toca por formato—, y midiendo con cada uno el
+    // encuadre cambiaba al cambiar de cuadro: la imagen daba un tirón de zoom
+    // en cada fotograma, que a 6 por segundo se ve como un temblor constante.
+    // Con un tamaño fijo, lo único que cambia entre cuadros es el dibujo.
+    const base = this.images.get(f.scene.imageId) ?? img;
+    const iw = base?.naturalWidth || f.scene.imgW || 16;
+    const ih = base?.naturalHeight || f.scene.imgH || 9;
     const frames = f.frames;
 
     ctx.save();
@@ -975,7 +982,14 @@ export class StoryEngine {
         // El zoom de la lámina se aplica estrechando el recorte: así se agranda
         // sobre el cuadro y al desplazarse no asoma el borde.
         const e = Math.max(1, capa.escala || 1);
-        const { sx, sy, sw, sh } = framePx({ ...frC, w: frC.w / e }, im.naturalWidth, im.naturalHeight);
+        // Mismo motivo que arriba: el recorte lo marca la lámina original, no
+        // el fotograma que toca, o la lámina pega un tirón en cada cuadro.
+        const baseCapa = this.images.get(capa.imageId) ?? im;
+        const { sx, sy, sw, sh } = framePx(
+          { ...frC, w: frC.w / e },
+          baseCapa.naturalWidth || im.naturalWidth,
+          baseCapa.naturalHeight || im.naturalHeight,
+        );
         ctx.save();
         ctx.globalAlpha = alpha * Math.max(0, Math.min(1, capa.opacidad ?? 1));
         ctx.drawImage(im, sx, sy, sw, sh, 0, 0, this.w, this.h);
