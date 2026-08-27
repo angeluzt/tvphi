@@ -52,4 +52,47 @@ describe("migrateProject conserva lo vivo", () => {
     const ids = projectAssets(p);
     expect(ids).toEqual(expect.arrayContaining(["img-1", "img-2", "capa-1", "capa-x"]));
   });
+
+  it("el plan de la escena sobrevive al recargar", () => {
+    const p = migrateProject({
+      paleta: { apng: true, sprites: true },
+      scenes: [{
+        id: "s1", imageId: "img-1", imgW: 16, imgH: 9, medio: "apng", shots: [], vfx: [],
+        plan: {
+          viva: {
+            tecnica: "sprites",
+            elementos: [{
+              que: "a seagull", x: 0.2, y: 0.3, alto: 0.1, fotogramas: 6, fps: 10,
+              vista: "lateral", direccion: "derecha", accion: "volar", anclaje: "centro",
+            }],
+          },
+        },
+      }],
+    });
+    expect(p.scenes[0].plan?.viva?.tecnica).toBe("sprites");
+    expect(p.scenes[0].plan?.viva?.elementos).toHaveLength(1);
+  });
+
+  it("sin sprites en la paleta, un plan de sprites guardado NO revive", () => {
+    const p = migrateProject({
+      paleta: { apng: true, sprites: false },
+      scenes: [{
+        id: "s1", imageId: "img-1", imgW: 16, imgH: 9, medio: "apng", shots: [], vfx: [],
+        plan: { viva: { tecnica: "sprites", elementos: [{ que: "a seagull" }] } },
+      }],
+    });
+    expect(p.scenes[0].plan?.viva?.tecnica).toBe("cuadros");
+    expect(p.scenes[0].plan?.viva?.elementos).toEqual([]);
+  });
+
+  it("una escena sin plan no se inventa uno al abrirla", () => {
+    const p = migrateProject({
+      scenes: [{
+        id: "s1", imageId: "img-1", imgW: 16, imgH: 9, medio: "apng",
+        loop: { imageIds: ["img-1", "img-2", "img-3"], fps: 9 },
+        shots: [], vfx: [],
+      }],
+    });
+    expect(p.scenes[0].plan).toBeUndefined();
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { idLoopEn, indiceLoop, medioDe, normalizarLoop } from "./medio";
+import { idLoopEn, indiceLoop, medioDe, normalizarLoop, vivaConSprites } from "./medio";
 
 describe("normalizarLoop", () => {
   it("rechaza un solo fotograma", () => {
@@ -34,5 +34,19 @@ describe("medioDe", () => {
     expect(medioDe({ medio: "still", loop: { imageIds: ["a", "b"], fps: 6 } })).toBe("apng");
     expect(medioDe({ medio: "apng" })).toBe("still");
     expect(medioDe({})).toBe("still");
+  });
+
+  it("una foto viva de actores son capas, pero no es un paralaje", () => {
+    expect(medioDe({ medio: "apng", capas: [{ spr: { fotogramas: 6 } }] })).toBe("apng");
+    expect(medioDe({ medio: "paralaje", capas: [{ spr: { fotogramas: 6 } }] })).toBe("paralaje");
+  });
+});
+
+describe("vivaConSprites", () => {
+  it("solo si hay actores y la escena dice que es foto viva", () => {
+    expect(vivaConSprites({ medio: "apng", capas: [{ spr: {} }] })).toBe(true);
+    expect(vivaConSprites({ medio: "apng", capas: [{}] })).toBe(false);
+    expect(vivaConSprites({ medio: "paralaje", capas: [{ spr: {} }] })).toBe(false);
+    expect(vivaConSprites({ loop: { imageIds: ["a", "b"], fps: 6 } })).toBe(false);
   });
 });

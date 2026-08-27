@@ -64,7 +64,7 @@ export function instruccionesPaleta(p: PaletaIa): string {
   const no: string[] = [];
   (p.paralaje ? si : no).push("paralaje (escena en láminas 2.5D)");
   (p.apng ? si : no).push("apng (foto viva: loop de fotogramas con movimiento mínimo)");
-  (p.sprites ? si : no).push("sprites (actores animados de la biblioteca)");
+  (p.sprites ? si : no).push("sprites (actores animados recortados: foto viva con actores, y actores sobre las láminas del paralaje)");
   (p.vfx ? si : no).push("efectos del catálogo (scenes[].vfx y shots[].vfx)");
   (p.musica ? si : no).push("música en audioLayers");
 
@@ -73,9 +73,10 @@ export function instruccionesPaleta(p: PaletaIa): string {
     `Permitido: ${si.join("; ")}.`,
     no.length ? `PROHIBIDO inventar: ${no.join("; ")}.` : "Nada más está prohibido por paleta.",
     "Cada escena lleva \"medio\": \"still\" | \"apng\" | \"paralaje\".",
-    "Por defecto still. Usa apng SOLO si el movimiento es inherente (agua, fuego, viento, respirar) y está permitido.",
-    "Usa paralaje SOLO si la profundidad ayuda a un movimiento de cámara y está permitido.",
-    "No marques apng ni paralaje en todas las escenas: dos o tres como mucho, el resto still.",
+    // CUÁNTAS de cada cosa ya no se dice aquí: lo dice el reparto, con números
+    // cerrados. Decirlo en dos sitios con dos vocabularios («dos o tres como
+    // mucho» aquí, «exactamente 2» allí) es pedirle al modelo que elija a cuál
+    // hace caso, y elegía al más flojo.
     "Marcar un medio NO dibuja nada: solo dice qué se materializará después. El prompt de la imagen se escribe igual: UNA foto entera, nunca una rejilla, storyboard ni hoja de sprites.",
   ].join("\n");
 }

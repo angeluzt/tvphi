@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
-import { LogOut, User, Sparkles, BarChart3, FlaskConical } from "lucide-react";
+import { LogOut, User, Sparkles, BarChart3, FlaskConical, Clapperboard } from "lucide-react";
 
 interface HeaderUser {
   username: string;
@@ -35,6 +35,19 @@ export function SiteHeader({ user }: { user: HeaderUser | null }) {
                   >
                     <BarChart3 className="h-4 w-4" />
                     <span className="hidden sm:inline">Uso</span>
+                  </Link>
+                  {/* El editor de historias EN PRUEBAS. Va aquí y no escondido
+                      dentro del laboratorio: es donde se prueban los medios
+                      —foto viva, actores, 2.5D— y hasta ahora solo se llegaba
+                      por un enlace pequeño dentro de /lab, o escribiendo la URL.
+                      Los capítulos son los mismos que en Historias. */}
+                  <Link
+                    href="/lab/historias"
+                    className="btn-ghost"
+                    title="Historias con foto viva, actores y 2.5D · en pruebas, solo admin"
+                  >
+                    <Clapperboard className="h-4 w-4 text-gold" />
+                    <span className="hidden sm:inline">Pruebas</span>
                   </Link>
                   {/* Lab incluye el taller único de sprites (/lab?tab=sprites). */}
                   <Link

@@ -1,5 +1,7 @@
 import { VFX, SHAPE_LABEL, GROUP_LABEL, vfxDefaults } from "./vfx";
 import { catalogoMusicaIA, catalogoSonidosIA } from "./musica";
+import { reglaDeVolumen, VOL_SONIDO_MAX, VOL_SONIDO_MEDIO, VOL_SONIDO_MIN } from "./sonido";
+import { barajarCatalogo } from "./variedad";
 
 // El catálogo de efectos, en un sitio solo: lo sirve /api/story/efectos y viaja
 // también dentro de los JSON que se exportan.
@@ -303,11 +305,11 @@ export function referenciaParaIA() {
     fallosTipicos: fallosTipicos(),
     efectos: catalogoEfectos(),
     musica: {
-      comoSeUsa: "PREFERENTE: música por escena, no global. Se pone como sonido de la PRIMERA toma de la escena, en shots[].sfx con loop:true y audioId «lib:…», y se corta al empezar la escena siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. Así cada escena tiene la suya y se mueve con las tomas. Global (audioLayers, kind:\"music\", loop:true, startSec 0) SOLO para una cama única de todo el video, y NUNCA más de una. volume 0.08-0.15: la música se aparta sola mientras se narra, ese número es el de los silencios.",
+      comoSeUsa: `PREFERENTE: música por escena, no global. Se pone como sonido de la PRIMERA toma de la escena, en shots[].sfx con loop:true y audioId «lib:…», y se corta al empezar la escena siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. Así cada escena tiene la suya y se mueve con las tomas. Global (audioLayers, kind:"music", loop:true, startSec 0) SOLO para una cama única de todo el video, y NUNCA más de una. volume ${VOL_SONIDO_MIN}-${VOL_SONIDO_MAX}: la música se aparta sola mientras se narra, ese número es el de los silencios.`,
       pistas: catalogoMusicaIA(),
     },
     sonidos: {
-      comoSeUsa: "Van DENTRO de la toma, en shot.sfx. Hay dos clases y no se usan igual. GOLPE (1-6 s): {id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}; ponle el sonido al efecto que dibujas — si hay un rayo, que truene. BUCLE (los marcados como tal, 20-30 s): ambiente que suena bajo toda la escena, con loop:true y volume 0.08-0.15 (no más) porque suena bajo la voz toda la escena; además se aparta sola al narrar; arranca en la PRIMERA toma de la escena y se corta al empezar la siguiente con audioOverrides:[{sfxId,stop:true,volume:null}].",
+      comoSeUsa: `Van DENTRO de la toma, en shot.sfx. Hay dos clases y no se usan igual. GOLPE (1-6 s): {id, audioId «son:…», name, volume:${VOL_SONIDO_MAX}, dur, gapSec = espera desde el inicio de la toma, loop:false}; ponle el sonido al efecto que dibujas — si hay un rayo, que truene. BUCLE (los marcados como tal, 20-30 s): ambiente que suena bajo toda la escena, con loop:true y volume ${VOL_SONIDO_MIN}-${VOL_SONIDO_MEDIO} porque suena bajo la voz toda la escena; además se aparta sola al narrar; arranca en la PRIMERA toma de la escena y se corta al empezar la siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. ${reglaDeVolumen()}`,
       sonidos: catalogoSonidosIA(),
     },
   };
@@ -315,21 +317,29 @@ export function referenciaParaIA() {
 
 // La versión que se le manda al modelo al escribir un capítulo. Dice lo mismo
 // con muchos menos tokens, que los paga el usuario en cada generación.
-export function referenciaCompacta() {
+//
+// La `semilla` baraja los catálogos. Es lo único que cambia entre una llamada
+// y otra, y arregla un sesgo real: el modelo lee la lista de arriba abajo y
+// tira de lo primero que le vale, así que con el orden fijo salían siempre los
+// mismos cuatro efectos y los mismos tres sonidos de más de cincuenta. Sin
+// semilla se comporta como siempre, que es lo que necesitan el JSON exportado
+// y las pruebas.
+export function referenciaCompacta(semilla?: number) {
+  const orden = <T,>(lista: T[]) => (semilla == null ? lista : barajarCatalogo(lista, semilla));
   return {
     montaje: reglasMontaje(),
     sitios: reglasSitios(),
-    recetasDeTomas: recetasDeTomas(),
+    recetasDeTomas: orden(recetasDeTomas()),
     ejemploDeEscena: ejemploDeEscena(),
     fallosTipicos: fallosTipicos(),
-    efectos: catalogoCompacto(),
+    efectos: orden(catalogoCompacto()),
     musica: {
-      comoSeUsa: "PREFERENTE: música por ESCENA. Va en shots[].sfx de la primera toma de la escena, con loop:true, audioId «lib:…», volume 0.08-0.15, y se corta al empezar la escena siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. Global (audioLayers kind:\"music\", loop:true, startSec 0) solo para una cama única de todo el video y NUNCA más de una: dos suenan +3 dB y tapan la voz. El volumen es el de los silencios; bajo la narración la música se aparta sola. Los archivos ya están en la app.",
-      pistas: catalogoMusicaIA(),
+      comoSeUsa: `PREFERENTE: música por ESCENA. Va en shots[].sfx de la primera toma de la escena, con loop:true, audioId «lib:…», volume ${VOL_SONIDO_MIN}-${VOL_SONIDO_MEDIO}, y se corta al empezar la escena siguiente con audioOverrides:[{sfxId,stop:true,volume:null}]. Global (audioLayers kind:"music", loop:true, startSec 0) solo para una cama única de todo el video y NUNCA más de una: dos suenan +3 dB y tapan la voz. El volumen es el de los silencios; bajo la narración la música se aparta sola. Los archivos ya están en la app.`,
+      pistas: orden(catalogoMusicaIA()),
     },
     sonidos: {
-      comoSeUsa: "Dentro de la toma, en shot.sfx. GOLPE (1-6 s): {id, audioId «son:…», name, volume:0.8, dur, gapSec = espera desde el inicio de la toma, loop:false}; úsalos para que suene lo que dibujas (rayo → trueno, portal → portal). BUCLE (los marcados, 20-30 s): ambiente de la escena entera, loop:true y volume 0.08-0.15 porque suena bajo la voz toda la escena; además se aparta sola al narrar; empieza en la primera toma de la escena y se corta al cambiar de escena con audioOverrides:[{sfxId,stop:true,volume:null}].",
-      sonidos: catalogoSonidosIA(),
+      comoSeUsa: `Dentro de la toma, en shot.sfx. GOLPE (1-6 s): {id, audioId «son:…», name, volume:${VOL_SONIDO_MAX}, dur, gapSec = espera desde el inicio de la toma, loop:false}; úsalos para que suene lo que dibujas (rayo → trueno, portal → portal). BUCLE (los marcados, 20-30 s): ambiente de la escena entera, loop:true y volume ${VOL_SONIDO_MIN}-${VOL_SONIDO_MEDIO} porque suena bajo la voz toda la escena; además se aparta sola al narrar; empieza en la primera toma de la escena y se corta al cambiar de escena con audioOverrides:[{sfxId,stop:true,volume:null}]. ${reglaDeVolumen()}`,
+      sonidos: orden(catalogoSonidosIA()),
     },
     ejemploDeEfecto: ejemploDe("fuego", "punto", "#ff8a3d"),
   };

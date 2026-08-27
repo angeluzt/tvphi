@@ -44,15 +44,32 @@ export function idLoopEn(loop: LoopImagen | undefined, t: number, respaldo: stri
 
 type EscenaConMedio = {
   medio?: string;
-  capas?: { loop?: LoopImagen }[];
+  capas?: { loop?: LoopImagen; spr?: unknown }[];
   loop?: LoopImagen;
 };
 
-/** El medio efectivo: lo que HAY montado, no lo que la IA apuntó. */
+/**
+ * El medio efectivo: lo que HAY montado, no lo que la IA apuntó.
+ *
+ * CON UNA EXCEPCIÓN, y es nueva: una foto viva hecha con sprites TAMBIÉN son
+ * capas —la foto quieta abajo y los actores encima—, así que por la forma no se
+ * distingue de un paralaje. Lo que las separa es la intención: si la escena
+ * dice «apng» y trae capas, es una foto viva montada con actores, no un 2.5D.
+ * Sin esta salvedad, la interfaz ofrecía «aplanar el paralaje» sobre algo que
+ * nunca fue un paralaje.
+ *
+ * Las escenas de antes no dicen «apng» con capas —o dicen «paralaje», o no
+ * dicen nada—, así que siguen leyéndose exactamente igual que siempre.
+ */
 export function medioDe(sc: EscenaConMedio): MedioEscena {
-  if (sc.capas && sc.capas.length > 0) return "paralaje";
+  if (sc.capas && sc.capas.length > 0) return sc.medio === "apng" ? "apng" : "paralaje";
   if (sc.loop && sc.loop.imageIds.length >= MIN_FOTOS_LOOP) return "apng";
   return "still";
+}
+
+/** ¿Esta foto viva está hecha con actores recortados en vez de repintada? */
+export function vivaConSprites(sc: EscenaConMedio): boolean {
+  return medioDe(sc) === "apng" && (sc.capas ?? []).some((c) => !!c.spr);
 }
 
 export function idsDeLoopEscena(sc: Pick<EscenaConMedio, "loop" | "capas">): string[] {

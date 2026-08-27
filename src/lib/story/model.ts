@@ -16,6 +16,8 @@ import { nanoid } from "nanoid";
 import { type VfxKind, type VfxShape, vfxSpec, vfxDefaults } from "./vfx";
 import { type PaletaIa, type MedioEscena, normalizarPaleta } from "./paleta";
 import { type LoopImagen, normalizarLoop } from "./medio";
+import { VOL_SONIDO_MAX } from "./sonido";
+import { type PlanMedio, normalizarPlanMedio } from "./plan-medios";
 
 export type TransitionKind = "cut" | "fade" | "slide";
 // Los stickers pueden seguir la transición de entrada de la toma o llevar la suya.
@@ -384,6 +386,18 @@ export interface StoryScene {
   medio?: MedioEscena;
   /** Fotogramas de la escena cuando medio es apng. imageId sigue siendo el primero. */
   loop?: LoopImagen;
+  /**
+   * CÓMO se monta esta escena, según lo escribió la IA.
+   *
+   * `medio` dice qué es; esto dice con qué. Cuántos cuadros lleva la foto viva,
+   * si se hace repintando o pegando actores recortados, cuántas láminas tiene
+   * el paralaje y cuáles de ellas respiran. Es lo que permite montarla sola.
+   *
+   * Vale para lo que TODAVÍA no se ha montado: en cuanto la escena tiene sus
+   * capas o su loop, manda lo que hay. El plan se queda como registro de lo que
+   * se pidió, para poder rehacerlo igual.
+   */
+  plan?: PlanMedio;
 }
 
 export interface AudioLayer {
@@ -929,8 +943,17 @@ export function newDialogue(gapSec = 0): Dialogue {
   return { id: nanoid(6), text: "", dur: 0, gapSec, effect: "none", speed: 1, pitch: 1, stale: false };
 }
 
+/**
+ * Un sonido nuevo en una toma.
+ *
+ * Entra en el TOPE del rango, no al 80%. Un sonido puesto a mano al 0.8 junto a
+ * los que escribe la IA —todos por debajo del 0.12— no se oye «un poco más
+ * fuerte»: tapa la narración y el resto de la mezcla, y quien lo añadió lo
+ * descubre al exportar. Se puede subir después con la barra, pero el punto de
+ * partida es el que deja el vídeo escuchable.
+ */
 export function newSfx(audioId: string, name: string, dur: number): ShotSfx {
-  return { id: nanoid(6), audioId, name, volume: 0.8, dur, gapSec: 0, loop: false };
+  return { id: nanoid(6), audioId, name, volume: VOL_SONIDO_MAX, dur, gapSec: 0, loop: false };
 }
 
 export function newOverlay(imageId: string): PngOverlay {
@@ -1321,6 +1344,9 @@ export function migrateProject(raw: any): StoryProject {
 
   // Modelo actual o intermedio: escenas con tomas.
   if (Array.isArray(raw.scenes)) {
+    // La paleta se lee ANTES de recorrer las escenas: el plan de cada una se
+    // recorta con ella, y leerla dentro del bucle sería releerla por escena.
+    const paletaProyecto = raw.paleta != null ? normalizarPaleta(raw.paleta) : null;
     return {
       aspect: normalizeAspect(raw.aspect),
       scenes: raw.scenes.map((sc: any) => {
@@ -1360,6 +1386,19 @@ export function migrateProject(raw: any): StoryProject {
             ? { medio: sc.medio as MedioEscena }
             : {}),
           ...(loopEscena ? { loop: loopEscena } : {}),
+          // El plan se normaliza con la paleta del proyecto delante: si los
+          // sprites están apagados, una técnica «sprites» guardada de antes no
+          // debe reaparecer al abrir el capítulo y llamar a una ruta apagada.
+          //
+          // Y solo si venía uno. Rellenarlo aquí «por si acaso» le pondría a
+          // una escena ya montada con nueve cuadros un plan de seis, y el día
+          // que alguien le diera a rehacerla perdería tres sin saber por qué.
+          ...(() => {
+            if (sc.plan == null) return {};
+            const m: MedioEscena = sc.medio === "apng" || sc.medio === "paralaje" ? sc.medio : "still";
+            const plan = normalizarPlanMedio(sc.plan, m, { sprites: !!paletaProyecto?.sprites });
+            return plan ? { plan } : {};
+          })(),
         };
       }),
       audioLayers: raw.audioLayers ?? [],

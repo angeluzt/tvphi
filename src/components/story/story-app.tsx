@@ -35,6 +35,11 @@ import { ParcheIa } from "@/components/story/parche-ia";
 import { generarLoopDesdeStill, pedirFotograma, blobAPngDataUrl } from "@/lib/story/generar-loop";
 import { blobDeUrlDeImagen } from "@/lib/lab/png-base64";
 import { FPS_LOOP_DEFECTO } from "@/lib/story/medio";
+import { montarMediosCapitulo, escenasPendientes, imagenesPendientes } from "@/lib/story/montar-medios";
+import { montarVivaConSprites } from "@/lib/story/viva-sprites";
+import { normalizarPlanMedio, resumenPlan } from "@/lib/story/plan-medios";
+import { normalizarPaleta } from "@/lib/story/paleta";
+import { VOL_SONIDO_MAX, VOL_SONIDO_MEDIO } from "@/lib/story/sonido";
 import { capasVfxDeLaIa } from "@/lib/story/efectos-a-escena";
 import { MandoEdicion } from "./mando-edicion";
 import { Slider } from "./slider";
@@ -247,13 +252,16 @@ export function StoryApp({
   // Por dónde va el montaje automático, para poder enseñarlo.
   const [montaje, setMontaje] = useState<
     {
-      fase: "dibujando" | "narrando" | "listo" | "parado";
+      fase: "dibujando" | "medios" | "narrando" | "listo" | "parado";
       hechas: number; total: number; detalle: string;
       /** Escenas que se saltaron por un fallo suyo. Se enseñan al acabar. */
       saltadas?: string[];
     } | null
   >(null);
   const [montarAlEntrar, setMontarAlEntrar] = useState(false);
+  // Para poder parar el montaje de medios ENTRE escenas. No a mitad de una: una
+  // escena a medio montar deja imágenes pagadas sin dónde ir.
+  const pararMedios = useRef(false);
   // Qué pieza se está rehaciendo ahora mismo.
   const [rehaciendo, setRehaciendo] = useState<string | null>(null);
   const [verBiblioteca, setVerBiblioteca] = useState(false);
@@ -1096,6 +1104,17 @@ export function StoryApp({
   // marcada en la lista de abajo: son cosas distintas —se puede estar viendo
   // una escena entera mientras la lista tiene abierta otra toma— y el mando
   // tiene que mover lo que se está viendo.
+  // La paleta con la que se escribió este capítulo. Decide qué se le puede
+  // ofrecer al usuario: sin sprites encendidos, la foto viva con actores ni
+  // aparece, porque su ruta está apagada y el botón solo daría un error.
+  const paletaDelProyecto = normalizarPaleta(project.paleta);
+
+  // Lo que la IA planeó y todavía no está montado, y lo que costaría montarlo.
+  // Se calcula en el render porque depende del proyecto entero y cambia con
+  // cada escena que se monta; son dos recorridos de una lista de seis.
+  const mediosPendientes = lab ? escenasPendientes(project.scenes) : [];
+  const imagenesDeMedios = mediosPendientes.length ? imagenesPendientes(project.scenes) : 0;
+
   const capasDelTramo: { capa: VfxLayer; deEscena: boolean }[] = (() => {
     if (!section) return [];
     // El tramo puede venir identificado por la escena o solo por la toma:
@@ -1192,7 +1211,10 @@ export function StoryApp({
     await putAsset(audioId, f);
     const layer: AudioLayer = {
       id: nanoid(6), kind, audioId, name: f.name,
-      volume: kind === "music" ? 0.35 : 0.8, startSec: 0, loop: kind === "music",
+      // El mismo rango que todo lo que no es la voz: la biblioteca está
+      // masterizada alta y la narración TTS suena bastante por debajo.
+      volume: kind === "music" ? VOL_SONIDO_MEDIO : VOL_SONIDO_MAX,
+      startSec: 0, loop: kind === "music",
     };
     mut((p) => ({ ...p, audioLayers: [...p.audioLayers, layer] }));
   }
@@ -1204,7 +1226,7 @@ export function StoryApp({
       id: nanoid(6), kind: "music", audioId: refPista(pista), name: pista.titulo,
       // La música se aparta sola bajo la voz (ver DUCK en engine.ts), así que
       // este número es el de los silencios, no el que compite con la narración.
-      volume: 0.12, startSec: 0, loop: true,
+      volume: VOL_SONIDO_MEDIO, startSec: 0, loop: true,
     };
     mut((p) => ({ ...p, audioLayers: [...p.audioLayers, layer] }));
     setVerBiblioteca(false);
@@ -1488,11 +1510,20 @@ export function StoryApp({
     setStatus("Escena en foto regular.");
   }
 
+  /**
+   * La foto viva de CUADROS: N fotos enteras, cada una a partir de la anterior.
+   *
+   * Los números salen del plan que escribió la IA para ESA escena y no de una
+   * constante: un oleaje pide ocho cuadros lentos y el parpadeo de una vela,
+   * tres rápidos. Sin plan se cae a lo de siempre (6 cuadros a 6 fps), que es
+   * lo que hacían todas las escenas antes de que hubiera plan.
+   */
   async function convertirApng(sceneId: string) {
     const sc = projRef.current.scenes.find((s) => s.id === sceneId);
     if (!sc?.imageId) { setStatus("Dibuja primero la imagen de la escena."); return; }
     const still = await getAsset(sc.imageId);
     if (!still) { setStatus("Falta la imagen de la escena en este navegador."); return; }
+    const plan = sc.plan?.viva;
     setOcupadoMedio(sceneId);
     try {
       const loop = await generarLoopDesdeStill({
@@ -1500,9 +1531,10 @@ export function StoryApp({
         still,
         prompt: sc.prompt || "the same scene, tiny natural motion",
         formato: formatoDeProyecto(),
-        n: 6,
-        fps: FPS_LOOP_DEFECTO,
+        n: plan?.fotogramas ?? 6,
+        fps: plan?.fps ?? FPS_LOOP_DEFECTO,
         calidad: calidadImg,
+        movimiento: plan?.movimiento,
         onPaso: (s) => setStatus(s),
         guardar: guardarBlobEscena,
       });
@@ -1516,6 +1548,48 @@ export function StoryApp({
       setStatus(`Foto viva lista · ${loop.imageIds.length} fotogramas.`);
     } catch (e: any) {
       setStatus("No se pudo crear la foto viva: " + (e?.message ?? ""));
+    } finally {
+      setOcupadoMedio(null);
+    }
+  }
+
+  /**
+   * La foto viva de SPRITES: la foto no se toca y encima van actores.
+   *
+   * Cuesta una imagen por actor en vez de una por fotograma, y sobre todo deja
+   * la escena de debajo intacta: no hay deriva posible porque nadie la vuelve a
+   * dibujar. Para agua, humo o niebla no sirve —eso no se recorta— y por eso
+   * las dos técnicas conviven en vez de sustituirse.
+   */
+  async function convertirVivaSprites(sceneId: string) {
+    const sc = projRef.current.scenes.find((s) => s.id === sceneId);
+    if (!sc?.imageId) { setStatus("Dibuja primero la imagen de la escena."); return; }
+    const elementos = sc.plan?.viva?.elementos ?? [];
+    if (!elementos.length) {
+      setStatus("Esta escena no tiene actores planeados. Pídeselos a la IA con el prompt de la escena, o usa la foto viva de cuadros.");
+      return;
+    }
+    setOcupadoMedio(sceneId);
+    try {
+      const hecho = await montarVivaConSprites({
+        stillId: sc.imageId,
+        elementos,
+        calidad: calidadImg,
+        guardar: guardarBlobEscena,
+        onPaso: (t) => setStatus(t),
+      });
+      mut((p) => ({
+        ...p,
+        scenes: p.scenes.map((s) => s.id === sceneId
+          ? { ...s, medio: "apng" as const, capas: hecho.capas, loop: undefined, camara: undefined }
+          : s),
+      }));
+      engineRef.current?.update(projRef.current);
+      const actores = hecho.capas.filter((c) => c.spr).length;
+      setStatus(`Foto viva lista · ${actores} ${actores === 1 ? "actor" : "actores"} sobre la foto`
+        + (hecho.fallos.length ? ` · no salieron: ${hecho.fallos.join(" · ")}` : ""));
+    } catch (e: any) {
+      setStatus("No se pudo crear la foto viva con actores: " + (e?.message ?? ""));
     } finally {
       setOcupadoMedio(null);
     }
@@ -1717,6 +1791,10 @@ export function StoryApp({
   // solo, y se ve por dónde va: es la diferencia entre esperar mirando una
   // barra y ver cómo se construye tu historia.
   async function montarTodo() {
+    // Una petición de parar de la vez anterior no puede sobrevivir a esta: si
+    // se quedó puesta, el montaje nuevo se pararía antes de empezar y nadie
+    // entendería por qué.
+    pararMedios.current = false;
     // Por si la clave/modelo se guardaron después de montar esta pantalla.
     const cap = await refrescarCapacidadesIa();
     const dibujos = !!(cap?.configurada && cap?.models?.imagen);
@@ -1761,6 +1839,39 @@ export function StoryApp({
           saltadas.push(donde);
         }
       }
+    }
+
+    // Los medios: fotos vivas y 2.5D, montados a partir del plan de cada escena.
+    //
+    // Va DESPUÉS de dibujar y ANTES de narrar, y no es casual. Después de
+    // dibujar porque una foto viva se construye sobre la foto de la escena, y
+    // antes de narrar porque las voces son lo que más tarda: si algo va a
+    // fallar, mejor que falle antes de veinte minutos de TTS.
+    //
+    // Solo en el editor de pruebas: en el de siempre no hay paleta, así que no
+    // hay escena con medio que montar y esto no hace nada de todos modos.
+    if (lab && dibujos) {
+      const medios = await montarMediosCapitulo(projRef.current.scenes, {
+        formato: formatoDeProyecto(),
+        calidad: calidadImg,
+        leerImagen: (id) => getAsset(id),
+        guardarBlob: guardarBlobEscena,
+        guardarDataUrl: async (dataUrl, nombre) => {
+          const blob = await blobDeUrlDeImagen(dataUrl);
+          return guardarBlobEscena(blob, nombre.replace(/[^a-z0-9]+/gi, "-").slice(0, 24) || "capa");
+        },
+        aplicar: (sceneId, cambio) => mut((p) => ({
+          ...p,
+          scenes: p.scenes.map((s) => (s.id === sceneId ? { ...s, ...cambio } : s)),
+        })),
+        onPaso: ({ hechas, total, detalle }) =>
+          setMontaje({ fase: "medios", hechas, total, detalle }),
+        cancelado: () => pararMedios.current,
+      });
+      pararMedios.current = false;
+      engineRef.current?.update(projRef.current);
+      if (medios.saltadas.length) saltadas.push(...medios.saltadas);
+      if (medios.avisos.length) setStatus(medios.avisos.slice(0, 2).join(" · "));
     }
 
     const voces = pendientesDe((d) => !!d.text.trim() && !d.audioId);
@@ -2552,6 +2663,7 @@ export function StoryApp({
                 : <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" />}
               <span className="label">
                 {montaje.fase === "dibujando" && `Dibujando las escenas · ${montaje.hechas + 1} de ${montaje.total}`}
+                {montaje.fase === "medios" && `Montando fotos vivas y 2.5D · ${montaje.hechas + 1} de ${montaje.total}`}
                 {montaje.fase === "narrando" && `Grabando las voces · ${montaje.hechas + 1} de ${montaje.total}`}
                 {montaje.fase === "listo" && "Capítulo montado"}
                 {montaje.fase === "parado" && `Se paró ${montaje.detalle}`}
@@ -2571,14 +2683,26 @@ export function StoryApp({
                   Puedes seguir tocando el capítulo mientras tanto. Se para solo si algo falla,
                   para no gastar de más.
                 </p>
+                {/* Parar el montaje de medios es lo único que se puede cortar a
+                    mano: es la fase larga y cara, y se corta ENTRE escenas para
+                    no dejar ninguna a medias. */}
+                {montaje.fase === "medios" && (
+                  <button
+                    type="button"
+                    onClick={() => { pararMedios.current = true; setStatus("Se parará al acabar esta escena."); }}
+                    className="btn-ghost mt-2 w-full text-xs"
+                  >
+                    <X className="h-3.5 w-3.5" /> Parar al acabar esta escena
+                  </button>
+                )}
               </>
             )}
             {!!montaje.saltadas?.length && (
               <p className="mt-2 text-[11px] text-gold">
                 {montaje.saltadas.length === 1
-                  ? "Una escena se quedó sin imagen"
-                  : `${montaje.saltadas.length} escenas se quedaron sin imagen`}
-                {" "}({montaje.saltadas.join(" · ")}). El resto se montó. Puedes dibujarlas a mano
+                  ? "Una escena se quedó a medias"
+                  : `${montaje.saltadas.length} escenas se quedaron a medias`}
+                {" "}({montaje.saltadas.join(" · ")}). El resto se montó. Puedes rehacerlas a mano
                 desde su escena.
               </p>
             )}
@@ -2587,6 +2711,47 @@ export function StoryApp({
                 <Sparkles className="h-4 w-4 text-accent" /> Seguir desde donde se quedó
               </button>
             )}
+          </div>
+        )}
+
+        {/* Lo que la IA planeó y todavía no está montado.
+            Va aparte del panel de progreso a propósito: eso cuenta lo que está
+            pasando y esto dice lo que FALTA, con su precio delante. Un botón
+            que va a pedir veinte imágenes no puede decir solo «Montar». */}
+        {lab && !!mediosPendientes.length && !montaje && (
+          <div className="card border-accent/50 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Layers3 className="h-4 w-4 shrink-0 text-accent" />
+              <span className="label">
+                {mediosPendientes.length === 1
+                  ? "1 escena con medio sin montar"
+                  : `${mediosPendientes.length} escenas con medio sin montar`}
+              </span>
+              <span className="chip bg-accent/15 text-accent">
+                {imagenesDeMedios} {imagenesDeMedios === 1 ? "imagen" : "imágenes"}
+              </span>
+            </div>
+            <ul className="mt-2 space-y-0.5">
+              {mediosPendientes.map((sc) => (
+                <li key={sc.id} className="truncate text-[11px] text-muted">
+                  Escena {project.scenes.indexOf(sc) + 1} ·{" "}
+                  {resumenPlan(sc.medio === "apng" ? "apng" : "paralaje", sc.plan)}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => void montarTodo()}
+              disabled={!iaImagen}
+              className="btn-brand mt-2 w-full text-xs disabled:opacity-40"
+              title={iaImagen ? undefined : "Hace falta un modelo de imagen configurado"}
+            >
+              <Sparkles className="h-4 w-4" /> Montarlas todas
+            </button>
+            <p className="mt-1 text-[11px] text-muted">
+              Cada escena se monta como la planeó la IA. Puedes montarlas de una en una desde su
+              tarjeta, o cambiarles el medio antes.
+            </p>
           </div>
         )}
 
@@ -2951,7 +3116,30 @@ export function StoryApp({
                           })}
                           onAplanar={() => void aplanarEscena(sc.id)}
                           onApng={() => void convertirApng(sc.id)}
+                          onVivaSprites={paletaDelProyecto.sprites
+                            ? () => void convertirVivaSprites(sc.id)
+                            : undefined}
                           onParalaje={() => setCapasAbiertas(sc.id)}
+                          onPlan={(plan) => mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => (s.id === sc.id ? { ...s, plan } : s)),
+                          }))}
+                          onMedioPlaneado={(medio) => mut((p) => ({
+                            ...p,
+                            scenes: p.scenes.map((s) => (s.id === sc.id
+                              ? {
+                                ...s,
+                                medio,
+                                // El plan se rehace con el del medio nuevo: el de
+                                // una foto viva no dice nada de láminas y al revés,
+                                // así que arrastrarlo dejaría la escena sin poder
+                                // montarse.
+                                plan: normalizarPlanMedio(
+                                  s.plan, medio, { sprites: paletaDelProyecto.sprites },
+                                ),
+                              }
+                              : s)),
+                          }))}
                           onFps={(fps) => mut((p) => ({
                             ...p,
                             scenes: p.scenes.map((s) => s.id === sc.id && s.loop
@@ -2999,13 +3187,25 @@ export function StoryApp({
                             capas={sc.capas ?? []}
                             prompt={sc.prompt ?? ""}
                             formato={project.aspect === "9:16" ? "9:16" : project.aspect === "1:1" ? "1:1" : "16:9"}
+                            plan={sc.plan?.paralaje}
+                            conSprites={paletaDelProyecto.sprites}
+                            calidad={calidadImg}
                             onCambio={(capas) => mut((p) => ({
                               ...p,
                               scenes: p.scenes.map((s) => (s.id === sc.id
                                 ? {
                                   ...s,
                                   capas: capas.length ? capas : undefined,
-                                  medio: capas.length ? "paralaje" as const : (s.loop ? "apng" as const : "still" as const),
+                                  // Una foto viva de actores TAMBIÉN son capas, así
+                                  // que no todo lo que tenga capas es un paralaje:
+                                  // si la escena ya era foto viva y lo que hay son
+                                  // actores, sigue siéndolo. Sin esto, tocar una
+                                  // lámina la convertía en 2.5D sin avisar.
+                                  medio: capas.length
+                                    ? (s.medio === "apng" && capas.some((c) => c.spr)
+                                      ? "apng" as const
+                                      : "paralaje" as const)
+                                    : (s.loop ? "apng" as const : "still" as const),
                                   ...(capas.length ? {} : { camara: undefined }),
                                 }
                                 : s)),
