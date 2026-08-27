@@ -12,10 +12,10 @@
 //   para el golpe puntual: la explosión, el portazo, el rugido. Dura dos
 //   segundos y tiene que pegar, pero por encima de aquí se come la voz.
 //
-//   BAJO (5%) — el de lo que suena TODO EL RATO por debajo: la lluvia, la
+//   BAJO (4%) — el de lo que suena TODO EL RATO por debajo: la lluvia, la
 //   taberna, el latido, un ambiente en bucle. Compite con la narración durante
 //   la escena entera, no durante dos segundos, así que su sitio es mucho más
-//   abajo. Al 12% una lluvia continua ya molesta.
+//   abajo. Al 12% una lluvia continua ya molesta, y al 5% todavía se notaba.
 //
 // POR QUÉ SE FUERZA Y NO SE SUGIERE. Porque los volúmenes entran por cuatro
 // puertas —lo que pone la IA al escribir el capítulo, lo que trae un proyecto
@@ -28,7 +28,7 @@
 // cama global. Ese caso conserva su regla de siempre (VOL_MUSICA, 12%), porque
 // la música ya se aparta sola mientras se narra —a un tercio— y su número es el
 // de los silencios, no el de la mezcla con voz. Meterla en el cajón de los
-// ambientes la habría bajado al 5% sin que nadie lo pidiera.
+// ambientes la habría bajado al techo de los ambientes sin que nadie lo pidiera.
 //
 // Se distingue por el id: `lib:` es una pista de música y `son:` un sonido.
 
@@ -36,7 +36,7 @@
 export const VOL_SFX_MAX = 0.12;
 
 /** Lo que suena de continuo debajo de la escena: ambientes y bucles. */
-export const VOL_SFX_BAJO = 0.05;
+export const VOL_SFX_BAJO = 0.04;
 
 /** El techo de una pista de música metida como bucle de una escena. */
 export const VOL_MUSICA_EN_ESCENA = 0.12;
@@ -67,7 +67,7 @@ export function topeSfx(volumen: unknown, bucle: boolean, esMusica = false): num
 /**
  * El volumen con el que entra un efecto recién puesto.
  *
- * Entra ya EN SU SITIO, no en el máximo: un ambiente al 5% se oye desde el
+ * Entra ya EN SU SITIO, no en el máximo: un ambiente al 4% se oye desde el
  * primer play sin tener que ir a buscar la barra, y un golpe al 12% pega. Si
  * hace falta menos, se baja; para arriba no hay sitio.
  */

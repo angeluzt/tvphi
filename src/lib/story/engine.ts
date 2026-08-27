@@ -513,7 +513,15 @@ export class StoryEngine {
           const span = loopSpan(this.flat, i, s.id, total, s.audioId);
           events.push({
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
-            gain: s.volume, loop: true, until: span.end, changes: span.changes,
+            // SE ACOTA TAMBIÉN AQUÍ, al reproducir, y no solo al guardar.
+            //
+            // Es la última puerta y la única por la que pasa TODO lo que suena,
+            // venga de donde venga: un capítulo que se abrió antes de que
+            // existiera el tope, un JSON importado a mano, o un camino nuevo
+            // que se olvide de acotar. Acotar solo al escribir deja el tope a
+            // merced de que nadie añada una vía de entrada más.
+            gain: topeSfx(s.volume, true, esPistaDeMusica(s.audioId)),
+            loop: true, until: span.end, changes: span.changes,
             duracion: s.dur || 0,
             // Cualquier cosa de la app puesta en BUCLE dentro de una toma es
             // fondo: una pista de música, sí, pero también la lluvia o una
@@ -525,7 +533,8 @@ export class StoryEngine {
         } else {
           events.push({
             key: `sfx:${s.id}`, t: f.start + sStarts[k], audioId: s.audioId,
-            gain: s.volume, loop: false, until: Infinity, duracion: s.dur || 0,
+            gain: topeSfx(s.volume, false, esPistaDeMusica(s.audioId)),
+            loop: false, until: Infinity, duracion: s.dur || 0,
           });
         }
       });

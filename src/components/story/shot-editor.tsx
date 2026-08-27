@@ -165,7 +165,7 @@ export function ShotEditor({
 
   const updDialogue = (id: string, patch: Partial<Dialogue>) =>
     onChange({ ...shot, dialogues: shot.dialogues.map((d) => (d.id === id ? { ...d, ...patch } : d)) });
-  // Pasar un golpe «a bucle» le baja el techo del 12% al 5%, así que el
+  // Pasar un golpe «a bucle» le baja el techo del 12% al 4%, así que el
   // volumen se reajusta en el mismo gesto. Sin esto, un sonido puntual al 12%
   // se convertía en un ambiente al 12% que suena bajo la voz toda la escena, y
   // la barra ni siquiera podía llegar hasta ahí para enseñar el problema.
@@ -537,7 +537,7 @@ export function ShotEditor({
             onElegir={(s) => {
               // Referencia, no archivo: lo sirve la app (ver getAsset).
               // El nivel lo pone `newSfx` según sea bucle o golpe, y no se
-              // retoca aquí: un ambiente entra al 5% porque suena bajo la voz
+              // retoca aquí: un ambiente entra al 4% porque suena bajo la voz
               // durante la escena entera, y un golpe al 12% porque dura dos
               // segundos y tiene que pegar. Ver `volumen-sfx.ts`.
               const nuevo = newSfx(refSonido(s), s.titulo, s.segundos, s.bucle);
@@ -1107,7 +1107,7 @@ const fuera = (tam: number) => -Math.max(1, tam);
 // El volumen de un sonido, con − y + al lado.
 //
 // Sin ellos la barra es inservible para lo que de verdad se usa: la diferencia
-// entre un ambiente al 3% y al 5% es un píxel de barra, y ese píxel decide si
+// entre un ambiente al 2% y al 4% es un píxel de barra, y ese píxel decide si
 // se oye la narración. Cada toque mueve medio punto exacto.
 //
 // LA BARRA ACABA EN EL TECHO, no en el 100%. Antes llegaba hasta 1 y todo el

@@ -10,10 +10,10 @@ describe("el techo de los efectos de sonido", () => {
     expect(topeSfx(1, false)).toBe(0.12);
   });
 
-  it("un ambiente en bucle nunca pasa del 5%", () => {
+  it("un ambiente en bucle nunca pasa del 4%", () => {
     // Suena durante la escena entera, no dos segundos: al 12% ya tapa la voz.
     expect(topeSfx(0.8, true)).toBe(VOL_SFX_BAJO);
-    expect(topeSfx(0.12, true)).toBe(0.05);
+    expect(topeSfx(0.12, true)).toBe(0.04);
   });
 
   it("lo que ya está por debajo se respeta", () => {
@@ -36,7 +36,7 @@ describe("el techo de los efectos de sonido", () => {
     // Un efecto recién puesto entra ya en su sitio: si entrara en silencio
     // habría que ir a buscar la barra en cada sonido que se añade.
     expect(techoSfx(false)).toBe(0.12);
-    expect(techoSfx(true)).toBe(0.05);
+    expect(techoSfx(true)).toBe(0.04);
     expect(volumenInicialSfx(false)).toBe(techoSfx(false));
     expect(volumenInicialSfx(true)).toBe(techoSfx(true));
   });
@@ -46,7 +46,7 @@ describe("la música puesta por escena no es un ambiente", () => {
   it("conserva su techo del 12% aunque vaya en bucle", () => {
     // Una pista de música puede vivir dentro de `sfx`: así se pone música por
     // escena en vez de una cama global. Ya se aparta sola al narrar, así que
-    // meterla en el cajón de los ambientes la habría bajado al 5% sin que
+    // meterla en el cajón de los ambientes la habría bajado al techo bajo sin que
     // nadie lo pidiera.
     expect(topeSfx(0.5, true, true)).toBe(VOL_MUSICA_EN_ESCENA);
     expect(techoSfx(true, true)).toBe(0.12);
@@ -59,7 +59,7 @@ describe("la música puesta por escena no es un ambiente", () => {
     expect(esPistaDeMusica("")).toBe(false);
   });
 
-  it("un sonido de la biblioteca en bucle sí baja al 5%", () => {
+  it("un sonido de la biblioteca en bucle sí baja al techo bajo", () => {
     // La lluvia es un ambiente, aunque venga de la app: suena bajo la voz
     // durante la escena entera.
     expect(topeSfx(0.5, true, esPistaDeMusica("son:lluvia"))).toBe(VOL_SFX_BAJO);
@@ -77,6 +77,6 @@ describe("las excepciones de volumen desde otra toma", () => {
   it("un número sí se acota, o la excepción sería la puerta de atrás", () => {
     expect(topeOverride(0.9, false)).toBe(VOL_SFX_MAX);
     expect(topeOverride(0.9, true)).toBe(VOL_SFX_BAJO);
-    expect(topeOverride(0.04, true)).toBe(0.04);
+    expect(topeOverride(0.03, true)).toBe(0.03);
   });
 });
