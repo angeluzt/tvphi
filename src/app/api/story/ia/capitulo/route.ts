@@ -10,6 +10,12 @@ import { estadoCupoHistorias, reservarUsoIa, liberarUsoIa, esAdminHistorias } fr
 import { AVISO_SIN_VERIFICAR } from "@/lib/email-verify";
 import { fijarConsistencia, leerReparto, leerEstilo } from "@/lib/story/consistencia";
 import { instruccionesPaleta, medioPermitido, normalizarPaleta, PALETA_VACIA } from "@/lib/story/paleta";
+import {
+  aplicarReparto, instruccionesReparto, repartoDeMedios, repartoPedido, semillaDeTanda,
+} from "@/lib/story/reparto-medios";
+import { instruccionesVariedad, sugerenciasDeTanda } from "@/lib/story/variedad";
+import { asegurarPlanes, imagenesDelCapitulo, instruccionesPlan } from "@/lib/story/plan-medios";
+import { acotarSonidosCapitulo, reglaDeVolumen } from "@/lib/story/sonido";
 
 // Si la IA no rellenó project.voices, se asigna una voz distinta por hablante
 // para que Nora y Tomás no suenen iguales al narrar.
@@ -63,6 +69,18 @@ const cuerpo = z.object({
     vfx: z.boolean().optional(),
     musica: z.boolean().optional(),
   }).optional(),
+  /**
+   * Cuántas escenas de cada medio, a mano.
+   *
+   * Sin esto lo reparte un dado, que es lo bueno para que dos capítulos
+   * seguidos no salgan iguales. Con esto se puede decir «esta vez tres en 2.5D
+   * y ninguna viva», que es lo que hace falta para probar UNA cosa a fondo en
+   * vez de generar hasta que salga.
+   */
+  mezcla: z.object({
+    apng: z.number().int().min(0).max(20).optional(),
+    paralaje: z.number().int().min(0).max(20).optional(),
+  }).optional(),
 });
 
 /** El tamaño real con el que se van a generar las imágenes de cada escena. */
@@ -72,13 +90,14 @@ const MEDIDAS: Record<string, { w: number; h: number }> = {
   "1:1": { w: 1024, h: 1024 },
 };
 
-const INSTRUCCIONES = `Escribes el montaje de un video narrado, en JSON, para la aplicación TVPHI.
+const INSTRUCCIONES_BASE = `Escribes el montaje de un video narrado, en JSON, para la aplicación TVPHI.
 
 Devuelve SOLO un objeto JSON con esta forma:
 {"name": "título", "project": {"aspect":"16:9","narrationVolume":1,"audioLayers":[],"intro":null,"outro":null,"voices":{"":"onyx"},"reparto":{...},"estilo":"...","scenes":[...]}}
 
 Cada escena es UNA imagen:
 {"id":"s1","imageId":"img-1","imgW":1920,"imgH":1080,"prompt":"cómo es esta imagen","medio":"still",
+ "plan":{/* solo si medio NO es still; ver el bloque del plan */},
  "vfx":[/* anclas de la FOTO: portal, fuego, humo… */],"shots":[...]}
 
 Cada toma es un encuadre sobre esa imagen:
@@ -103,6 +122,7 @@ Reglas que NO puedes saltarte:
 - Escribe los diálogos en el idioma del encargo del usuario, con frases que se puedan narrar en voz alta.
 - "quien" dice quién habla: cadena vacía para el narrador, y el nombre del personaje cuando habla él. Usa el mismo nombre siempre para el mismo personaje.
 - Varias tomas por escena quedan mejor que una: un plano abierto y un primer plano sobre la misma imagen (mismos vfx de escena, distinto encuadre).
+- Y que NO todas las escenas lleven el mismo número de tomas: alterna escenas de una sola toma larga con escenas de dos o tres. Un capítulo donde cada escena tiene exactamente dos tomas se ve como una plantilla.
 
 REPARTO Y ESTILO (lo que hace que el video parezca uno solo):
 - "reparto": un objeto nombre → descripción física, con TODOS los personajes que se ven en alguna escena. Ejemplo: {"Elena":"mujer mexicana de unos 30, pelo negro corto, cazadora vaquera azul, cicatriz en la ceja izquierda"}.
@@ -131,14 +151,24 @@ LO QUE SE NARRA (esto es lo que más se rompe, léelo dos veces):
 - La primera frase del capítulo entra directamente en la historia, como si el video ya llevara un rato.
 - La última frase cierra la historia por dentro. No se despide de nadie.
 
-MÚSICA:
+MÚSICA Y SONIDO:
 - La música baja SOLA mientras se narra (a un tercio), así que el volumen que pongas es el de los silencios entre frases, no el que compite con la voz.
-- Elige UNA pista de la biblioteca y ponla en "audioLayers": {"id":"m1","kind":"music","audioId":"lib:<id>","name":"<título>","volume":0.12,"startSec":0,"loop":true}.
-- volume entre 0.08 y 0.15. NUNCA 0.3 ni más: la biblioteca está masterizada alta y a 0.3 tapa la narración.
+- Elige UNA pista de la biblioteca y ponla en "audioLayers": {"id":"m1","kind":"music","audioId":"lib:<id>","name":"<título>","volume":0.08,"startSec":0,"loop":true}.
+- __REGLA_VOLUMEN__
 - UNA sola capa de música en todo el capítulo. Dos suenan sumadas (+3 dB) y se comen la voz: si la historia cambia de tono, cambia de pista por escena (abajo), no añadas otra global.
-- Si una escena pide su propia música, va como sonido en bucle de su PRIMERA toma —{"audioId":"lib:<id>","loop":true,"volume":0.12}— y se corta al empezar la escena siguiente con audioOverrides:[{"sfxId":"<id>","stop":true,"volume":null}]. Eso es mejor que una cama global: cambia con la historia.
+- Si una escena pide su propia música, va como sonido en bucle de su PRIMERA toma —{"audioId":"lib:<id>","loop":true,"volume":0.06}— y se corta al empezar la escena siguiente con audioOverrides:[{"sfxId":"<id>","stop":true,"volume":null}]. Eso es mejor que una cama global: cambia con la historia.
+- Los sonidos de shots[].sfx se reparten por el mismo rango: el golpe más gordo del capítulo arriba del todo, un ambiente de fondo abajo. Si todo lleva el mismo número, la mezcla sale plana.
 
 Devuelve el JSON y nada más: sin explicaciones ni vallas de código.`;
+
+/**
+ * La regla del volumen se escribe UNA vez, en sonido.ts, y se pega aquí.
+ *
+ * Estaba copiada a mano en el prompt, en el catálogo largo y en el compacto;
+ * el día que se cambió el rango, dos de las tres copias siguieron diciendo el
+ * número viejo y el modelo hacía caso a la que le pillaba más cerca.
+ */
+const INSTRUCCIONES = INSTRUCCIONES_BASE.replace("__REGLA_VOLUMEN__", reglaDeVolumen());
 
 export async function POST(req: Request) {
   const user = await getCurrentUser();
@@ -184,7 +214,17 @@ export async function POST(req: Request) {
 
   // La compacta: dice lo mismo con muchos menos tokens, y los paga el usuario
   // en cada generación.
-  const ref = referenciaCompacta();
+  //
+  // Barajada, además. El catálogo iba siempre en el mismo orden y el modelo
+  // tiraba de lo primero que encajaba, así que de treinta y tantos efectos
+  // salían siempre los mismos cuatro. Barajar no cuesta un token y abre el
+  // reparto solo.
+  const semilla = semillaDeTanda();
+  const ref = referenciaCompacta(semilla);
+  const reparto = admin && parsed.data.mezcla
+    ? repartoPedido(escenas, paleta, parsed.data.mezcla)
+    : repartoDeMedios(escenas, paleta, semilla);
+  const sugerencias = sugerenciasDeTanda(semilla);
   let bruto: string;
   let committed = false;
   try {
@@ -210,6 +250,13 @@ export async function POST(req: Request) {
                   : "Es APAISADO, para pantalla ancha.") },
             { role: "system", content: `Catálogo de efectos y reglas del montaje:\n${JSON.stringify(ref)}` },
             { role: "system", content: instruccionesPaleta(paleta) },
+            // El reparto va en su propio mensaje y con números cerrados: es la
+            // única forma que hemos encontrado de que no salgan siempre dos.
+            { role: "system", content: instruccionesReparto(reparto) },
+            { role: "system", content: instruccionesPlan({
+              apng: paleta.apng, paralaje: paleta.paralaje, sprites: paleta.sprites,
+            }) },
+            { role: "system", content: instruccionesVariedad(sugerencias, paleta.vfx, paleta.musica) },
             { role: "user", content: `Haz un capítulo de ${escenas} escenas sobre esto:\n\n${prompt}` },
           ],
         }),
@@ -241,7 +288,11 @@ export async function POST(req: Request) {
 
     // Se pasa por el mismo normalizador que la importación a mano: lo que venga
     // raro se endereza o se cae aquí, no dentro del proyecto del usuario.
-    const project = migrateProject(crudo?.project ?? crudo);
+    //
+    // La paleta entra CON el proyecto y no después: el plan de cada escena se
+    // recorta con ella al normalizar, así que ponerla luego dejaba pasar una
+    // técnica de sprites en un capítulo que los tiene apagados.
+    const project = migrateProject({ ...(crudo?.project ?? crudo), paleta });
     // El formato lo pone el servidor, no el modelo: se le pide, pero si contesta
     // otro el usuario acabaría con un vídeo de otra forma sin enterarse, y los
     // encuadres ya vendrían hechos para la equivocada.
@@ -263,6 +314,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "La IA no devolvió ninguna escena" }, { status: 502 });
     }
 
+    // Que el reparto de medios sea el que se pidió, no el que salió.
+    //
+    // Se le manda un número exacto y aun así puede llegar otro. Corregirlo aquí
+    // es lo que convierte «que haya variedad» en algo que pasa de verdad; sin
+    // esto, la instrucción es una sugerencia y el modelo se planta en dos fotos
+    // vivas y ni un paralaje, capítulo tras capítulo.
+    //
+    // Se recuenta contra las escenas QUE HAY, no contra las que se pidieron: el
+    // modelo puede devolver cinco donde se le pidieron seis, y aplicar un
+    // reparto de seis sobre cinco escenas deja el capítulo sin ninguna plana.
+    const repartoReal = project.scenes.length === escenas
+      ? reparto
+      : (admin && parsed.data.mezcla
+        ? repartoPedido(project.scenes.length, paleta, parsed.data.mezcla)
+        : repartoDeMedios(project.scenes.length, paleta, semilla));
+    const medios = aplicarReparto(project.scenes, repartoReal, paleta);
+    // Y que cada escena tenga el plan de SU medio: el reparto acaba de mover
+    // escenas de un medio a otro y las movidas se quedarían sin plan —o con el
+    // del medio anterior—, que es tanto como no poder montarlas.
+    asegurarPlanes(project.scenes, { sprites: paleta.sprites });
+
     // Red de seguridad: el prompt PIDE que no meta frases de presentador, pero
     // pedir no es garantizar. Lo que se cuela aquí se acabaría oyendo en el vídeo
     // («¿te gustó cómo quedó?»), y para entonces ya está pagado.
@@ -275,6 +347,9 @@ export async function POST(req: Request) {
     const { quitadas } = prepararCapituloGenerado(project);
     asegurarVocesCapitulo(project);
     const musica = ajustarMusicaCapitulo(project);
+    // Lo último que se toca del audio: la música ya está colocada y aquí solo
+    // se comprueba que nada de lo que suena se coma la narración.
+    const sonido = acotarSonidosCapitulo(project);
 
     committed = true;
     return NextResponse.json({
@@ -285,10 +360,17 @@ export async function POST(req: Request) {
       musica,
       // Y con las fichas que se han pegado a las escenas.
       consistencia,
+      // Y con los sonidos que se han bajado para que no tapen la voz.
+      sonido,
+      // Qué medios han salido y cuáles se han tenido que cuadrar.
+      medios: { ...repartoReal, ...medios },
       name: typeof crudo?.name === "string" ? crudo.name : "Capítulo generado",
       project,
-      // Para que la interfaz pueda decir cuántas imágenes va a pedir.
-      imagenes: project.scenes.length,
+      // Para que la interfaz pueda decir cuántas imágenes va a pedir. Ya no es
+      // «una por escena»: una foto viva de ocho cuadros son ocho, y un paralaje
+      // de cinco láminas con una viva son once.
+      imagenes: imagenesDelCapitulo(project.scenes),
+      escenas: project.scenes.length,
       cupo: reserva.cupo,
     });
   } finally {

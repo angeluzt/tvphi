@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { esAdminHistorias } from "@/lib/story/cupo";
 import {
   Sparkles, Mic, Image as ImageIcon, Music, Move, Wand2, Download, Layers, FlaskConical,
+  Clapperboard,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -121,14 +122,21 @@ export default async function HomePage() {
           <span className="chip bg-gold/15 text-gold">
             <FlaskConical className="h-3.5 w-3.5" /> En pruebas · solo tú ves esto
           </span>
-          <h2 className="mt-3 text-xl font-bold">Escenas por capas con paralaje</h2>
+          <h2 className="mt-3 text-xl font-bold">Historias que se mueven</h2>
           <p className="mt-2 max-w-2xl text-muted">
-            La IA dibuja cada capa por separado y se montan con profundidad, para que el fondo y el
-            primer plano no se muevan igual. Sin terminar.
+            La IA reparte las escenas entre foto plana, <b className="text-fg">foto viva</b> —la
+            imagen respira, o le cruzan actores recortados— y{" "}
+            <b className="text-fg">2.5D</b>, con la escena partida en láminas con profundidad. Lo
+            monta todo sola a partir del encargo. Sin terminar.
           </p>
-          <Link href="/lab" className="btn-ghost mt-4">
-            <FlaskConical className="h-4 w-4 text-gold" /> Abrir el laboratorio
-          </Link>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link href="/lab/historias" className="btn-brand">
+              <Clapperboard className="h-4 w-4" /> Abrir las historias en pruebas
+            </Link>
+            <Link href="/lab" className="btn-ghost">
+              <FlaskConical className="h-4 w-4 text-gold" /> Laboratorio y taller de sprites
+            </Link>
+          </div>
         </section>
       )}
     </div>

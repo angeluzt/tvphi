@@ -6,7 +6,7 @@ import { ModelosIa } from "./modelos-ia";
 import { pedirJsonCrudo } from "@/lib/pedir-json";
 import { ASPECTS, type Aspect } from "@/lib/story/model";
 import type { CupoHistorias } from "./story-app";
-import { PaletaIaMandos } from "./paleta-ia";
+import { PaletaIaMandos, type MezclaMedios } from "./paleta-ia";
 import { PALETA_VACIA, type PaletaIa } from "@/lib/story/paleta";
 
 // Crear una historia con IA.
@@ -38,7 +38,14 @@ export function IaPanel({
   // apaisado, así que para TikTok o Reels no había manera: había que sacar una
   // copia después y rehacer todos los encuadres.
   const [formato, setFormato] = useState<Aspect>("16:9");
-  const [paleta, setPaleta] = useState<PaletaIa>(PALETA_VACIA);
+  // En la página de pruebas la paleta viene ENCENDIDA: es a lo que se entra
+  // ahí, y dejarla apagada obliga a marcar cuatro casillas antes de cada
+  // capítulo para ver lo único que esa página tiene de distinto.
+  const [paleta, setPaleta] = useState<PaletaIa>(
+    lab ? { ...PALETA_VACIA, paralaje: true, apng: true, sprites: true } : PALETA_VACIA,
+  );
+  // null = el reparto de medios lo echa a suertes la app.
+  const [mezcla, setMezcla] = useState<MezclaMedios | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [abierto, setAbierto] = useState(true);
@@ -82,6 +89,7 @@ export function IaPanel({
           // Solo el admin manda modelo; el servidor ignora el del resto.
           modelo: esAdmin ? (mods.texto.trim() || undefined) : undefined,
           paleta: lab ? paleta : undefined,
+          mezcla: lab && mezcla ? mezcla : undefined,
         }),
       });
       if (j.cupo) onCupo?.(j.cupo);
@@ -98,7 +106,20 @@ export function IaPanel({
       }
       if (j.musica?.bajadas) arreglos.push("música bajada, tapaba la voz");
       if (j.musica?.movidas) arreglos.push(`${j.musica.movidas} música a su escena`);
-      setAviso(`Listo · ${j.imagenes} escenas`
+      if (j.sonido?.tocados) {
+        arreglos.push(`${j.sonido.tocados} ${j.sonido.tocados === 1 ? "sonido" : "sonidos"} al rango bueno`);
+      }
+      // Qué medios han salido. Es lo que el usuario está mirando cuando dice
+      // «otra vez dos escenas vivas»: hasta ahora no se decía en ningún sitio.
+      const m = j.medios;
+      const medios = m && (m.apng || m.paralaje)
+        ? [m.apng ? `${m.apng} foto${m.apng === 1 ? "" : "s"} viva${m.apng === 1 ? "" : "s"}` : "",
+          m.paralaje ? `${m.paralaje} en 2.5D` : ""].filter(Boolean).join(" · ")
+        : "";
+      if (m?.ascendidas || m?.degradadas) arreglos.push("reparto de medios cuadrado");
+      setAviso(`Listo · ${j.escenas ?? j.imagenes} escenas`
+        + (medios ? ` · ${medios}` : "")
+        + ` · ${j.imagenes} ${j.imagenes === 1 ? "imagen" : "imágenes"} por dibujar`
         + (arreglos.length ? ` · ${arreglos.join(" · ")}` : ""));
     } catch (e: any) { setAviso(e?.message ?? "No se pudo generar"); }
     setOcupado(false);
@@ -180,7 +201,15 @@ export function IaPanel({
             </p>
           </div>
 
-          {lab && <PaletaIaMandos valor={paleta} onCambio={setPaleta} />}
+          {lab && (
+            <PaletaIaMandos
+              valor={paleta}
+              onCambio={setPaleta}
+              escenas={escenas}
+              mezcla={mezcla}
+              onMezcla={setMezcla}
+            />
+          )}
 
           <label className="block">
             <span className="text-xs text-muted">Escenas: {escenas}</span>

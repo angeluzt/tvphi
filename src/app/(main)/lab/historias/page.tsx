@@ -62,9 +62,12 @@ export default async function LabHistoriasPage({
               que hagas aquí se guarda ahí.
             </p>
             <p className="mt-2 text-[11px] text-muted">
-              Lo nuevo: paleta al crear (2.5D, foto viva APNG, sprites), convertir cada
-              escena, retocar con un prompt y animar una lámina. Son{" "}
-              <b className="text-fg">tus capítulos de verdad</b>, los mismos que en Historias.
+              Lo nuevo: la IA reparte las escenas entre <b className="text-fg">foto plana</b>,{" "}
+              <b className="text-fg">foto viva</b> —repintando la imagen cuadro a cuadro, o
+              dejándola quieta y cruzándole actores recortados— y{" "}
+              <b className="text-fg">2.5D</b>, con láminas que además pueden respirar. Decide
+              cuántas de cada cosa, con qué técnica y qué se mueve, y lo monta todo de una vez.
+              Puedes cambiarle el medio a cualquier escena antes de gastar.
             </p>
           </div>
         </div>

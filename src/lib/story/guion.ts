@@ -13,6 +13,8 @@
 // historia es peor que dejar pasar una de relleno, porque lo segundo se ve al
 // escuchar y lo primero deja un agujero que nadie nota hasta el final.
 
+import { VOL_SONIDO_MAX, VOL_SONIDO_MEDIO } from "./sonido";
+
 // Frases que no pertenecen a ninguna historia: son de presentador de vídeo.
 // Solo cosas que NUNCA diría un narrador dentro de un cuento.
 const META = [
@@ -188,10 +190,15 @@ export function prepararCapituloGenerado(project: any): { quitadas: string[]; ri
 //
 // Dos cosas se enderezan aquí:
 //   · el volumen, porque a 0.3 la biblioteca (masterizada a -14 dBFS) tapa la
-//     narración; el rango bueno es 0.08-0.15 y la música ya baja sola al narrar.
+//     narración; el rango bueno es el de sonido.ts y la música ya baja sola al
+//     narrar.
 //   · más de una cama global, porque suenan sumadas (+3 dB) y se comen la voz.
-export const VOL_MUSICA_MAX = 0.18;
-export const VOL_MUSICA = 0.12;
+//
+// El tope sale de sonido.ts y no de aquí: la música no es un caso aparte, es
+// una cosa más que suena por debajo de la voz. Tenerlo en dos sitios era la
+// forma segura de que un día dijeran cosas distintas.
+export const VOL_MUSICA_MAX = VOL_SONIDO_MAX;
+export const VOL_MUSICA = VOL_SONIDO_MEDIO;
 
 export function ajustarMusicaCapitulo(project: any) {
   const capas = project.audioLayers ?? [];

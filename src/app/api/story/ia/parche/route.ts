@@ -6,6 +6,7 @@ import {
 } from "@/lib/story/credenciales";
 import { esAdminHistorias, bloqueoDeGasto, respuestaBloqueo } from "@/lib/story/cupo";
 import { migrateProject } from "@/lib/story/model";
+import { acotarSonidosCapitulo, reglaDeVolumen } from "@/lib/story/sonido";
 
 // Parchear UNA pieza del capítulo con un prompt, sin rehacerlo.
 //
@@ -36,7 +37,10 @@ REGLA PRINCIPAL: conserva TODO lo que la instrucción no menciona.
 - Coordenadas 0..1. Efectos solo con ids del catálogo que ya aparezcan o que la instrucción pida con un id conocido.
 - Diálogos: el campo "text" se lee en voz alta. Nada de presentador, saludos ni acotaciones.
 - No inventes imageId ni audioId nuevos: los archivos ya existen. Si hay que quitar un sonido, quita el nodo; no dejes un id vacío.
-- Volúmenes 0..1. gapSec ≥ 0. durationSec > 0.`;
+- gapSec ≥ 0. durationSec > 0.
+- __REGLA_VOLUMEN__`;
+
+const REGLA_CON_VOLUMEN = REGLA.replace("__REGLA_VOLUMEN__", reglaDeVolumen());
 
 const FORMA: Record<(typeof GRANOS)[number], string> = {
   capitulo: "Recibes un proyecto {aspect, scenes, audioLayers, narrationVolume, voices, paleta}. Devuelves el proyecto entero.",
@@ -77,7 +81,7 @@ export async function POST(req: Request) {
         model: modelo,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: `${REGLA}\n\n${FORMA[parsed.data.grano]}` },
+          { role: "system", content: `${REGLA_CON_VOLUMEN}\n\n${FORMA[parsed.data.grano]}` },
           { role: "user", content: `Instrucción:\n${parsed.data.instruccion}\n\nJSON actual:\n${JSON.stringify(parsed.data.base)}` },
         ],
       }),
@@ -106,8 +110,20 @@ export async function POST(req: Request) {
     if (!project.scenes.length) {
       return NextResponse.json({ error: "El parche dejó el capítulo sin escenas." }, { status: 502 });
     }
-    return NextResponse.json({ ok: true, pieza: project });
+    const sonido = acotarSonidosCapitulo(project);
+    return NextResponse.json({ ok: true, pieza: project, sonido });
   }
 
-  return NextResponse.json({ ok: true, pieza: data });
+  // Una escena o una toma parcheadas traen sus propios sonidos, y un parche
+  // que solo tocaba un efecto puede llegar con un volume de 0.8 arrastrado del
+  // ejemplo. Se envuelve en la forma que espera el acotador y se corrige: es la
+  // misma regla que en la generación, y aquí también acaba en el vídeo.
+  const envoltorio = parsed.data.grano === "escena"
+    ? { scenes: [data as any] }
+    : parsed.data.grano === "toma"
+      ? { scenes: [{ shots: [data as any] }] }
+      : null;
+  const sonido = envoltorio ? acotarSonidosCapitulo(envoltorio) : { tocados: 0 };
+
+  return NextResponse.json({ ok: true, pieza: data, sonido });
 }

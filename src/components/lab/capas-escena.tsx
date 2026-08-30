@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Layers3, Trash2, Upload, Wand2, Loader2, AlertTriangle, ChevronUp, ChevronDown, Repeat } from "lucide-react";
 import { nanoid } from "nanoid";
 import type { EscenaCapa } from "@/lib/story/model";
+import { MAX_LAMINAS_VIVAS, type PlanParalaje } from "@/lib/story/plan-medios";
 import { generarLaminasEscena } from "@/lib/lab/generar-laminas";
 import { RangoPreciso } from "./rango-preciso";
 
@@ -21,6 +22,9 @@ export function CapasEscena({
   capas,
   prompt,
   formato,
+  plan,
+  conSprites = false,
+  calidad,
   onCambio,
   onEscenaViva,
   onGuardarImagen,
@@ -31,6 +35,14 @@ export function CapasEscena({
   /** La descripción de la escena, que es de donde sale el mapa. */
   prompt: string;
   formato: "16:9" | "9:16" | "1:1";
+  /**
+   * Lo que la IA planeó para el paralaje de ESTA escena: cuántas láminas y
+   * cuáles respiran. Sin plan, se generan las de siempre y quietas.
+   */
+  plan?: PlanParalaje;
+  /** Si además se pueden pedir actores animados sobre las láminas. */
+  conSprites?: boolean;
+  calidad?: "low" | "medium" | "high";
   onCambio: (c: EscenaCapa[]) => void;
   /**
    * Lo demás que la IA escribe junto al mapa: la cola de cámara y los efectos.
@@ -51,7 +63,12 @@ export function CapasEscena({
   // bloqueados, y esto es un aviso de después, no un «estoy trabajando».
   const [nota, setNota] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nCapas, setNCapas] = useState(4);
+  const [nCapas, setNCapas] = useState(plan?.capas ?? 4);
+  // Los actores solo se piden si la paleta los deja Y el plan los pidió; se
+  // puede desmarcar antes de generar, que cada uno es una imagen.
+  const [conActores, setConActores] = useState(conSprites && !!plan?.sprites);
+  // Y las láminas vivas: el plan dice cuáles, aquí solo se decide si se pagan.
+  const [animarVivas, setAnimarVivas] = useState(!!plan?.vivas.length);
 
   const trabajando = !!paso;
 
@@ -64,6 +81,10 @@ export function CapasEscena({
     try {
       const hecho = await generarLaminasEscena({
         prompt, formato, nCapas,
+        pistasVivas: animarVivas ? (plan?.vivas ?? []) : [],
+        topeVivas: animarVivas ? Math.min(MAX_LAMINAS_VIVAS, plan?.vivas.length || 1) : 0,
+        conSprites: conActores,
+        calidad,
         onPaso: setPaso,
         onGuardarImagen,
       });
@@ -72,9 +93,20 @@ export function CapasEscena({
         onEscenaViva?.({ camara: hecho.camara, efectos: hecho.efectos });
       }
       setPaso(null);
-      setNota(hecho.guias
-        ? `${hecho.capas.length} capas listas. ${hecho.guias} de reserva no se mandó a dibujar: es una guía y no se ha pagado.`
-        : null);
+      const notas: string[] = [];
+      if (hecho.guias) {
+        notas.push(`${hecho.guias} capa de reserva no se mandó a dibujar: es una guía y no se ha pagado.`);
+      }
+      if (hecho.vivas.length) {
+        // Se dice CUÁLES, no cuántas: animar la lámina equivocada son cinco
+        // imágenes tiradas y el usuario tiene que poder verlo de un vistazo.
+        const nombres = hecho.vivas
+          .map((id) => hecho.capas.find((c) => c.id === id)?.nombre)
+          .filter(Boolean);
+        notas.push(`Para animar: ${nombres.join(", ")}. Dale a «Animar lámina» en cada una.`);
+      }
+      notas.push(...hecho.avisos);
+      setNota(notas.length ? `${hecho.capas.length} capas listas. ${notas.join(" ")}` : null);
       if (hecho.fallos.length) {
         setError(`Salieron ${hecho.capas.length} de ${hecho.capas.length + hecho.fallos.length}. No salieron: ${hecho.fallos.join(" · ")}`);
       }
@@ -123,6 +155,21 @@ export function CapasEscena({
             {[3, 4, 5, 6].map((n) => <option key={n} value={n}>{n} capas</option>)}
           </select>
         </label>
+        {conSprites && (
+          <label className="flex items-center gap-1 text-[10px] text-muted" title="Actores recortados encima de las láminas. Una imagen cada uno.">
+            <input type="checkbox" checked={conActores} disabled={trabajando}
+              onChange={(e) => setConActores(e.target.checked)} />
+            actores
+          </label>
+        )}
+        {!!plan?.vivas.length && (
+          <label className="flex items-center gap-1 text-[10px] text-muted"
+            title={`Animar ${plan.vivas.join(", ")}. Cinco imágenes por lámina.`}>
+            <input type="checkbox" checked={animarVivas} disabled={trabajando}
+              onChange={(e) => setAnimarVivas(e.target.checked)} />
+            láminas vivas
+          </label>
+        )}
         <button onClick={() => void generar()} disabled={trabajando} className="btn-brand text-xs">
           {trabajando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
           Generar con IA
