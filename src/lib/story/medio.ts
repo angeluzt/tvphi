@@ -13,7 +13,25 @@ export interface LoopImagen {
 
 export const FPS_LOOP_DEFECTO = 6;
 export const MIN_FOTOS_LOOP = 2;
-export const MAX_FOTOS_LOOP = 12;
+/**
+ * Cuántos cuadros lleva una foto viva si nadie pide otra cosa.
+ *
+ * TRES, y no seis. Lo que se mueve en una foto viva es casi siempre fuego,
+ * agua, humo o una tela: cosas sin pose, donde el ojo no sigue una trayectoria
+ * sino una textura que cambia. Con tres cuadros en bucle eso ya se lee como
+ * movimiento, y cada cuadro de más es una imagen entera pagada —seis cuadros
+ * son el DOBLE de factura por un movimiento que casi nadie distingue—.
+ *
+ * Subir de aquí es una decisión del usuario, no del sistema: se pide en el
+ * prompt o se sube con la barra de la escena.
+ */
+export const FOTOS_LOOP_DEFECTO = 3;
+/**
+ * Y el techo. Diez es mucho más de lo que pide un bucle de textura; está para
+ * quien lo pida a propósito —un oleaje largo, un ciclo de humo que no se
+ * quiere ver repetir— sabiendo que son diez imágenes de esa escena.
+ */
+export const MAX_FOTOS_LOOP = 10;
 
 export function normalizarLoop(raw: unknown): LoopImagen | undefined {
   if (!raw || typeof raw !== "object") return undefined;

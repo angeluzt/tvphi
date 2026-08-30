@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { escenasPendientes, imagenesPendientes } from "./montar-medios";
 import type { StoryScene } from "./model";
+import { FOTOS_LOOP_DEFECTO } from "./medio";
 
 const escena = (p: Partial<StoryScene>): StoryScene => ({
   id: "s1", imageId: "img-1", imgW: 1536, imgH: 1024, shots: [], vfx: [], ...p,
@@ -57,7 +58,7 @@ describe("imagenesPendientes", () => {
   it("suma láminas y láminas vivas del paralaje", () => {
     expect(imagenesPendientes([
       escena({ medio: "paralaje", plan: { paralaje: { capas: 4, vivas: ["agua"], sprites: false } } }),
-    ])).toBe(4 + 5);
+    ])).toBe(4 + (FOTOS_LOOP_DEFECTO - 1));
   });
 
   it("un capítulo ya montado no pide nada", () => {

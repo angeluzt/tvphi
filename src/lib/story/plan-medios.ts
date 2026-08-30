@@ -1,5 +1,5 @@
 import type { MedioEscena } from "./paleta";
-import { FPS_LOOP_DEFECTO, MAX_FOTOS_LOOP, MIN_FOTOS_LOOP } from "./medio";
+import { FOTOS_LOOP_DEFECTO, FPS_LOOP_DEFECTO, MAX_FOTOS_LOOP, MIN_FOTOS_LOOP } from "./medio";
 import type {
   AccionSprite, AnclajeSprite, DireccionSprite, VistaSprite,
 } from "@/lib/lab/biblioteca";
@@ -171,7 +171,7 @@ export function normalizarPlanMedio(
         viva: {
           tecnica: "cuadros",
           movimiento: texto(v.movimiento, 400) || undefined,
-          fotogramas: Math.round(acotar(num(v.fotogramas, 6), MIN_FOTOS_LOOP, MAX_FOTOS_LOOP)),
+          fotogramas: Math.round(acotar(num(v.fotogramas, FOTOS_LOOP_DEFECTO), MIN_FOTOS_LOOP, MAX_FOTOS_LOOP)),
           fps: Math.round(acotar(num(v.fps, FPS_LOOP_DEFECTO), 1, 16)),
           elementos: [],
         },
@@ -181,7 +181,7 @@ export function normalizarPlanMedio(
       viva: {
         tecnica,
         movimiento: texto(v.movimiento, 400) || undefined,
-        fotogramas: Math.round(acotar(num(v.fotogramas, 6), MIN_FOTOS_LOOP, MAX_FOTOS_LOOP)),
+        fotogramas: Math.round(acotar(num(v.fotogramas, FOTOS_LOOP_DEFECTO), MIN_FOTOS_LOOP, MAX_FOTOS_LOOP)),
         fps: Math.round(acotar(num(v.fps, FPS_LOOP_DEFECTO), 1, 16)),
         elementos,
       },
@@ -214,7 +214,7 @@ export function normalizarPlanMedio(
 export function imagenesDelPlan(medio: MedioEscena, plan: PlanMedio | undefined): number {
   if (medio === "apng") {
     const v = plan?.viva;
-    if (!v) return 1 + 5;
+    if (!v) return 1 + (FOTOS_LOOP_DEFECTO - 1);
     // Con sprites: la foto + UNA hoja por actor. Con cuadros: la foto + N-1
     // repintados enteros. Ahí está la diferencia de precio, y es enorme.
     return v.tecnica === "sprites"
@@ -225,8 +225,9 @@ export function imagenesDelPlan(medio: MedioEscena, plan: PlanMedio | undefined)
     const p = plan?.paralaje;
     const capas = p?.capas ?? 4;
     const vivas = Math.min(p?.vivas.length ?? 0, capas, MAX_LAMINAS_VIVAS);
-    // Cada lámina viva son 5 repintados suyos, aparte de la lámina misma.
-    return 1 + capas + vivas * 5;
+    // Cada lámina viva son (cuadros - 1) repintados suyos, aparte de la
+    // lámina misma, que ya va contada en `capas`.
+    return 1 + capas + vivas * (FOTOS_LOOP_DEFECTO - 1);
   }
   return 1;
 }
@@ -250,7 +251,7 @@ export function resumenPlan(medio: MedioEscena, plan: PlanMedio | undefined): st
     if (v?.tecnica === "sprites") {
       return `Foto viva con ${v.elementos.length} ${v.elementos.length === 1 ? "actor" : "actores"} · ${coste}`;
     }
-    return `Foto viva de ${v?.fotogramas ?? 6} cuadros · ${coste}`;
+    return `Foto viva de ${v?.fotogramas ?? FOTOS_LOOP_DEFECTO} cuadros · ${coste}`;
   }
   if (medio === "paralaje") {
     const p = plan?.paralaje;
@@ -318,9 +319,11 @@ export function instruccionesPlan(opciones: {
       "FOTO VIVA — \"medio\":\"apng\". Hay DOS técnicas y elegir bien es la mitad del resultado:",
       "",
       "· \"cuadros\": la foto entera se vuelve a pintar N veces con un cambio mínimo cada vez. Es para cuando lo que se mueve es TODA la imagen o algo sin forma fija: agua, fuego, humo, niebla, lluvia sobre un charco, una tela al viento, alguien respirando.",
-      "  plan: {\"viva\":{\"tecnica\":\"cuadros\",\"movimiento\":\"qué se mueve, EN INGLÉS y concreto\",\"fotogramas\":6,\"fps\":6}}",
-      `  fotogramas de ${MIN_FOTOS_LOOP} a ${MAX_FOTOS_LOOP} y fps de 1 a 16, y elígelos según lo que pasa: un oleaje largo pide 8-10 cuadros a 8 fps; el parpadeo de una vela, 3-4 cuadros a 4 fps. NO pongas 6 y 6 en todas.`,
-      "  CADA fotograma cuesta una imagen. Diez cuadros son diez imágenes de esa escena: úsalos cuando el movimiento lo merezca.",
+      `  plan: {"viva":{"tecnica":"cuadros","movimiento":"qué se mueve, EN INGLÉS y concreto","fotogramas":${FOTOS_LOOP_DEFECTO},"fps":6}}`,
+      `  "fotogramas": ${FOTOS_LOOP_DEFECTO} SIEMPRE, salvo que el encargo del usuario pida otra cosa. Con ${FOTOS_LOOP_DEFECTO} cuadros en bucle, el fuego, el agua o el humo ya se leen como movimiento: lo que cambia es una textura, no una pose, y el ojo no necesita más.`,
+      `  Solo sube de ${FOTOS_LOOP_DEFECTO} (hasta ${MAX_FOTOS_LOOP}) si el usuario lo ha pedido en su encargo —"movimiento muy fluido", "un oleaje largo", "que no se note el bucle"— o si lo que se mueve recorre de verdad un camino (una ola que rompe entera, una bandera de punta a punta). No lo subas por tu cuenta porque la escena te parezca importante.`,
+      `  CADA fotograma cuesta UNA imagen entera. ${FOTOS_LOOP_DEFECTO} cuadros son ${FOTOS_LOOP_DEFECTO} imágenes; ${MAX_FOTOS_LOOP} son ${MAX_FOTOS_LOOP}, más del triple, por un movimiento que casi nadie distingue.`,
+      "  El fps SÍ lo eliges tú, de 1 a 16, según lo que pasa: una vela parpadea rápido (8-10 fps), una bruma se mueve despacio (3-4 fps). Ahí es donde se nota que has mirado la escena.",
     );
     if (opciones.sprites) {
       lineas.push(
@@ -357,7 +360,7 @@ export function instruccionesPlan(opciones: {
 
   lineas.push(
     "",
-    "REGLA GENERAL DEL PLAN: no repitas los mismos números escena tras escena. Si dos fotos vivas del capítulo llevan exactamente los mismos fotogramas, el mismo fps y el mismo movimiento, es que no has mirado lo que pasa en cada una.",
+    "REGLA GENERAL DEL PLAN: los fotogramas SÍ se repiten —son fijos salvo que el usuario pida otra cosa—, pero el fps y el «movimiento» no. Si dos fotos vivas del capítulo llevan el mismo fps y describen el movimiento igual, es que no has mirado lo que pasa en cada una.",
   );
   return lineas.join("\n");
 }

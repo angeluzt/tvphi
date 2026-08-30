@@ -34,7 +34,8 @@ import { MediosEscena } from "@/components/story/medios-escena";
 import { ParcheIa } from "@/components/story/parche-ia";
 import { generarLoopDesdeStill, pedirFotograma, blobAPngDataUrl } from "@/lib/story/generar-loop";
 import { blobDeUrlDeImagen } from "@/lib/lab/png-base64";
-import { FPS_LOOP_DEFECTO } from "@/lib/story/medio";
+import { FOTOS_LOOP_DEFECTO, FPS_LOOP_DEFECTO } from "@/lib/story/medio";
+import { storyPath } from "@/lib/story/ruta";
 import { montarMediosCapitulo, escenasPendientes, imagenesPendientes } from "@/lib/story/montar-medios";
 import { montarVivaConSprites } from "@/lib/story/viva-sprites";
 import { normalizarPlanMedio, resumenPlan } from "@/lib/story/plan-medios";
@@ -72,22 +73,13 @@ export type CupoHistorias = {
 // para no perder trabajo, y bastante largo para no guardar en cada tecla.
 const AUTOGUARDADO = 8000;
 
-// La vista (inicio / serie / capítulo) vive en la URL para que un reload no
-// te mande siempre al principio. replaceState: sin recargar la app.
-function storyPath(opts: { id?: string | null; serie?: string | null } = {}) {
-  const q = new URLSearchParams();
-  if (opts.id) q.set("id", opts.id);
-  else if (opts.serie) q.set("serie", opts.serie);
-  const s = q.toString();
-  return s ? `/story?${s}` : "/story";
-}
 /**
  * Deja la URL a juego con lo que se está viendo, SIN añadir un paso al
  * historial. Para cambios que no son «entrar» en ningún sitio.
  */
 function syncStoryUrl(opts: { id?: string | null; serie?: string | null } = {}) {
   if (typeof window === "undefined") return;
-  const next = storyPath(opts);
+  const next = storyPath(opts, window.location.pathname);
   const cur = window.location.pathname + window.location.search;
   if (cur !== next) window.history.replaceState(window.history.state, "", next);
 }
@@ -104,9 +96,10 @@ function entrarStoryUrl(opts: { id?: string | null; serie?: string | null } = {}
   if (typeof window === "undefined") return;
   // Se empuja AUNQUE la dirección sea la misma. Lo que se quiere es añadir un
   // paso, no cambiar la barra: un capítulo nuevo todavía no tiene id, así que
-  // su URL sigue siendo /story, y comparando direcciones no se creaba ninguna
-  // entrada — atrás se saltaba el editor entero y volvía al inicio.
-  window.history.pushState(window.history.state, "", storyPath(opts));
+  // su URL sigue siendo la de la sección a secas, y comparando direcciones no
+  // se creaba ninguna entrada — atrás se saltaba el editor entero y volvía al
+  // inicio.
+  window.history.pushState(window.history.state, "", storyPath(opts, window.location.pathname));
 }
 
 // Rectángulo con la forma real del video, para reconocerlo de un vistazo.
@@ -1531,7 +1524,7 @@ export function StoryApp({
         still,
         prompt: sc.prompt || "the same scene, tiny natural motion",
         formato: formatoDeProyecto(),
-        n: plan?.fotogramas ?? 6,
+        n: plan?.fotogramas ?? FOTOS_LOOP_DEFECTO,
         fps: plan?.fps ?? FPS_LOOP_DEFECTO,
         calidad: calidadImg,
         movimiento: plan?.movimiento,
@@ -1635,7 +1628,7 @@ export function StoryApp({
         still,
         prompt: `${sc.prompt || capa.nombre}. Layer: ${capa.nombre}. Tiny motion in this layer only.`,
         formato: formatoDeProyecto(),
-        n: 6,
+        n: FOTOS_LOOP_DEFECTO,
         fps: FPS_LOOP_DEFECTO,
         calidad: calidadImg,
         onPaso: (s) => setStatus(`${capa.nombre}: ${s}`),
