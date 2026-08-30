@@ -3,6 +3,7 @@ import {
   imagenesDelCapitulo, imagenesDelPlan, MAX_ELEMENTOS_VIVOS, MAX_LAMINAS_VIVAS,
   normalizarPlanMedio, resumenPlan,
 } from "./plan-medios";
+import { FOTOS_LOOP_DEFECTO, MAX_FOTOS_LOOP } from "./medio";
 
 const ELEMENTO = {
   que: "a seagull gliding", x: 0.3, y: 0.4, alto: 0.12,
@@ -23,8 +24,19 @@ describe("normalizarPlanMedio", () => {
 
   it("acota fotogramas y fps disparatados", () => {
     const p = normalizarPlanMedio({ viva: { fotogramas: 99, fps: 999 } }, "apng");
-    expect(p?.viva?.fotogramas).toBe(12);
+    expect(p?.viva?.fotogramas).toBe(MAX_FOTOS_LOOP);
     expect(p?.viva?.fps).toBe(16);
+  });
+
+  it("sin fotogramas pedidos, la foto viva sale con el defecto barato", () => {
+    expect(normalizarPlanMedio({ viva: {} }, "apng")?.viva?.fotogramas).toBe(FOTOS_LOOP_DEFECTO);
+    expect(normalizarPlanMedio(null, "apng")?.viva?.fotogramas).toBe(FOTOS_LOOP_DEFECTO);
+  });
+
+  it("pero respeta que se pidan más, hasta el tope", () => {
+    expect(normalizarPlanMedio({ viva: { fotogramas: 8 } }, "apng")?.viva?.fotogramas).toBe(8);
+    expect(normalizarPlanMedio({ viva: { fotogramas: MAX_FOTOS_LOOP } }, "apng")?.viva?.fotogramas)
+      .toBe(MAX_FOTOS_LOOP);
   });
 
   it("sin sprites en la paleta, la técnica cae a cuadros", () => {
@@ -99,7 +111,7 @@ describe("imagenesDelPlan", () => {
   it("el paralaje suma las láminas y lo que se anima", () => {
     expect(imagenesDelPlan("paralaje", {
       paralaje: { capas: 4, vivas: ["agua"], sprites: false },
-    })).toBe(1 + 4 + 5);
+    })).toBe(1 + 4 + (FOTOS_LOOP_DEFECTO - 1));
   });
 
   it("no cuenta más láminas vivas de las que se van a animar", () => {
@@ -107,7 +119,7 @@ describe("imagenesDelPlan", () => {
     // lo que se va a gastar de verdad.
     expect(imagenesDelPlan("paralaje", {
       paralaje: { capas: 3, vivas: ["a", "b", "c", "d", "e"], sprites: false },
-    })).toBe(1 + 3 + MAX_LAMINAS_VIVAS * 5);
+    })).toBe(1 + 3 + MAX_LAMINAS_VIVAS * (FOTOS_LOOP_DEFECTO - 1));
   });
 });
 

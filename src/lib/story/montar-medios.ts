@@ -3,6 +3,7 @@ import { generarLoopDesdeStill } from "./generar-loop";
 import { montarVivaConSprites } from "./viva-sprites";
 import { medioDe } from "./medio";
 import { imagenesDelPlan, MAX_LAMINAS_VIVAS } from "./plan-medios";
+import { FOTOS_LOOP_DEFECTO, FPS_LOOP_DEFECTO } from "./medio";
 import type { EscenaCapa, StoryScene } from "./model";
 
 // Montar solo lo que la IA planeó para cada escena.
@@ -141,14 +142,14 @@ async function montarViva(
 
   const still = await env.leerImagen(sc.imageId);
   if (!still) throw new Error("falta su imagen en este navegador");
-  const n = plan?.fotogramas ?? 6;
+  const n = plan?.fotogramas ?? FOTOS_LOOP_DEFECTO;
   const loop = await generarLoopDesdeStill({
     stillId: sc.imageId,
     still,
     prompt: sc.prompt || "the same scene, tiny natural motion",
     formato: env.formato,
     n,
-    fps: plan?.fps ?? 6,
+    fps: plan?.fps ?? FPS_LOOP_DEFECTO,
     calidad: env.calidad,
     movimiento: plan?.movimiento,
     onPaso: paso,
@@ -204,8 +205,8 @@ async function montarParalaje(
         still,
         prompt: `${sc.prompt}. Layer: ${capa.nombre}. Tiny motion in this layer only.`,
         formato: env.formato,
-        n: 6,
-        fps: 6,
+        n: FOTOS_LOOP_DEFECTO,
+        fps: FPS_LOOP_DEFECTO,
         calidad: env.calidad,
         movimiento: capa.nombre,
         onPaso: (t) => paso(`${capa.nombre}: ${t}`),

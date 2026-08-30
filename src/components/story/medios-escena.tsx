@@ -7,6 +7,7 @@ import {
 import { medioDe, vivaConSprites } from "@/lib/story/medio";
 import { assetUrl } from "@/lib/story/store";
 import { resumenPlan, type PlanMedio } from "@/lib/story/plan-medios";
+import { MAX_FOTOS_LOOP, MIN_FOTOS_LOOP } from "@/lib/story/medio";
 import type { MedioEscena } from "@/lib/story/paleta";
 import type { StoryScene } from "@/lib/story/model";
 import { MesaLuz } from "./mesa-luz";
@@ -124,7 +125,7 @@ export function MediosEscena({
           <label className="flex items-center gap-1 text-[10px] text-muted">
             cuadros
             <input
-              type="range" min={2} max={12} step={1} value={plan.viva.fotogramas}
+              type="range" min={MIN_FOTOS_LOOP} max={MAX_FOTOS_LOOP} step={1} value={plan.viva.fotogramas}
               onChange={(e) => onPlan({
                 ...plan, viva: { ...plan.viva!, fotogramas: Number(e.target.value) },
               })}
