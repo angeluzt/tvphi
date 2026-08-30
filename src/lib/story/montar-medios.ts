@@ -197,7 +197,13 @@ async function montarParalaje(
     if (idx < 0) continue;
     const capa = capas[idx];
     const still = await env.leerImagen(capa.imageId);
-    if (!still) continue;
+    if (!still) {
+      // Antes esto era un `continue` mudo: la lámina se quedaba quieta y no
+      // quedaba rastro de por qué. Cualquier salida de este bucle tiene que
+      // dejar dicho algo.
+      avisos.push(`${capa.nombre} se quedó quieta: falta su imagen en este navegador.`);
+      continue;
+    }
     try {
       paso(`animando ${capa.nombre}…`);
       const loop = await generarLoopDesdeStill({

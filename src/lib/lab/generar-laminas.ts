@@ -7,7 +7,8 @@ import { listaDeExclusion } from "@/lib/lab/prompt-capa";
 import { resolverSpritePlaneado } from "@/lib/lab/sprite-automatico";
 import type { SpritePlaneado } from "@/lib/lab/plan-escena-viva";
 import { blobDeUrlDeImagen } from "@/lib/lab/png-base64";
-import { elegirLaminasVivas } from "@/lib/story/laminas-vivas";
+import { elegirLaminasVivas, laminasPedidasNoRepintables } from "@/lib/story/laminas-vivas";
+import { cargarImagen } from "@/lib/lab/quitar-fondo";
 
 // Generar las láminas 2.5D de una escena. Vive fuera del componente para
 // poder usarlo en lote (todas las escenas marcadas) y desde el botón de una.
@@ -31,6 +32,44 @@ export interface LaminasHechas {
   vivas: string[];
   /** Avisos de lo que se ha tenido que enderezar por el camino. */
   avisos: string[];
+}
+
+/**
+ * A partir de qué punto una lámina cuenta como «foto entera» y no como recorte.
+ *
+ * Medido sobre un caso real: el fondo aplanado daba 100% opaco y las tres
+ * láminas recortadas de la misma escena, entre un 18% y un 27%. No hay nada
+ * cerca del medio, así que el listón puede estar alto sin discutir con nadie.
+ */
+const OPACA_DESDE = 0.97;
+
+/**
+ * Qué fracción de la lámina tiene algo pintado.
+ *
+ * Se muestrea uno de cada cuatro píxeles en cada eje —dieciseisava parte del
+ * total— porque para distinguir un 100% de un 20% no hace falta contarlos
+ * todos, y esto corre por cada lámina de cada escena.
+ */
+async function fraccionOpaca(dataUrl: string): Promise<number> {
+  try {
+    const img = await cargarImagen(dataUrl);
+    const w = Math.max(1, Math.round(img.naturalWidth / 4));
+    const h = Math.max(1, Math.round(img.naturalHeight / 4));
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const c = cv.getContext("2d", { willReadFrequently: true });
+    if (!c) return 0;
+    c.drawImage(img, 0, 0, w, h);
+    const d = c.getImageData(0, 0, w, h).data;
+    let opacos = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 16) opacos++;
+    return opacos / (w * h);
+  } catch {
+    // Sin poder medirla se trata como recorte: una lámina quieta de más es
+    // mejor que una escena tapada por un rectángulo opaco.
+    return 0;
+  }
 }
 
 export async function generarLaminasEscena(opts: {
@@ -75,6 +114,8 @@ export async function generarLaminasEscena(opts: {
   // Qué lámina del mapa acabó siendo qué capa: hace falta para colocar los
   // actores detrás de la que toque, y los ids no son los mismos.
   const porMapa = new Map<string, EscenaCapa>();
+  // Qué láminas son foto entera (repintables) y cuáles recorte, por imageId.
+  const opacas = new Map<string, boolean>();
 
   for (let i = 0; i < visibles.length; i++) {
     const capa = visibles[i];
@@ -117,6 +158,10 @@ export async function generarLaminasEscena(opts: {
       continue;
     }
     const id = await opts.onGuardarImagen(rec.url, capa.name);
+    // Se mide AQUÍ, con la PNG ya recortada delante: es el único momento en el
+    // que se sabe de verdad si esta lámina es una foto entera o un recorte, y
+    // de eso depende si se puede repintar para animarla.
+    opacas.set(id, await fraccionOpaca(rec.url) >= OPACA_DESDE);
     const nueva: EscenaCapa = {
       id: nanoid(6), imageId: id, nombre: capa.name,
       depth: Math.max(0, Math.min(1, capa.depth)),
@@ -172,13 +217,27 @@ export async function generarLaminasEscena(opts: {
     const dibujada = porMapa.get(capa.id);
     if (dibujada) semanticas.set(dibujada.id, capa.objects.map((o) => o.semantic));
   }
-  const vivas = elegirLaminasVivas(
-    nuevas.filter((c) => !c.spr).map((c) => ({
-      id: c.id, nombre: c.nombre, semanticas: semanticas.get(c.id),
-    })),
-    opts.pistasVivas ?? [],
-    opts.topeVivas ?? 0,
-  );
+  const candidatas = nuevas.filter((c) => !c.spr).map((c) => ({
+    id: c.id,
+    nombre: c.nombre,
+    semanticas: semanticas.get(c.id),
+    opaca: opacas.get(c.imageId) === true,
+  }));
+  const pistas = opts.pistasVivas ?? [];
+  const vivas = elegirLaminasVivas(candidatas, pistas, opts.topeVivas ?? 0);
+
+  // Lo que el plan pidió animar y resultó ser un recorte. Se dice con nombre y
+  // apellido, y se dice QUÉ hacer en su lugar: callarlo fue lo que dejó una
+  // escena entera sin movimiento y sin ninguna pista de por qué.
+  if (opts.topeVivas) {
+    for (const nombre of laminasPedidasNoRepintables(candidatas, pistas)) {
+      avisos.push(
+        `«${nombre}» no se puede animar repintándola: es un recorte con transparencia, `
+        + "y repintarlo lo devolvería opaco tapando lo que tiene detrás. "
+        + "Para que se mueva algo de esa lámina —fuego, faroles, humo— ponle un efecto del catálogo anclado: se anima solo y no cuesta ninguna imagen.",
+      );
+    }
+  }
 
   return {
     capas: nuevas,

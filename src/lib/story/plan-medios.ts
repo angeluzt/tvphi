@@ -348,10 +348,14 @@ export function instruccionesPlan(opciones: {
     lineas.push(
       "",
       "PARALAJE 2.5D — \"medio\":\"paralaje\". La escena se parte en láminas a distinta profundidad y la cámara las recorre.",
-      `  plan: {\"paralaje\":{\"capas\":4,\"vivas\":[\"agua\",\"antorchas\"]${opciones.sprites ? ",\"sprites\":true" : ""}}}`,
+      `  plan: {\"paralaje\":{\"capas\":4,\"vivas\":[\"cielo\"]${opciones.sprites ? ",\"sprites\":true" : ""}}}`,
       `  \"capas\": de ${MIN_CAPAS_PARALAJE} a ${MAX_CAPAS_PARALAJE} láminas dibujadas, y cada una cuesta una imagen. Un fondo con dos planos delante son 3; un bosque profundo, 5 o 6.`,
-      "  \"vivas\": QUÉ láminas respiran, dichas por lo que se ve en ellas (\"agua\", \"cielo\", \"fuego\", \"vegetación\", \"antorchas\"). Cada lámina viva cuesta 5 imágenes más: pon una o dos, las que de verdad se muevan, y deja [] si ninguna lo pide.",
-      "  El fondo y el suelo NO van en \"vivas\": si se mueven se ve el borde.",
+      "",
+      "  \"vivas\" SOLO PUEDE SER EL FONDO, y esto no es una preferencia: es lo único que funciona.",
+      "  La primera lámina es una foto entera y opaca; las demás son RECORTES con transparencia, porque tienen que dejar ver lo que hay detrás. Animar una lámina significa repintarla entera, y a un recorte eso le devuelve un rectángulo opaco que tapa toda la escena. Una lámina de \"antorchas\" o de \"ciudadela\" en \"vivas\" no sale mal: destroza la escena.",
+      `  Así que en \"vivas\" va como mucho UNA cosa, y del fondo: \"cielo\", \"mar\", \"niebla\" o \"nubes\" cuando ocupan el cuadro entero por detrás de todo. Cuesta ${FOTOS_LOOP_DEFECTO - 1} imágenes más. Si el fondo no pide movimiento, deja [].`,
+      "",
+      "  ¿Y el fuego de las antorchas, los faroles, el humo de las chimeneas? Eso NO va en \"vivas\": va como EFECTO del catálogo (scenes[].vfx). Se anima solo, respeta la transparencia de la lámina y no cuesta NI UNA imagen. Es mejor y más barato que repintar nada.",
     );
     if (opciones.sprites) {
       lineas.push("  \"sprites\":true si la escena pide además actores animados encima (alguien que cruza, un pájaro). Los coloca después el mapa de la escena.");
