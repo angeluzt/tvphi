@@ -249,6 +249,16 @@ export function StoryApp({
       hechas: number; total: number; detalle: string;
       /** Escenas que se saltaron por un fallo suyo. Se enseñan al acabar. */
       saltadas?: string[];
+      /**
+       * Lo que se enderezó o no se pudo hacer sin llegar a tumbar la escena:
+       * una lámina que se quedó quieta, un actor que no salió.
+       *
+       * Vive AQUÍ y no en la línea de estado porque esa la pisa el
+       * autoguardado a los ocho segundos. Se perdió así el motivo real de que
+       * una escena de 2.5D acabara sin movimiento, y sin ese motivo no había
+       * forma de saber qué arreglar.
+       */
+      avisos?: string[];
     } | null
   >(null);
   const [montarAlEntrar, setMontarAlEntrar] = useState(false);
@@ -1808,6 +1818,7 @@ export function StoryApp({
     // generarla y se cortó al devolverla. En calidad baja son $0.005: sale más
     // caro dejar el capítulo a medias.
     const saltadas: string[] = [];
+    const avisosMedios: string[] = [];
     if (dibujos) {
       const pend = fs.filter((f) => f.tipo === "escena" && descripcionDe(f).trim().length >= 4);
       for (let i = 0; i < pend.length; i++) {
@@ -1864,7 +1875,7 @@ export function StoryApp({
       pararMedios.current = false;
       engineRef.current?.update(projRef.current);
       if (medios.saltadas.length) saltadas.push(...medios.saltadas);
-      if (medios.avisos.length) setStatus(medios.avisos.slice(0, 2).join(" · "));
+      avisosMedios.push(...medios.avisos);
     }
 
     const voces = pendientesDe((d) => !!d.text.trim() && !d.audioId);
@@ -1889,7 +1900,10 @@ export function StoryApp({
     // Las que se quedaron fuera van en el PANEL del montaje, no en la línea de
     // estado: esa la pisa el guardado automático a los pocos segundos, y un
     // aviso que desaparece solo es peor que no darlo.
-    setMontaje({ fase: "listo", hechas: voces.length, total: voces.length, detalle: "", saltadas });
+    setMontaje({
+      fase: "listo", hechas: voces.length, total: voces.length, detalle: "",
+      saltadas, avisos: avisosMedios,
+    });
     setStatus("Capítulo montado ✓ · revísalo y guarda");
   }
 
@@ -2689,6 +2703,20 @@ export function StoryApp({
                   </button>
                 )}
               </>
+            )}
+            {/* Lo que no se pudo hacer, con su motivo. Va ANTES de las
+                saltadas porque casi siempre es lo accionable: «esta lámina no
+                se puede repintar, ponle un efecto» se arregla; «se cayó la
+                red» solo se reintenta. */}
+            {!!montaje.avisos?.length && (
+              <ul className="mt-2 space-y-1">
+                {montaje.avisos.map((a, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-[11px] text-gold">
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span className="min-w-0">{a}</span>
+                  </li>
+                ))}
+              </ul>
             )}
             {!!montaje.saltadas?.length && (
               <p className="mt-2 text-[11px] text-gold">

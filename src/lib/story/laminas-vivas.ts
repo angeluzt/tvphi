@@ -22,6 +22,26 @@ export interface LaminaCandidata {
   nombre: string;
   /** Los «semantic» de sus objetos: sky, water, floor, vegetation… */
   semanticas?: string[];
+  /**
+   * Si la lámina es una foto entera y opaca, o un recorte con transparencia.
+   *
+   * ES LO QUE MANDA, por encima de cualquier otra cosa. Animar por cuadros
+   * significa mandarle la lámina a /v1/images/edits para que la repinte, y ese
+   * endpoint entiende la zona transparente como «esto es lo que hay que
+   * inventar». A una lámina recortada al 82% —una ciudadela, unas rocas— se le
+   * estaría pidiendo que se invente el 82% que no está, y encima vuelve opaca:
+   * un rectángulo sólido que tapa todo lo que tenía detrás. El paralaje
+   * destruido, y tres imágenes pagadas para conseguirlo.
+   *
+   * Solo el fondo cumple esto, que es justo la lámina para la que la técnica
+   * se pensó. Lo que se mueve en un recorte —fuego, faroles— se hace con un
+   * efecto del catálogo anclado, que respeta la transparencia y no cuesta ni
+   * una imagen.
+   *
+   * Sin dato (undefined) se supone que NO es segura: más vale una lámina
+   * quieta de más que una escena rota.
+   */
+  opaca?: boolean;
 }
 
 /** Semánticas que se mueven solas y no rompen nada al hacerlo. */
@@ -85,6 +105,12 @@ export function elegirLaminasVivas(
 ): string[] {
   if (tope <= 0 || !capas.length) return [];
 
+  // Lo primero, y sin excepción: un recorte no se puede repintar. Ni con una
+  // pista del plan detrás, porque el resultado no sería «peor», sería una
+  // lámina opaca tapando la escena.
+  const repintables = capas.filter((c) => c.opaca === true);
+  if (!repintables.length) return [];
+
   const prohibida = (c: LaminaCandidata) =>
     (c.semanticas ?? []).some((s) => QUIETAS.has(s)) && !(c.semanticas ?? []).some((s) => VIVAS_POR_NATURALEZA.has(s))
       ? true
@@ -100,13 +126,19 @@ export function elegirLaminasVivas(
   //    dijo «las antorchas», que se animen las antorchas aunque el mapa las
   //    haya marcado como muro.
   for (const pista of pistas) {
-    const encaja = capas.find((c) => encajaPista(c, pista) && !elegidas.includes(c.id));
+    const encaja = repintables.find((c) => encajaPista(c, pista) && !elegidas.includes(c.id));
     if (encaja) meter(encaja);
   }
 
   // 2) Lo que se mueve solo, si todavía queda sitio.
-  if (elegidas.length < tope) {
-    for (const c of capas) {
+  //
+  // SOLO cuando el plan no pidió nada. Si pidió «los braseros» y los braseros
+  // resultan ser un recorte que no se puede repintar, la respuesta correcta es
+  // no animar nada: sustituirlo por el cielo es cobrarle al usuario dos
+  // imágenes por un movimiento que no encargó y que además no va a buscar.
+  const pidioAlgo = pistas.some((x) => x.trim().length > 0);
+  if (!pidioAlgo && elegidas.length < tope) {
+    for (const c of repintables) {
       if (prohibida(c)) continue;
       const porSemantica = (c.semanticas ?? []).some((s) => VIVAS_POR_NATURALEZA.has(s));
       if (porSemantica || PALABRAS_VIVAS.test(llano(c.nombre))) meter(c);
@@ -114,4 +146,26 @@ export function elegirLaminasVivas(
   }
 
   return elegidas;
+}
+
+/**
+ * Las láminas que el plan pidió animar y NO se pueden repintar.
+ *
+ * Existe para poder decirlo con nombre y apellido en vez de dejar la lámina
+ * quieta sin explicación —que es exactamente cómo se perdió el primer intento:
+ * el plan pedía «braseros», la lámina existía, y no pasaba nada ni se decía por
+ * qué—. Quien llama lo convierte en un aviso.
+ */
+export function laminasPedidasNoRepintables(
+  capas: LaminaCandidata[],
+  pistas: string[] = [],
+): string[] {
+  const fuera: string[] = [];
+  for (const pista of pistas) {
+    const encaja = capas.find((c) => encajaPista(c, pista));
+    if (encaja && encaja.opaca !== true && !fuera.includes(encaja.nombre)) {
+      fuera.push(encaja.nombre);
+    }
+  }
+  return fuera;
 }
